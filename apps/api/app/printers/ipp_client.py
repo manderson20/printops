@@ -14,24 +14,38 @@ from pyipp.exceptions import IPPError
 
 from app.printers.capabilities import REQUESTED_ATTRIBUTES
 
-# pyipp's IppFinishing enum only covers a subset of the PWG5100.1 Finishings
-# registry (missing e.g. job-offset=14 and the punch-dual-*/punch-triple-*
-# codes). When a printer reports a code outside that subset — confirmed
-# against a real Konica Minolta bizhub 750i, 2026-07-02 — pyipp's parser
-# crashes converting it to IppFinishing (raises ValueError deep inside
-# parse_response), which pyipp.IPP.execute() swallows into an opaque,
-# message-less IPPParseError, making an otherwise-successful response look
-# like a total probe failure. We parse finishing codes ourselves from raw
-# ints (capabilities.py's FINISHINGS_MAP covers the full registry and
-# doesn't need pyipp's enum at all), so drop the mapping — ints pass
-# straight through the parser instead of being coerced.
-for _key in ("finishings", "finishings-default", "finishings-supported"):
-    ATTRIBUTE_ENUM_MAP.pop(_key, None)
+# pyipp maps several IPP attribute values to its own narrow IntEnums
+# (finishings, orientation-requested, print-quality, printer-state,
+# job-state, document-state...), each covering only a subset of what the
+# relevant PWG/RFC registry actually defines. A device reporting a
+# perfectly valid code pyipp's enum happens not to include crashes its
+# parser (raises ValueError deep inside parse_response, swallowed into an
+# opaque, message-less IPPParseError by pyipp.IPP.execute()) — an
+# otherwise-successful response ends up looking like a total probe
+# failure. Confirmed hit twice already across different vendors/attributes
+# (Canon imageCLASS MF642C/643C/644C on orientation-requested-supported;
+# Konica Minolta bizhub 750i on finishings-supported, job-offset=14 and
+# the punch-dual-*/punch-triple-* codes) — this isn't a one-device fluke,
+# it's a structural gap that will keep recurring across the vendor mix
+# (Canon/HP/Kyocera/Lexmark/Konica Minolta) this app targets.
+#
+# capabilities.py never depends on getting pyipp's enum types back — every
+# field goes through _scalar()/_as_list(), which already unwrap Enum
+# members to their raw int (see FINISHINGS_MAP and friends, which key off
+# plain ints and have an explicit fallback for unmapped codes). So pyipp's
+# enum coercion buys us nothing and is actively harmful — disable it
+# entirely rather than special-casing attributes one vendor crash at a
+# time. Leave "status-code" mapped: it's part of pyipp's own internal
+# response-status handling, not a capability attribute we parse.
+for _key in list(ATTRIBUTE_ENUM_MAP):
+    if _key != "status-code":
+        ATTRIBUTE_ENUM_MAP.pop(_key, None)
 
 # Real IPP Everywhere printers commonly respond at "/ipp/print" or "/".
-# CUPS-backed queues instead require the queue name in the path
-# ("/printers/<name>") — set Printer.ipp_path explicitly for those.
-DEFAULT_CANDIDATE_PATHS = ["/ipp/print", "/", "/ipp/printer"]
+# "/ipp" (no "/print") is another common default, seen on Kyocera and
+# Lexmark lines. CUPS-backed queues instead require the queue name in the
+# path ("/printers/<name>") — set Printer.ipp_path explicitly for those.
+DEFAULT_CANDIDATE_PATHS = ["/ipp/print", "/", "/ipp/printer", "/ipp"]
 
 DEFAULT_PORT = 631
 DEFAULT_TIMEOUT_SECONDS = 5
