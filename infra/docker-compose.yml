@@ -3,6 +3,7 @@ name: printops
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-printops}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-printops}
@@ -19,6 +20,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6379}:6379"
     healthcheck:
@@ -32,6 +34,7 @@ services:
   # reachable; see infra/cups/README.md for next-pass notes.
   cups:
     image: olbat/cupsd:latest
+    restart: unless-stopped
     ports:
       - "${CUPS_IPP_PORT:-631}:631"
     volumes:

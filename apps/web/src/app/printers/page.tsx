@@ -91,8 +91,8 @@ export default function PrintersPage() {
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                       {printer.manufacturer ?? ""} {printer.model ?? "—"}
                       {printer.capabilities_error && (
-                        <span className="ml-2 text-red-600 dark:text-red-400">
-                          (unreachable)
+                        <span className="ml-2 text-amber-700 dark:text-amber-400">
+                          (capabilities not detected)
                         </span>
                       )}
                     </td>

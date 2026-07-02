@@ -155,9 +155,15 @@ export default function PrinterDetailPage() {
           </div>
 
           {printer.capabilities_error && (
-            <p className="mb-3 text-sm text-red-600 dark:text-red-400">
-              Could not reach this printer: {printer.capabilities_error}
-            </p>
+            <div className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+              <p className="font-medium">Printer saved, but capabilities couldn&apos;t be detected.</p>
+              <p className="mt-1 text-amber-800 dark:text-amber-300">{printer.capabilities_error}</p>
+              <p className="mt-1 text-amber-800 dark:text-amber-300">
+                Common cause: IPP is disabled on the device by default (true for most Canon,
+                and many other, printers) — enable it in the printer&apos;s own admin page, then
+                click Rediscover below.
+              </p>
+            </div>
           )}
 
           {!caps && !printer.capabilities_error && (
