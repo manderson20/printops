@@ -135,6 +135,11 @@ export async function rediscoverPrinter(id: string): Promise<Printer> {
   return response.json();
 }
 
+export async function testPrintPrinter(id: string): Promise<{ message: string }> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/test-print`, { method: "POST" });
+  return response.json();
+}
+
 export type JobStatus = "received" | "forwarding" | "forwarded" | "failed";
 
 export type Job = {

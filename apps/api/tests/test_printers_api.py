@@ -154,3 +154,55 @@ def test_rediscover_updates_capabilities(client, auth_headers, mock_failed_probe
     assert rediscovered.status_code == 200
     assert rediscovered.json()["capabilities_error"] is None
     assert rediscovered.json()["model"] == "Now Online"
+
+
+def test_test_print_requires_auth(client, mock_failed_probe):
+    response = client.post("/api/v1/printers/00000000-0000-0000-0000-000000000000/test-print")
+    assert response.status_code == 401
+
+
+def test_test_print_404s_for_missing_printer(client, auth_headers):
+    response = client.post(
+        "/api/v1/printers/00000000-0000-0000-0000-000000000000/test-print",
+        headers=auth_headers,
+    )
+    assert response.status_code == 404
+
+
+def test_test_print_success(client, auth_headers, mock_failed_probe, monkeypatch):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Test Print Target", "ip_address": "10.0.0.8"},
+    )
+    printer_id = create.json()["id"]
+
+    monkeypatch.setattr(
+        printers_router,
+        "submit_test_print",
+        lambda pid, name, user: "request id is printops-xyz-1 (1 file(s))",
+    )
+
+    response = client.post(f"/api/v1/printers/{printer_id}/test-print", headers=auth_headers)
+    assert response.status_code == 200
+    assert "request id" in response.json()["message"]
+
+
+def test_test_print_translates_missing_queue_error(client, auth_headers, mock_failed_probe, monkeypatch):
+    from app.printers.test_print import TestPrintError
+
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Unsynced Printer", "ip_address": "10.0.0.9"},
+    )
+    printer_id = create.json()["id"]
+
+    def fake_submit(pid, name, user):
+        raise TestPrintError("No CUPS queue exists for this printer yet")
+
+    monkeypatch.setattr(printers_router, "submit_test_print", fake_submit)
+
+    response = client.post(f"/api/v1/printers/{printer_id}/test-print", headers=auth_headers)
+    assert response.status_code == 502
+    assert "No CUPS queue" in response.json()["detail"]
