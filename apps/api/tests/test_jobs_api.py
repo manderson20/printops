@@ -203,3 +203,27 @@ def test_list_jobs_caps_limit(client, printer_id, backend_headers, auth_headers)
     response = client.get("/api/v1/jobs?limit=2", headers=auth_headers)
     assert response.status_code == 200
     assert len(response.json()) == 2
+
+
+def test_create_job_attributes_via_trusted_cups_user(client, printer_id, backend_headers):
+    response = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "jdoe"},
+        headers=backend_headers,
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["submitted_by"] == "jdoe"
+    assert body["attribution_method"] == "cups"
+
+
+def test_create_job_without_submitted_by_is_unresolved(client, printer_id, backend_headers):
+    response = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "source_host": "10.0.0.99"},
+        headers=backend_headers,
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["submitted_by"] == "unknown"
+    assert body["attribution_method"] == "unresolved"
