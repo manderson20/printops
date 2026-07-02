@@ -110,7 +110,14 @@ def main() -> int:
     child_env = dict(os.environ)
     child_env["DEVICE_URI"] = real_uri
 
-    result = subprocess.run(real_argv, env=child_env, stdin=None if filename else sys.stdin)
+    # close_fds=False: cupsd hands this script fds beyond 0/1/2 — notably a
+    # back-channel (job status/auth) fd the real `ipp` backend polls on.
+    # subprocess's default close_fds=True closes those before exec, so the
+    # real backend was polling a dead fd and spinning forever (EBADF loop)
+    # instead of ever opening the connection to the printer.
+    result = subprocess.run(
+        real_argv, env=child_env, stdin=None if filename else sys.stdin, close_fds=False
+    )
     exit_code = result.returncode
 
     try:

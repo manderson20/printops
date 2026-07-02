@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings, get_settings
 from app.db import get_db
 from app.deps import get_current_user
 from app.models.printer import Printer
@@ -13,7 +14,7 @@ from app.printers.capabilities import parse_capabilities, sanitize_raw_attribute
 from app.printers.ipp_client import PrinterProbeError, probe_printer
 from app.printers.test_print import TestPrintError, submit_test_print
 from app.schemas.auth import UserOut
-from app.schemas.printer import PrinterCreate, PrinterOut, PrinterUpdate
+from app.schemas.printer import PrinterCreate, PrinterMdmConnectionOut, PrinterOut, PrinterUpdate
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -112,6 +113,28 @@ async def discover_printer(printer_id: UUID, db: AsyncSession = Depends(get_db))
     await db.commit()
     await db.refresh(printer)
     return printer
+
+
+@router.get("/{printer_id}/mdm-connection", response_model=PrinterMdmConnectionOut)
+async def get_mdm_connection(
+    printer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """Connection details for manually adding this printer's PrintOps queue
+    in an MDM tool (Mosyle etc) — points at the CUPS server, not the real
+    printer, since clients print through PrintOps."""
+    printer = await _get_printer_or_404(printer_id, db)
+    queue_name = f"printops-{printer.id}"
+    resource_path = f"/printers/{queue_name}"
+    return PrinterMdmConnectionOut(
+        queue_name=queue_name,
+        host=settings.print_server_host,
+        port=settings.print_server_port,
+        resource_path=resource_path,
+        ipp_uri=f"ipp://{settings.print_server_host}:{settings.print_server_port}{resource_path}",
+        airprint_enabled=printer.airprint_enabled,
+    )
 
 
 @router.post("/{printer_id}/test-print")

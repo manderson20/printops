@@ -76,6 +76,20 @@ class PrinterConnectionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PrinterMdmConnectionOut(BaseModel):
+    """What an admin needs to manually add this printer's PrintOps-proxied
+    queue in an MDM tool (e.g. Mosyle) — the CUPS server's own LAN address,
+    not the real printer's — since clients print to PrintOps, not directly
+    to the device. See Settings.print_server_host."""
+
+    queue_name: str
+    host: str
+    port: int
+    resource_path: str
+    ipp_uri: str
+    airprint_enabled: bool
+
+
 class PrinterOut(BaseModel):
     id: UUID
     name: str
