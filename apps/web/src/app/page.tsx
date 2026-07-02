@@ -1,8 +1,10 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { getHealth, type HealthStatus } from "@/lib/api";
+import { useToken } from "@/lib/auth";
 
 type LoadState =
   | { phase: "loading" }
@@ -11,6 +13,7 @@ type LoadState =
 
 export default function Home() {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
+  const printersHref = useToken() ? "/printers" : "/login";
 
   useEffect(() => {
     getHealth()
@@ -52,6 +55,13 @@ export default function Home() {
             Could not reach API: {state.message}
           </p>
         )}
+
+        <Link
+          href={printersHref}
+          className="rounded-full bg-foreground px-5 py-2 text-sm font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
+        >
+          Manage Printers
+        </Link>
       </main>
     </div>
   );

@@ -1,2 +1,4 @@
-# Placeholder package. ORM models (SQLAlchemy) land here once the database layer
-# is introduced — no models exist yet in this scaffold pass.
+from app.models.base import Base
+from app.models.printer import Printer
+
+__all__ = ["Base", "Printer"]
