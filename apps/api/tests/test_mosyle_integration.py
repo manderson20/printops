@@ -142,6 +142,42 @@ async def test_sync_devices_populates_cache_from_embedded_user_fields(db_session
 
 
 @pytest.mark.asyncio
+async def test_sync_devices_drops_ambiguous_shared_macs(db_session_factory, monkeypatch):
+    """Two different devices reporting the same MAC (confirmed against a
+    real Mosyle tenant — devices without WiFi fall back to a shared
+    Bluetooth identifier) must not crash the sync (unique constraint) or
+    get cached under either person -- resolving a shared MAC to one of two
+    possible users risks attributing a job to the wrong one."""
+
+    async def fake_list_devices(self, os="mac"):
+        return [
+            {"wifi_mac_address": "aa:bb:cc:dd:ee:ff", "serial_number": "SN1", "useremail": "a@x.com"},
+            {"wifi_mac_address": "aa:bb:cc:dd:ee:ff", "serial_number": "SN2", "useremail": "b@x.com"},
+            {"wifi_mac_address": "11:22:33:44:55:66", "serial_number": "SN3", "useremail": "c@x.com"},
+        ]
+
+    monkeypatch.setattr(MosyleClient, "list_devices", fake_list_devices)
+
+    async with db_session_factory() as db:
+        db.add(
+            MosyleSettings(
+                enabled=True,
+                access_token_encrypted=encrypt("tok"),
+                admin_email="admin@x.com",
+                admin_password_encrypted=encrypt("pw"),
+            )
+        )
+        await db.commit()
+
+        count = await sync_devices(db)
+        assert count == 1  # only the unambiguous device
+
+        cached = (await db.execute(select(MosyleDevice))).scalars().all()
+        assert [d.mac_address for d in cached] == ["11:22:33:44:55:66"]
+        assert cached[0].user_email == "c@x.com"
+
+
+@pytest.mark.asyncio
 async def test_run_sync_records_failure_on_settings(db_session_factory, monkeypatch):
     async def fake_list_devices(self, os="mac"):
         raise MosyleError("simulated API outage")
