@@ -17,7 +17,12 @@ class MosyleSettings(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
 
-    base_url: Mapped[str] = mapped_column(default="https://businessapi.mosyle.com/v1")
+    # Mosyle has two separate products with different API hosts: Mosyle
+    # Business ("businessapi.mosyle.com/v1", enterprise/higher-ed) and
+    # Mosyle Manager ("managerapi.mosyle.com/v2", K-12 schools — what this
+    # org uses). Not a per-tenant subdomain; the tenant is identified by
+    # the access token + admin credentials, same for every school.
+    base_url: Mapped[str] = mapped_column(default="https://managerapi.mosyle.com/v2")
     access_token_encrypted: Mapped[str | None] = mapped_column(default=None)
     admin_email: Mapped[str | None] = mapped_column(default=None)
     admin_password_encrypted: Mapped[str | None] = mapped_column(default=None)

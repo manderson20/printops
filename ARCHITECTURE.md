@@ -25,7 +25,7 @@ This is what makes full visibility, policy enforcement, accurate cost accounting
 
 **Also done:** AirPrint/mDNS advertisement, via a static Avahi service file per printer (`infra/cups/generate_avahi_service.py`) since this host's `cupsd` doesn't do its own DNS-SD publishing — gated per-printer by `Printer.airprint_enabled` (off by default). CUPS queue lifecycle is now auto-synced from the `printers` table: creating/updating (queue-affecting fields)/deleting a printer via the API calls `scripts/sync_cups_queue.sh` / `scripts/remove_cups_queue.sh` (`app/printers/queue_sync.py`) instead of requiring a manual run; failures are non-fatal and recorded on `Printer.queue_sync_error`, surfaced in the web UI with a manual resync option, rather than silently leaving a printer un-queued.
 
-**Not yet built:** policy checks before forwarding (quotas/secure-release — currently logs-then-forwards unconditionally), and real user attribution (`Job.submitted_by` is currently just whatever CUPS reports, unverified against the fallback chain below).
+**Not yet built:** policy checks before forwarding (quotas/secure-release — currently logs-then-forwards unconditionally). User attribution (§4) has strategies 1-2 implemented, 3-4 not yet.
 
 ## 4. Apple-First Client Support & User Attribution
 
@@ -33,10 +33,11 @@ Roughly 99% of client devices in this deployment are macOS/iOS/iPadOS, so **AirP
 
 **User attribution fallback chain** — AirPrint jobs, especially from iOS, frequently omit or cannot cryptographically authenticate the IPP `requesting-user-name` attribute. Rather than accepting unreliable attribution, PrintOps resolves the submitting user through an ordered, pluggable chain of strategies:
 
-1. Trust IPP `requesting-user-name` when present and the session/source is otherwise authenticated.
-2. Fall back to MDM-reported device-to-user mapping — Mosyle is the target MDM — by correlating source IP/hostname/device serial at job-submission time.
+1. **(Implemented)** Trust IPP `requesting-user-name` when present and non-generic.
+2. **(Partially implemented)** Fall back to MDM-reported device-to-user mapping — Mosyle is the target MDM — by correlating source IP/hostname/device serial at job-submission time. `app/attribution/resolve.py` + `app/integrations/mosyle.py` + a Settings UI (encrypted-at-rest credentials, device-cache sync) exist, but the IP→MAC correlation step is an intentionally unimplemented seam (`_lookup_mac_for_source`) — the print server can't see client MACs directly (different subnet, confirmed 2026-07-02), so this needs a ClassGuard (the org's own DHCP/DNS/web-filter platform) integration to supply that lookup, not yet built. Until then this strategy never resolves and jobs fall through to strategy 1 or "unresolved."
+   - This org uses **Mosyle Manager** (K-12 schools, `managerapi.mosyle.com/v2`), not Mosyle Business (enterprise/higher-ed, `businessapi.mosyle.com/v1`) — two different products/hosts/API versions. The integration's auth scheme was verified against Business v1 docs (Mosyle's own docs are paywalled); Manager v2's exact endpoint paths/response shape are unverified until tested against real credentials via the Settings page's Test Connection.
 3. Fall back to Google Admin Console (Workspace) device-to-user records for Chromebook/Google-managed devices.
-4. Final fallback: route the job to an "unknown user" secure hold queue requiring release-time authentication (PIN/badge/QR) — no job is ever silently mis-attributed.
+4. Final fallback: route the job to an "unknown user" secure hold queue requiring release-time authentication (PIN/badge/QR) — no job is ever silently mis-attributed. Currently: falls through to `"unknown"`/raw CUPS value with `attribution_method="unresolved"`, no hold queue yet.
 
 This resolver chain is an interface with ordered strategies, so future identity sources (LDAP/AD, Microsoft Entra ID) can be added as additional fallback strategies without changing the job pipeline itself.
 

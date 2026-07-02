@@ -20,11 +20,23 @@ def normalize_mac(mac: str) -> str:
 
 
 class MosyleClient:
-    """Thin wrapper around Mosyle's Business API. Field/endpoint names here
-    are triangulated from third-party integration scripts, not Mosyle's own
+    """Thin wrapper around Mosyle's API. Field/endpoint names here are
+    triangulated from third-party integration scripts, not Mosyle's own
     docs (paywalled behind an active account) — if Mosyle's real response
     doesn't match, this is the file to fix; nothing else should need to
-    change. See ARCHITECTURE.md's Mosyle section for the research trail."""
+    change. See ARCHITECTURE.md's Mosyle section for the research trail.
+
+    IMPORTANT: that research was against Mosyle *Business* (enterprise/
+    higher-ed, businessapi.mosyle.com/v1). This org uses Mosyle *Manager*
+    (K-12 schools, managerapi.mosyle.com/v2 — see MosyleSettings.base_url)
+    — a different product with a different API version. The auth scheme
+    (accesstoken header + admin Basic auth) is confirmed the same across
+    both, but the /listdevices and /listusers paths and their request/
+    response shape are UNVERIFIED for v2 — could plausibly differ. Use
+    Test Connection on the Settings page with real credentials first; a
+    "MosyleError: Unexpected response shape" there means v2 really does
+    differ and this file needs adjusting to match, not that something
+    else is broken."""
 
     def __init__(self, base_url: str, access_token: str, admin_email: str, admin_password: str):
         self.base_url = base_url.rstrip("/")
