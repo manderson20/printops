@@ -6,7 +6,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.attribution.resolve import resolve_user
+from app.core.crypto import encrypt
+from app.integrations.classguard import ClassGuardClient, ClassGuardError
 from app.models.base import Base
+from app.models.classguard import ClassGuardSettings
 from app.models.mosyle import MosyleDevice, MosyleSettings
 
 
@@ -59,13 +62,10 @@ async def test_mosyle_lookup_skipped_when_disabled(db_session_factory):
 
 
 @pytest.mark.asyncio
-async def test_mosyle_lookup_currently_never_resolves_pending_classguard(db_session_factory):
-    """MAC lookup (_lookup_mac_for_source) is an intentionally unimplemented
-    seam pending a ClassGuard integration — see its docstring. Even with
-    Mosyle enabled and a matching device cached, nothing resolves via MAC
-    today; this documents that current, expected behavior so a future
-    ClassGuard wire-up is the thing that flips this test, not a silent
-    regression."""
+async def test_mac_lookup_unresolved_when_classguard_not_configured(db_session_factory):
+    """Mosyle enabled + a matching cached device, but no ClassGuardSettings
+    row at all — the MAC lookup has nothing to call, so this still falls
+    through to unresolved rather than erroring."""
     async with db_session_factory() as db:
         db.add(MosyleSettings(enabled=True))
         db.add(
@@ -81,7 +81,84 @@ async def test_mosyle_lookup_currently_never_resolves_pending_classguard(db_sess
 
 
 @pytest.mark.asyncio
+async def test_mac_lookup_unresolved_when_classguard_disabled(db_session_factory):
+    async with db_session_factory() as db:
+        db.add(MosyleSettings(enabled=True))
+        db.add(
+            ClassGuardSettings(enabled=False, access_token_encrypted=encrypt("tok")),
+        )
+        db.add(
+            MosyleDevice(
+                mac_address="AA:BB:CC:DD:EE:FF",
+                user_email="jdoe@example.com",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await db.commit()
+        user, method = await resolve_user(db, None, "10.0.0.5")
+    assert (user, method) == ("unknown", "unresolved")
+
+
+@pytest.mark.asyncio
+async def test_resolves_via_classguard_mac_lookup(db_session_factory, monkeypatch):
+    async def fake_lookup_mac(self, ip):
+        assert ip == "10.0.0.5"
+        return "aa:bb:cc:dd:ee:ff"
+
+    monkeypatch.setattr(ClassGuardClient, "lookup_mac", fake_lookup_mac)
+
+    async with db_session_factory() as db:
+        db.add(MosyleSettings(enabled=True))
+        db.add(ClassGuardSettings(enabled=True, access_token_encrypted=encrypt("tok")))
+        db.add(
+            MosyleDevice(
+                mac_address="AA:BB:CC:DD:EE:FF",
+                user_email="jdoe@example.com",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await db.commit()
+        user, method = await resolve_user(db, None, "10.0.0.5")
+    assert (user, method) == ("jdoe@example.com", "mosyle")
+
+
+@pytest.mark.asyncio
+async def test_classguard_failure_falls_through_without_raising(db_session_factory, monkeypatch):
+    async def fake_lookup_mac(self, ip):
+        raise ClassGuardError("simulated outage")
+
+    monkeypatch.setattr(ClassGuardClient, "lookup_mac", fake_lookup_mac)
+
+    async with db_session_factory() as db:
+        db.add(MosyleSettings(enabled=True))
+        db.add(ClassGuardSettings(enabled=True, access_token_encrypted=encrypt("tok")))
+        await db.commit()
+        user, method = await resolve_user(db, None, "10.0.0.5")
+    assert (user, method) == ("unknown", "unresolved")
+
+
+@pytest.mark.asyncio
+async def test_unknown_mac_falls_through_to_unresolved(db_session_factory, monkeypatch):
+    """ClassGuard resolves a MAC, but it's not in the Mosyle cache (e.g. a
+    personal/unmanaged device) — still resolves to unresolved, not an
+    error, and definitely not attributed to the wrong person."""
+
+    async def fake_lookup_mac(self, ip):
+        return "11:22:33:44:55:66"
+
+    monkeypatch.setattr(ClassGuardClient, "lookup_mac", fake_lookup_mac)
+
+    async with db_session_factory() as db:
+        db.add(MosyleSettings(enabled=True))
+        db.add(ClassGuardSettings(enabled=True, access_token_encrypted=encrypt("tok")))
+        await db.commit()
+        user, method = await resolve_user(db, None, "10.0.0.5")
+    assert (user, method) == ("unknown", "unresolved")
+
+
+@pytest.mark.asyncio
 async def test_hostname_source_host_is_not_treated_as_ip(db_session_factory):
     from app.attribution.resolve import _lookup_mac_for_source
 
-    assert _lookup_mac_for_source("some-mac.local") is None
+    async with db_session_factory() as db:
+        assert await _lookup_mac_for_source(db, "some-mac.local") is None
