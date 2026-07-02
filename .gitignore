@@ -27,3 +27,6 @@ venv/
 # Editors
 .vscode/
 .idea/
+
+# Local-only scratch space (screenshots, issue attachments, etc.) — never pushed
+/referencefiles/
