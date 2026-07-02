@@ -1,5 +1,7 @@
+import secrets
+
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from jwt import PyJWTError
 
 from app.core.config import Settings, get_settings
@@ -7,6 +9,7 @@ from app.core.security import decode_access_token
 from app.schemas.auth import UserOut
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+backend_token_header = APIKeyHeader(name="X-Backend-Token")
 
 
 def get_current_user(
@@ -31,3 +34,16 @@ def get_current_user(
         raise credentials_exception
 
     return UserOut(username=username)
+
+
+def verify_backend_token(
+    token: str = Depends(backend_token_header),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Authenticates service-to-service calls (the CUPS backend script), not
+    user sessions — separate from get_current_user/JWT auth entirely."""
+    if not secrets.compare_digest(token, settings.backend_token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid backend token",
+        )

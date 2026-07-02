@@ -29,17 +29,5 @@ services:
       timeout: 5s
       retries: 5
 
-  # Placeholder for the future IPP proxy / AirPrint bridge — no printers
-  # configured yet. This just proves the container boots and IPP (631) is
-  # reachable; see infra/cups/README.md for next-pass notes.
-  cups:
-    image: olbat/cupsd:latest
-    restart: unless-stopped
-    ports:
-      - "${CUPS_IPP_PORT:-631}:631"
-    volumes:
-      - cups-conf:/etc/cups
-
 volumes:
   pgdata:
-  cups-conf:

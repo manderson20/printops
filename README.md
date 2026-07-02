@@ -2,7 +2,7 @@
 
 Open-source, self-hosted enterprise print management platform for K-12 schools, businesses, and MSPs — built on IPP/CUPS instead of proprietary vendor software.
 
-> **Status: early.** Manual printer CRUD with IPP-based capability auto-discovery (staple/punch/duplex/color/etc.) and a minimal login are working. Most modules in [ARCHITECTURE.md](./ARCHITECTURE.md) — network-wide discovery, queues, job tracking, cost accounting, real RBAC — are still just direction, not code.
+> **Status: early.** Manual printer CRUD with IPP-based capability auto-discovery, a minimal login, and a working IPP proxy (Phase 1: jobs route through PrintOps and get logged before being forwarded to the real printer, built on CUPS — see `ARCHITECTURE.md` §3) are working end-to-end against a real printer. Most modules — AirPrint/mDNS advertisement, network-wide discovery, quotas/policy, cost accounting, real RBAC, verified user attribution — are still just direction, not code.
 
 ## Repo layout
 
