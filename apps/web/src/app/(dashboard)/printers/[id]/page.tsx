@@ -10,6 +10,7 @@ import {
   getPrinter,
   listJobs,
   rediscoverPrinter,
+  resyncQueue,
   updatePrinter,
   type Job,
   type MdmConnectionInfo,
@@ -51,6 +52,7 @@ export default function PrinterDetailPage() {
   const [airprintEnabled, setAirprintEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
   const [rediscovering, setRediscovering] = useState(false);
+  const [resyncing, setResyncing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [connection, setConnection] = useState<MdmConnectionInfo | null>(null);
@@ -110,6 +112,19 @@ export default function PrinterDetailPage() {
       setActionError(err instanceof ApiError ? err.message : "Rediscovery failed");
     } finally {
       setRediscovering(false);
+    }
+  }
+
+  async function handleResync() {
+    setResyncing(true);
+    setActionError(null);
+    try {
+      const printer = await resyncQueue(params.id);
+      setState({ phase: "ok", printer });
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Queue resync failed");
+    } finally {
+      setResyncing(false);
     }
   }
 
@@ -176,12 +191,29 @@ export default function PrinterDetailPage() {
       </Card>
 
       <Card>
-        <CardTitle className="mb-1">Connection Info</CardTitle>
+        <div className="mb-1 flex items-center justify-between">
+          <CardTitle>Connection Info</CardTitle>
+          <Button variant="secondary" onClick={handleResync} disabled={resyncing}>
+            {resyncing ? "Resyncing…" : "Resync Queue"}
+          </Button>
+        </div>
         <p className="mb-4 text-xs text-zinc-500">
           For manually adding this printer&apos;s PrintOps queue in an MDM tool (e.g. Mosyle).
           This points at the PrintOps server, not the printer itself — clients print through
           the proxy.
         </p>
+
+        {printer.queue_sync_error && (
+          <div className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            <p className="font-medium">CUPS queue is out of sync.</p>
+            <p className="mt-1 text-amber-800 dark:text-amber-300">{printer.queue_sync_error}</p>
+            <p className="mt-1 text-amber-800 dark:text-amber-300">
+              This printer won&apos;t accept jobs until this is fixed. Common cause: the printer
+              was unreachable when PrintOps last tried to sync the queue — check connectivity,
+              then click Resync Queue above.
+            </p>
+          </div>
+        )}
 
         {connection === null && <Spinner label="Loading connection info…" />}
         {connection && (

@@ -48,3 +48,8 @@ class Printer(Base, TimestampMixin):
         DateTime(timezone=True), default=None
     )
     capabilities_error: Mapped[str | None] = mapped_column(default=None)
+
+    # Set when scripts/sync_cups_queue.sh fails to create/update this
+    # printer's CUPS queue (e.g. printer unreachable during the -m everywhere
+    # probe). None means the queue is in sync as of the last create/update.
+    queue_sync_error: Mapped[str | None] = mapped_column(default=None)

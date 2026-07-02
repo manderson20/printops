@@ -71,6 +71,16 @@ def mock_failed_probe(monkeypatch):
     monkeypatch.setattr(printers_router, "probe_printer", fake_probe_printer)
 
 
+@pytest.fixture(autouse=True)
+def mock_queue_sync(monkeypatch):
+    """Every printer create/update now triggers a CUPS queue sync — default
+    to a no-op success so existing tests don't try to actually run
+    scripts/sync_cups_queue.sh. Tests exercising sync behavior itself
+    override sync_queue/remove_queue again with their own monkeypatch."""
+    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id: None)
+    monkeypatch.setattr(printers_router, "remove_queue", lambda printer_id: None)
+
+
 def test_create_requires_auth(client):
     response = client.post("/api/v1/printers", json={"name": "X", "ip_address": "10.0.0.5"})
     assert response.status_code == 401
@@ -230,3 +240,102 @@ def test_mdm_connection_requires_auth(client):
         "/api/v1/printers/00000000-0000-0000-0000-000000000000/mdm-connection"
     )
     assert response.status_code == 401
+
+
+def test_create_printer_syncs_queue(client, auth_headers, mock_failed_probe, monkeypatch):
+    calls = []
+    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id: calls.append(printer_id))
+
+    response = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "New Printer", "ip_address": "10.0.0.12"},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert calls == [body["id"]]
+    assert body["queue_sync_error"] is None
+
+
+def test_create_printer_records_queue_sync_error(client, auth_headers, mock_failed_probe, monkeypatch):
+    from app.printers.queue_sync import QueueSyncError
+
+    def fake_sync_queue(printer_id):
+        raise QueueSyncError("Unknown destination")
+
+    monkeypatch.setattr(printers_router, "sync_queue", fake_sync_queue)
+
+    response = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Broken Printer", "ip_address": "10.0.0.13"},
+    )
+    assert response.status_code == 201
+    assert response.json()["queue_sync_error"] == "Unknown destination"
+
+
+def test_update_printer_resyncs_only_on_queue_affecting_fields(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    calls = []
+    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id: calls.append(printer_id))
+
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Editable Printer", "ip_address": "10.0.0.14"},
+    )
+    printer_id = create.json()["id"]
+    calls.clear()  # ignore the create-time sync
+
+    notes_only = client.patch(
+        f"/api/v1/printers/{printer_id}", headers=auth_headers, json={"notes": "some notes"}
+    )
+    assert notes_only.status_code == 200
+    assert calls == []
+
+    ip_change = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"ip_address": "10.0.0.99"},
+    )
+    assert ip_change.status_code == 200
+    assert calls == [printer_id]
+
+
+def test_delete_printer_removes_queue(client, auth_headers, mock_failed_probe, monkeypatch):
+    calls = []
+    monkeypatch.setattr(printers_router, "remove_queue", lambda printer_id: calls.append(printer_id))
+
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Doomed Printer", "ip_address": "10.0.0.15"},
+    )
+    printer_id = create.json()["id"]
+
+    response = client.delete(f"/api/v1/printers/{printer_id}", headers=auth_headers)
+    assert response.status_code == 204
+    assert calls == [printer_id]
+
+
+def test_resync_queue_clears_prior_error(client, auth_headers, mock_failed_probe, monkeypatch):
+    from app.printers.queue_sync import QueueSyncError
+
+    monkeypatch.setattr(
+        printers_router,
+        "sync_queue",
+        lambda printer_id: (_ for _ in ()).throw(QueueSyncError("printer offline")),
+    )
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Recovering Printer", "ip_address": "10.0.0.16"},
+    )
+    printer_id = create.json()["id"]
+    assert create.json()["queue_sync_error"] == "printer offline"
+
+    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id: None)
+    response = client.post(f"/api/v1/printers/{printer_id}/resync-queue", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json()["queue_sync_error"] is None

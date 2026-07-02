@@ -4,9 +4,11 @@
 #
 # Usage: ./scripts/sync_cups_queue.sh <printer-id>
 #
-# Phase 1: manual/one-at-a-time. Auto-syncing every printer in the `printers`
-# table into CUPS automatically is later work (see ARCHITECTURE.md IPP proxy
-# phases), not built yet.
+# Invoked automatically by the API (app/printers/queue_sync.py) on printer
+# create/update — see that module for the non-fatal error-handling contract
+# (Printer.queue_sync_error). Safe to also run manually/standalone, e.g. to
+# recover after fixing whatever caused a sync failure without needing
+# another edit through the UI. See also scripts/remove_cups_queue.sh.
 
 set -euo pipefail
 

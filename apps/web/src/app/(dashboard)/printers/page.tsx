@@ -71,6 +71,7 @@ export default function PrintersPage() {
                 <th className="px-4 py-3 font-medium">Model</th>
                 <th className="px-4 py-3 font-medium">IP Address</th>
                 <th className="px-4 py-3 font-medium">Location</th>
+                <th className="px-4 py-3 font-medium">Queue</th>
                 <th className="px-4 py-3 font-medium">AirPrint</th>
                 <th className="px-4 py-3 font-medium">Capabilities</th>
                 <th className="px-4 py-3 font-medium">Actions</th>
@@ -107,6 +108,15 @@ export default function PrintersPage() {
                     {[printer.building, printer.room, printer.department]
                       .filter(Boolean)
                       .join(" / ") || "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    {printer.queue_sync_error ? (
+                      <Badge tone="danger" title={printer.queue_sync_error}>
+                        Sync Failed
+                      </Badge>
+                    ) : (
+                      <Badge tone="success">Synced</Badge>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     {printer.airprint_enabled ? (
