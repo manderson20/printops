@@ -1,0 +1,14 @@
+{
+  "name": "printops",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "dev:web": "pnpm --filter @printops/web dev",
+    "build:web": "pnpm --filter @printops/web build",
+    "lint": "pnpm --filter @printops/web lint",
+    "format": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3"
+  }
+}

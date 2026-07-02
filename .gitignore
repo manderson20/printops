@@ -1,0 +1,29 @@
+# Node
+node_modules/
+.next/
+.turbo/
+dist/
+.pnpm-store/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Env files
+.env
+.env.local
+!.env.example
+!.env.local.example
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/

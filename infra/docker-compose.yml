@@ -1,0 +1,42 @@
+name: printops
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-printops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-printops}
+      POSTGRES_DB: ${POSTGRES_DB:-printops}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-printops}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Placeholder for the future IPP proxy / AirPrint bridge — no printers
+  # configured yet. This just proves the container boots and IPP (631) is
+  # reachable; see infra/cups/README.md for next-pass notes.
+  cups:
+    image: olbat/cupsd:latest
+    ports:
+      - "${CUPS_IPP_PORT:-631}:631"
+    volumes:
+      - cups-conf:/etc/cups
+
+volumes:
+  pgdata:
+  cups-conf:
