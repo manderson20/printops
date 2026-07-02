@@ -1,0 +1,110 @@
+from datetime import UTC, datetime
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db import get_db
+from app.deps import get_current_user
+from app.models.printer import Printer
+from app.printers.capabilities import parse_capabilities, sanitize_raw_attributes
+from app.printers.ipp_client import PrinterProbeError, probe_printer
+from app.schemas.printer import PrinterCreate, PrinterOut, PrinterUpdate
+
+router = APIRouter(dependencies=[Depends(get_current_user)])
+
+
+async def _get_printer_or_404(printer_id: UUID, db: AsyncSession) -> Printer:
+    printer = await db.get(Printer, printer_id)
+    if printer is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Printer not found")
+    return printer
+
+
+async def _apply_discovery(printer: Printer) -> None:
+    """Probes the printer's stored connection details and updates its capability fields."""
+    try:
+        result = await probe_printer(
+            printer.ip_address,
+            port=printer.port,
+            tls=printer.use_tls,
+            ipp_path=printer.ipp_path,
+        )
+        printer.capabilities = parse_capabilities(result.raw_attributes)
+        printer.capabilities_raw = sanitize_raw_attributes(result.raw_attributes)
+        printer.capabilities_detected_at = datetime.now(UTC)
+        printer.capabilities_error = None
+        if printer.ipp_path is None:
+            printer.ipp_path = result.resolved_path
+        detected_model = printer.capabilities.get("make_model")
+        if not printer.manufacturer and not printer.model and detected_model:
+            printer.model = detected_model
+    except PrinterProbeError as exc:
+        printer.capabilities_error = str(exc)
+
+
+@router.post("", response_model=PrinterOut, status_code=status.HTTP_201_CREATED)
+async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_db)):
+    printer = Printer(
+        name=payload.name,
+        ip_address=str(payload.ip_address),
+        port=payload.port,
+        use_tls=payload.use_tls,
+        ipp_path=payload.ipp_path,
+        manufacturer=payload.manufacturer,
+        model=payload.model,
+        hostname=payload.hostname,
+        serial_number=payload.serial_number,
+        building=payload.building,
+        room=payload.room,
+        department=payload.department,
+        notes=payload.notes,
+    )
+    await _apply_discovery(printer)
+    db.add(printer)
+    await db.commit()
+    await db.refresh(printer)
+    return printer
+
+
+@router.get("", response_model=list[PrinterOut])
+async def list_printers(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Printer).order_by(Printer.name))
+    return result.scalars().all()
+
+
+@router.get("/{printer_id}", response_model=PrinterOut)
+async def get_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    return await _get_printer_or_404(printer_id, db)
+
+
+@router.patch("/{printer_id}", response_model=PrinterOut)
+async def update_printer(
+    printer_id: UUID, payload: PrinterUpdate, db: AsyncSession = Depends(get_db)
+):
+    printer = await _get_printer_or_404(printer_id, db)
+    updates = payload.model_dump(exclude_unset=True)
+    if "ip_address" in updates and updates["ip_address"] is not None:
+        updates["ip_address"] = str(updates["ip_address"])
+    for field, value in updates.items():
+        setattr(printer, field, value)
+    await db.commit()
+    await db.refresh(printer)
+    return printer
+
+
+@router.delete("/{printer_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    printer = await _get_printer_or_404(printer_id, db)
+    await db.delete(printer)
+    await db.commit()
+
+
+@router.post("/{printer_id}/discover", response_model=PrinterOut)
+async def discover_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    printer = await _get_printer_or_404(printer_id, db)
+    await _apply_discovery(printer)
+    await db.commit()
+    await db.refresh(printer)
+    return printer

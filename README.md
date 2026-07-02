@@ -2,7 +2,7 @@
 
 Open-source, self-hosted enterprise print management platform for K-12 schools, businesses, and MSPs — built on IPP/CUPS instead of proprietary vendor software.
 
-> **Status: early scaffold.** This repo currently contains a working skeleton (health-checked API, landing page, dev infra, CI) with no domain features yet. See [ARCHITECTURE.md](./ARCHITECTURE.md) for where this is headed.
+> **Status: early.** Manual printer CRUD with IPP-based capability auto-discovery (staple/punch/duplex/color/etc.) and a minimal login are working. Most modules in [ARCHITECTURE.md](./ARCHITECTURE.md) — network-wide discovery, queues, job tracking, cost accounting, real RBAC — are still just direction, not code.
 
 ## Repo layout
 
@@ -42,6 +42,7 @@ cd ../apps/api
 uv venv --python 3.12 .venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
 cp .env.example .env
+alembic upgrade head   # creates the printers table
 uvicorn app.main:app --reload --port 8000
 # -> http://localhost:8000/docs
 
@@ -52,7 +53,9 @@ pnpm dev:web
 # -> http://localhost:3000
 ```
 
-The landing page at `localhost:3000` fetches `/healthz` from the API live — if it shows a green "ok" status, the full stack is wired up correctly.
+The landing page at `localhost:3000` fetches `/healthz` from the API live — if it shows a green "ok" status, the full stack is wired up correctly. From there, "Manage Printers" leads to `/login` (default dev credentials: `admin` / `changeme`, see `apps/api/.env.example`), then to the printer list where you can add a printer by IP and PrintOps will probe it over IPP for its capabilities.
+
+Schema changes go through Alembic: `cd apps/api && alembic revision --autogenerate -m "..."` after changing a model, then `alembic upgrade head`.
 
 ## Environment variables
 

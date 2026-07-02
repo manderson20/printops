@@ -38,8 +38,8 @@ This resolver chain is an interface with ordered strategies, so future identity 
 
 Each of the following will live under `apps/api/app/<module>/` (router + service + models slice) once built, so modules can later be split into separate deployable services if needed without a rewrite:
 
-- **Discovery** — mDNS/DNS-SD/SNMP/IPP scanning to find printers on the network; produces candidate printer records for admin approval, plus manual creation.
-- **Capability Detection** — dynamic, driven by IPP `Get-Printer-Attributes` at add-time and on a refresh schedule; duplex/color/stapling/hole-punch/booklet/PIN/accounting-code/output-bin support is discovered per device, never hardcoded per model.
+- **Discovery** — *(manual add + single-device probing implemented; network-wide scanning not yet built)* mDNS/DNS-SD/SNMP scanning to find printers automatically is still planned. Today, an admin manually enters a printer's IP (`apps/api/app/routers/printers.py`), and PrintOps probes that one device over IPP.
+- **Capability Detection** — *(implemented for manually-added printers)* driven by IPP `Get-Printer-Attributes` at add-time and via a "rediscover" endpoint; duplex/color/stapling/hole-punch/booklet/PIN/accounting-code/output-bin support is parsed dynamically from whatever the device reports (`apps/api/app/printers/capabilities.py`), never hardcoded per model. Runs against a short list of candidate IPP resource paths, with a per-printer override for non-standard setups.
 - **Queue Management** — local/shared/department/building/secure/follow-me queue types, each a policy wrapper around the IPP-proxy path; printers can be assigned to one or more queues.
 - **Job Tracking & Analytics** — every proxied job logged with full attribution (user, printer, queue, pages/sheets, color/duplex, cost, department/building, client device, duration, status); source of truth for dashboards.
 - **Cost Accounting** — configurable rate tables (black/color/large-format), department chargebacks, budgets, and quotas (student/staff), evaluated at proxy-submission time (allow/deny/hold) and again post-hoc for reporting.
@@ -73,5 +73,6 @@ HTTPS everywhere, CSRF protection on browser-facing state changes, server-side R
 - Timing and shape of GraphQL support.
 - Event bus / message queue choice for the domain event stream that notifications, audit logging, and future AI modules will consume (candidate: Redis Streams, given Redis is already in the stack).
 - CUPS's role long-term: primarily a legacy-protocol bridge (JetDirect/LPD/SMB) and local rendering fallback, vs. a larger role in the IPP proxy itself.
+- The current login page stores its JWT in `localStorage` (not an httpOnly cookie) — a deliberate minimal-scope choice, not a final design. Should be revisited (session cookie + CSRF protection, or a proper refresh-token flow) once the real Auth/RBAC module is built, per the Security Posture requirements in §9.
 
 These are intentionally undecided — future sessions should treat them as open, not assume an answer from the absence of code.
