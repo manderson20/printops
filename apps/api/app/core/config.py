@@ -18,6 +18,13 @@ class Settings(BaseSettings):
 
     database_url: str
 
+    # LAN address clients (and MDM profiles, e.g. Mosyle) print to directly —
+    # this is the CUPS server itself (matches cupsd.conf's Listen directive),
+    # not the reverse-proxied public web domain. Defaults to this box's
+    # current LAN IP; override via PRINTOPS_PRINT_SERVER_HOST if it changes.
+    print_server_host: str = "172.16.2.10"
+    print_server_port: int = 631
+
     # Shared secret for service-to-service calls (the CUPS backend script),
     # separate from user JWT auth — see app/deps.py's verify_backend_token.
     backend_token: str

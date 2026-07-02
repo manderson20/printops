@@ -206,3 +206,27 @@ def test_test_print_translates_missing_queue_error(client, auth_headers, mock_fa
     response = client.post(f"/api/v1/printers/{printer_id}/test-print", headers=auth_headers)
     assert response.status_code == 502
     assert "No CUPS queue" in response.json()["detail"]
+
+
+def test_mdm_connection_info(client, auth_headers, mock_failed_probe):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Lobby Printer", "ip_address": "10.0.0.11"},
+    )
+    printer_id = create.json()["id"]
+
+    response = client.get(f"/api/v1/printers/{printer_id}/mdm-connection", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["queue_name"] == f"printops-{printer_id}"
+    assert body["resource_path"] == f"/printers/printops-{printer_id}"
+    assert body["ipp_uri"] == f"ipp://{body['host']}:{body['port']}{body['resource_path']}"
+    assert body["airprint_enabled"] is False
+
+
+def test_mdm_connection_requires_auth(client):
+    response = client.get(
+        "/api/v1/printers/00000000-0000-0000-0000-000000000000/mdm-connection"
+    )
+    assert response.status_code == 401

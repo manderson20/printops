@@ -140,6 +140,20 @@ export async function testPrintPrinter(id: string): Promise<{ message: string }>
   return response.json();
 }
 
+export type MdmConnectionInfo = {
+  queue_name: string;
+  host: string;
+  port: number;
+  resource_path: string;
+  ipp_uri: string;
+  airprint_enabled: boolean;
+};
+
+export async function getMdmConnection(id: string): Promise<MdmConnectionInfo> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/mdm-connection`);
+  return response.json();
+}
+
 export type JobStatus = "received" | "forwarding" | "forwarded" | "failed";
 
 export type Job = {

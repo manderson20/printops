@@ -6,11 +6,13 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ApiError,
   deletePrinter,
+  getMdmConnection,
   getPrinter,
   listJobs,
   rediscoverPrinter,
   updatePrinter,
   type Job,
+  type MdmConnectionInfo,
   type Printer,
 } from "@/lib/api";
 import { capabilityBadges } from "@/lib/capabilities";
@@ -51,6 +53,8 @@ export default function PrinterDetailPage() {
   const [rediscovering, setRediscovering] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[] | null>(null);
+  const [connection, setConnection] = useState<MdmConnectionInfo | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   useEffect(() => {
     getPrinter(params.id)
@@ -72,7 +76,16 @@ export default function PrinterDetailPage() {
     listJobs({ printer_id: params.id, limit: 5 })
       .then(setJobs)
       .catch(() => setJobs([]));
+    getMdmConnection(params.id)
+      .then(setConnection)
+      .catch(() => setConnection(null));
   }, [params.id]);
+
+  async function handleCopy(field: string, value: string) {
+    await navigator.clipboard.writeText(value);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField((current) => (current === field ? null : current)), 1500);
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -160,6 +173,40 @@ export default function PrinterDetailPage() {
         <Button onClick={handleSave} disabled={saving} className="mt-4">
           {saving ? "Saving…" : "Save"}
         </Button>
+      </Card>
+
+      <Card>
+        <CardTitle className="mb-1">Connection Info</CardTitle>
+        <p className="mb-4 text-xs text-zinc-500">
+          For manually adding this printer&apos;s PrintOps queue in an MDM tool (e.g. Mosyle).
+          This points at the PrintOps server, not the printer itself — clients print through
+          the proxy.
+        </p>
+
+        {connection === null && <Spinner label="Loading connection info…" />}
+        {connection && (
+          <div className="flex flex-col gap-2 text-sm">
+            {[
+              ["IPP URI", connection.ipp_uri],
+              ["Host", connection.host],
+              ["Port", String(connection.port)],
+              ["Queue / Resource Path", connection.resource_path],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className="flex items-center justify-between gap-3 border-t border-black/[.08] pt-2 first:border-t-0 first:pt-0 dark:border-white/[.1]"
+              >
+                <div className="flex flex-col">
+                  <span className="text-xs font-medium text-zinc-500">{label}</span>
+                  <code className="text-zinc-800 dark:text-zinc-200">{value}</code>
+                </div>
+                <Button variant="secondary" className="!px-3 !py-1 text-xs" onClick={() => handleCopy(label, value)}>
+                  {copiedField === label ? "Copied" : "Copy"}
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
 
       <Card>
