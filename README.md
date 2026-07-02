@@ -67,4 +67,4 @@ CI (`.github/workflows/ci.yml`) runs the same checks on every push/PR.
 
 ## Contributing
 
-This is an early-stage open-source project — issues and PRs welcome. Licensed under [Apache 2.0](./LICENSE).
+This is an early-stage open-source project — issues and PRs welcome. Licensed under [GPLv3](./LICENSE).
