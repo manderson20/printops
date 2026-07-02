@@ -31,6 +31,20 @@ def load_backend_token() -> str:
     raise RuntimeError(f"PRINTOPS_BACKEND_TOKEN not found in {ENV_FILE}")
 
 
+def parse_source_host(job_options: str) -> str | None:
+    """CUPS embeds job-originating-host-name=<ip-or-hostname> as one of the
+    space-separated key=value tokens in the options string it hands
+    backends (alongside finishings=/job-uuid=/etc.) — used by
+    app/attribution/resolve.py to try to resolve the actual submitting
+    user via MDM device lookup, not just the raw job-originating-user-name
+    CUPS already reports via job_user."""
+    for token in job_options.split():
+        if token.startswith("job-originating-host-name="):
+            value = token.removeprefix("job-originating-host-name=")
+            return value or None
+    return None
+
+
 def api_request(token: str, method: str, path: str, body: dict | None = None) -> dict:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(f"{API_BASE}{path}", data=data, method=method)
@@ -89,6 +103,7 @@ def main() -> int:
                 "cups_job_id": int(job_id),
                 "submitted_by": job_user,
                 "file_size_bytes": file_size,
+                "source_host": parse_source_host(job_options),
             },
         )
     except (urllib.error.URLError, urllib.error.HTTPError) as exc:

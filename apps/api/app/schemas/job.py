@@ -9,6 +9,9 @@ class JobCreate(BaseModel):
     cups_job_id: int | None = None
     submitted_by: str | None = None
     file_size_bytes: int | None = None
+    # Client IP (job-originating-host-name), used for MDM-based attribution
+    # (app/attribution/resolve.py) — see infra/cups/backends/printops.
+    source_host: str | None = None
 
 
 class JobUpdate(BaseModel):
@@ -21,6 +24,7 @@ class JobOut(BaseModel):
     printer_id: UUID
     cups_job_id: int | None
     submitted_by: str | None
+    attribution_method: str
     file_size_bytes: int | None
     status: str
     error_message: str | None

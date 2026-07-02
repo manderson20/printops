@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.attribution.resolve import resolve_user
 from app.db import get_db
 from app.deps import get_current_user, verify_backend_token
 from app.models.job import Job
@@ -42,10 +43,14 @@ async def list_jobs(
 @router.post("", response_model=JobOut, status_code=status.HTTP_201_CREATED)
 async def create_job(payload: JobCreate, db: AsyncSession = Depends(get_db)):
     """Called by the CUPS backend script right before it attempts delivery."""
+    attributed_user, attribution_method = await resolve_user(
+        db, payload.submitted_by, payload.source_host
+    )
     job = Job(
         printer_id=payload.printer_id,
         cups_job_id=payload.cups_job_id,
-        submitted_by=payload.submitted_by,
+        submitted_by=attributed_user,
+        attribution_method=attribution_method,
         file_size_bytes=payload.file_size_bytes,
         status="forwarding",
     )
