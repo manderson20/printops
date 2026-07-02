@@ -12,11 +12,18 @@ from app.deps import get_current_user
 from app.models.printer import Printer
 from app.printers.capabilities import parse_capabilities, sanitize_raw_attributes
 from app.printers.ipp_client import PrinterProbeError, probe_printer
+from app.printers.queue_sync import QueueSyncError, remove_queue, sync_queue
 from app.printers.test_print import TestPrintError, submit_test_print
 from app.schemas.auth import UserOut
 from app.schemas.printer import PrinterCreate, PrinterMdmConnectionOut, PrinterOut, PrinterUpdate
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
+
+# Fields that affect the CUPS queue (device-uri, PPD, sharing, AirPrint
+# advertisement) — an update touching only these should trigger a re-sync.
+# Anything else (notes, department, building...) shouldn't cause CUPS/Avahi
+# churn.
+QUEUE_AFFECTING_FIELDS = {"name", "ip_address", "port", "use_tls", "ipp_path", "airprint_enabled"}
 
 
 async def _get_printer_or_404(printer_id: UUID, db: AsyncSession) -> Printer:
@@ -48,6 +55,21 @@ async def _apply_discovery(printer: Printer) -> None:
         printer.capabilities_error = str(exc)
 
 
+async def _apply_queue_sync(printer: Printer, db: AsyncSession) -> None:
+    """Creates/updates the printer's CUPS queue to match its current
+    connection details. Must run after the printer is already committed —
+    the sync script reads connection info back via the internal API, which
+    reads the DB. Non-fatal: failure is recorded on the printer, not raised,
+    so a print-server hiccup doesn't block adding/editing a printer."""
+    try:
+        await asyncio.to_thread(sync_queue, str(printer.id))
+        printer.queue_sync_error = None
+    except QueueSyncError as exc:
+        printer.queue_sync_error = str(exc)
+    await db.commit()
+    await db.refresh(printer)
+
+
 @router.post("", response_model=PrinterOut, status_code=status.HTTP_201_CREATED)
 async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_db)):
     printer = Printer(
@@ -70,6 +92,7 @@ async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_
     db.add(printer)
     await db.commit()
     await db.refresh(printer)
+    await _apply_queue_sync(printer, db)
     return printer
 
 
@@ -96,12 +119,18 @@ async def update_printer(
         setattr(printer, field, value)
     await db.commit()
     await db.refresh(printer)
+    if QUEUE_AFFECTING_FIELDS & updates.keys():
+        await _apply_queue_sync(printer, db)
     return printer
 
 
 @router.delete("/{printer_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     printer = await _get_printer_or_404(printer_id, db)
+    try:
+        await asyncio.to_thread(remove_queue, str(printer.id))
+    except QueueSyncError:
+        pass  # best-effort — don't block a delete the admin explicitly asked for
     await db.delete(printer)
     await db.commit()
 
@@ -112,6 +141,15 @@ async def discover_printer(printer_id: UUID, db: AsyncSession = Depends(get_db))
     await _apply_discovery(printer)
     await db.commit()
     await db.refresh(printer)
+    return printer
+
+
+@router.post("/{printer_id}/resync-queue", response_model=PrinterOut)
+async def resync_queue(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Manually retries the CUPS queue sync — e.g. after fixing whatever
+    caused queue_sync_error, without needing another printer edit."""
+    printer = await _get_printer_or_404(printer_id, db)
+    await _apply_queue_sync(printer, db)
     return printer
 
 

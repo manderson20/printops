@@ -111,6 +111,7 @@ class PrinterOut(BaseModel):
     capabilities: CapabilitiesOut | None
     capabilities_detected_at: datetime | None
     capabilities_error: str | None
+    queue_sync_error: str | None
 
     created_at: datetime
     updated_at: datetime

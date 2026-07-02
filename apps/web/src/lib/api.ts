@@ -77,6 +77,7 @@ export type Printer = {
   capabilities: Capabilities | null;
   capabilities_detected_at: string | null;
   capabilities_error: string | null;
+  queue_sync_error: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -132,6 +133,11 @@ export async function deletePrinter(id: string): Promise<void> {
 
 export async function rediscoverPrinter(id: string): Promise<Printer> {
   const response = await authorizedFetch(`/api/v1/printers/${id}/discover`, { method: "POST" });
+  return response.json();
+}
+
+export async function resyncQueue(id: string): Promise<Printer> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/resync-queue`, { method: "POST" });
   return response.json();
 }
 
