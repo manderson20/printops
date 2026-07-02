@@ -1,8 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { login } from "@/lib/auth";
+import { Button } from "@/components/ui/Button";
+import { Field, Input } from "@/components/ui/Field";
+import { ErrorState } from "@/components/ui/EmptyState";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -31,40 +35,36 @@ export default function LoginPage() {
         onSubmit={handleSubmit}
         className="flex w-full max-w-sm flex-col gap-4 rounded-xl border border-black/[.08] bg-white p-8 dark:border-white/[.145] dark:bg-black"
       >
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Sign in to PrintOps</h1>
+        <div className="mb-2 flex flex-col items-center gap-2 text-center">
+          <Image src="/printops-logo.png" alt="PrintOps" width={56} height={56} priority />
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Sign in to PrintOps</h1>
+          <p className="text-xs text-zinc-500">Print management. Simplified.</p>
+        </div>
 
-        <label className="flex flex-col gap-1 text-sm text-zinc-700 dark:text-zinc-300">
-          Username
-          <input
-            className="rounded border border-black/[.15] bg-transparent px-3 py-2 text-black dark:border-white/[.2] dark:text-zinc-50"
+        <Field label="Username">
+          <Input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             autoComplete="username"
             required
           />
-        </label>
+        </Field>
 
-        <label className="flex flex-col gap-1 text-sm text-zinc-700 dark:text-zinc-300">
-          Password
-          <input
+        <Field label="Password">
+          <Input
             type="password"
-            className="rounded border border-black/[.15] bg-transparent px-3 py-2 text-black dark:border-white/[.2] dark:text-zinc-50"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
             required
           />
-        </label>
+        </Field>
 
-        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+        {error && <ErrorState>{error}</ErrorState>}
 
-        <button
-          type="submit"
-          disabled={submitting}
-          className="mt-2 rounded-full bg-foreground px-5 py-2 text-sm font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
-        >
+        <Button type="submit" disabled={submitting} className="mt-2">
           {submitting ? "Signing in…" : "Sign in"}
-        </button>
+        </Button>
       </form>
     </div>
   );

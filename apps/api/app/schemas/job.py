@@ -28,3 +28,7 @@ class JobOut(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class JobListOut(JobOut):
+    printer_name: str

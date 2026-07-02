@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createPrinter, ApiError } from "@/lib/api";
-import { useAuthGuard } from "@/lib/useAuthGuard";
+import { Button } from "@/components/ui/Button";
+import { Field, Input, Textarea } from "@/components/ui/Field";
+import { ErrorState } from "@/components/ui/EmptyState";
 
 const initialForm = {
   name: "",
@@ -19,7 +21,6 @@ const initialForm = {
 };
 
 export default function NewPrinterPage() {
-  useAuthGuard();
   const router = useRouter();
   const [form, setForm] = useState(initialForm);
   const [airprintEnabled, setAirprintEnabled] = useState(false);
@@ -55,15 +56,11 @@ export default function NewPrinterPage() {
     }
   }
 
-  const inputClass =
-    "rounded border border-black/[.15] bg-transparent px-3 py-2 text-black dark:border-white/[.2] dark:text-zinc-50";
-  const labelClass = "flex flex-col gap-1 text-sm text-zinc-700 dark:text-zinc-300";
-
   return (
-    <div className="flex flex-1 justify-center bg-zinc-50 p-8 font-sans dark:bg-black">
+    <div className="flex w-full max-w-lg flex-col">
       <form
         onSubmit={handleSubmit}
-        className="flex w-full max-w-lg flex-col gap-4 rounded-xl border border-black/[.08] bg-white p-8 dark:border-white/[.145] dark:bg-black"
+        className="flex flex-col gap-4 rounded-xl border border-black/[.08] bg-white p-8 dark:border-white/[.145] dark:bg-black"
       >
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Add Printer</h1>
         <p className="text-sm text-zinc-500">
@@ -71,101 +68,55 @@ export default function NewPrinterPage() {
           fill in what it supports (duplex, color, staple, punch, etc.) automatically.
         </p>
 
-        <label className={labelClass}>
-          Name *
-          <input
-            className={inputClass}
-            value={form.name}
-            onChange={(e) => update("name", e.target.value)}
-            required
-          />
-        </label>
+        <Field label="Name *">
+          <Input value={form.name} onChange={(e) => update("name", e.target.value)} required />
+        </Field>
 
-        <label className={labelClass}>
-          IP Address *
-          <input
-            className={inputClass}
+        <Field label="IP Address *">
+          <Input
             value={form.ip_address}
             onChange={(e) => update("ip_address", e.target.value)}
             placeholder="10.0.1.25"
             required
           />
-        </label>
+        </Field>
 
         <div className="grid grid-cols-2 gap-4">
-          <label className={labelClass}>
-            Manufacturer
-            <input
-              className={inputClass}
-              value={form.manufacturer}
-              onChange={(e) => update("manufacturer", e.target.value)}
-            />
-          </label>
-          <label className={labelClass}>
-            Model
-            <input
-              className={inputClass}
-              value={form.model}
-              onChange={(e) => update("model", e.target.value)}
-            />
-          </label>
+          <Field label="Manufacturer">
+            <Input value={form.manufacturer} onChange={(e) => update("manufacturer", e.target.value)} />
+          </Field>
+          <Field label="Model">
+            <Input value={form.model} onChange={(e) => update("model", e.target.value)} />
+          </Field>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
-          <label className={labelClass}>
-            Hostname
-            <input
-              className={inputClass}
-              value={form.hostname}
-              onChange={(e) => update("hostname", e.target.value)}
-            />
-          </label>
-          <label className={labelClass}>
-            Serial Number
-            <input
-              className={inputClass}
+          <Field label="Hostname">
+            <Input value={form.hostname} onChange={(e) => update("hostname", e.target.value)} />
+          </Field>
+          <Field label="Serial Number">
+            <Input
               value={form.serial_number}
               onChange={(e) => update("serial_number", e.target.value)}
             />
-          </label>
+          </Field>
         </div>
 
         <div className="grid grid-cols-3 gap-4">
-          <label className={labelClass}>
-            Building
-            <input
-              className={inputClass}
-              value={form.building}
-              onChange={(e) => update("building", e.target.value)}
-            />
-          </label>
-          <label className={labelClass}>
-            Room
-            <input
-              className={inputClass}
-              value={form.room}
-              onChange={(e) => update("room", e.target.value)}
-            />
-          </label>
-          <label className={labelClass}>
-            Department
-            <input
-              className={inputClass}
-              value={form.department}
-              onChange={(e) => update("department", e.target.value)}
-            />
-          </label>
+          <Field label="Building">
+            <Input value={form.building} onChange={(e) => update("building", e.target.value)} />
+          </Field>
+          <Field label="Room">
+            <Input value={form.room} onChange={(e) => update("room", e.target.value)} />
+          </Field>
+          <Field label="Department">
+            <Input value={form.department} onChange={(e) => update("department", e.target.value)} />
+          </Field>
         </div>
 
-        <label className={labelClass}>
-          Notes
-          <textarea
-            className={inputClass}
-            value={form.notes}
-            onChange={(e) => update("notes", e.target.value)}
-            rows={2}
-          />
-        </label>
+        <Field label="Notes">
+          <Textarea value={form.notes} onChange={(e) => update("notes", e.target.value)} rows={2} />
+        </Field>
 
         <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
           <input
@@ -186,23 +137,15 @@ export default function NewPrinterPage() {
           </span>
         </label>
 
-        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+        {error && <ErrorState>{error}</ErrorState>}
 
         <div className="mt-2 flex gap-3">
-          <button
-            type="submit"
-            disabled={submitting}
-            className="rounded-full bg-foreground px-5 py-2 text-sm font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
-          >
+          <Button type="submit" disabled={submitting}>
             {submitting ? "Adding & probing printer…" : "Add Printer"}
-          </button>
-          <button
-            type="button"
-            onClick={() => router.push("/printers")}
-            className="rounded-full border border-black/[.15] px-5 py-2 text-sm font-medium text-black dark:border-white/[.2] dark:text-zinc-50"
-          >
+          </Button>
+          <Button type="button" variant="secondary" onClick={() => router.push("/printers")}>
             Cancel
-          </button>
+          </Button>
         </div>
       </form>
     </div>

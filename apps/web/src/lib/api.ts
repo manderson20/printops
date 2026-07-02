@@ -134,3 +134,27 @@ export async function rediscoverPrinter(id: string): Promise<Printer> {
   const response = await authorizedFetch(`/api/v1/printers/${id}/discover`, { method: "POST" });
   return response.json();
 }
+
+export type JobStatus = "received" | "forwarding" | "forwarded" | "failed";
+
+export type Job = {
+  id: string;
+  printer_id: string;
+  printer_name: string;
+  cups_job_id: number | null;
+  submitted_by: string | null;
+  file_size_bytes: number | null;
+  status: JobStatus;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function listJobs(params?: { printer_id?: string; limit?: number }): Promise<Job[]> {
+  const query = new URLSearchParams();
+  if (params?.printer_id) query.set("printer_id", params.printer_id);
+  if (params?.limit) query.set("limit", String(params.limit));
+  const qs = query.toString();
+  const response = await authorizedFetch(`/api/v1/jobs${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
