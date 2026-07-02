@@ -153,16 +153,35 @@ async def sync_devices(db: AsyncSession) -> int:
     client = _client_from_settings(settings)
     devices = await client.list_devices()
 
+    # Real device inventories can report the same MAC for more than one
+    # record — confirmed against this org's actual data, 2026-07-02 (devices
+    # without a live WiFi connection appear to fall back to a shared/generic
+    # Bluetooth identifier, colliding with each other). A MAC->user match
+    # exists to attribute jobs to a *specific* person; if two people's
+    # devices share the observed MAC, resolving it either way could
+    # mis-attribute a job — worse than not resolving at all. Drop ambiguous
+    # MACs from the cache entirely rather than picking one arbitrarily.
+    by_mac: dict[str, dict] = {}
+    ambiguous_macs: set[str] = set()
+    for device in devices:
+        raw_mac = device.get("wifi_mac_address") or device.get("bluetooth_mac_address")
+        if not raw_mac:
+            continue
+        mac = normalize_mac(raw_mac)
+        if mac in by_mac:
+            ambiguous_macs.add(mac)
+        else:
+            by_mac[mac] = device
+
     now = datetime.now(UTC)
     await db.execute(delete(MosyleDevice))
     count = 0
-    for device in devices:
-        mac = device.get("wifi_mac_address") or device.get("bluetooth_mac_address")
-        if not mac:
+    for mac, device in by_mac.items():
+        if mac in ambiguous_macs:
             continue
         db.add(
             MosyleDevice(
-                mac_address=normalize_mac(mac),
+                mac_address=mac,
                 serial_number=device.get("serial_number"),
                 device_name=device.get("device_name"),
                 user_email=device.get("useremail"),
