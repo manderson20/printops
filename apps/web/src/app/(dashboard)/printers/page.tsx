@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { listPrinters, type Printer } from "@/lib/api";
+import { ApiError, listPrinters, testPrintPrinter, type Printer } from "@/lib/api";
 import { capabilityBadges } from "@/lib/capabilities";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -15,8 +15,11 @@ type LoadState =
   | { phase: "ok"; printers: Printer[] }
   | { phase: "error"; message: string };
 
+type TestPrintState = { phase: "sending" } | { phase: "ok" } | { phase: "error"; message: string };
+
 export default function PrintersPage() {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
+  const [testPrints, setTestPrints] = useState<Record<string, TestPrintState>>({});
 
   useEffect(() => {
     listPrinters()
@@ -28,6 +31,22 @@ export default function PrintersPage() {
         }),
       );
   }, []);
+
+  async function handleTestPrint(printerId: string) {
+    setTestPrints((prev) => ({ ...prev, [printerId]: { phase: "sending" } }));
+    try {
+      await testPrintPrinter(printerId);
+      setTestPrints((prev) => ({ ...prev, [printerId]: { phase: "ok" } }));
+    } catch (err) {
+      setTestPrints((prev) => ({
+        ...prev,
+        [printerId]: {
+          phase: "error",
+          message: err instanceof ApiError ? err.message : "Test print failed",
+        },
+      }));
+    }
+  }
 
   return (
     <div className="flex w-full max-w-5xl flex-col gap-6">
@@ -54,10 +73,13 @@ export default function PrintersPage() {
                 <th className="px-4 py-3 font-medium">Location</th>
                 <th className="px-4 py-3 font-medium">AirPrint</th>
                 <th className="px-4 py-3 font-medium">Capabilities</th>
+                <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {state.printers.map((printer) => (
+              {state.printers.map((printer) => {
+                const testPrint = testPrints[printer.id];
+                return (
                 <tr
                   key={printer.id}
                   className="border-t border-black/[.08] hover:bg-black/[.02] dark:border-white/[.1] dark:hover:bg-white/[.03]"
@@ -105,8 +127,31 @@ export default function PrintersPage() {
                       )}
                     </div>
                   </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col items-start gap-1">
+                      <Button
+                        variant="secondary"
+                        className="!px-3 !py-1 text-xs"
+                        disabled={testPrint?.phase === "sending"}
+                        onClick={() => handleTestPrint(printer.id)}
+                      >
+                        {testPrint?.phase === "sending" ? "Sending…" : "Test Print"}
+                      </Button>
+                      {testPrint?.phase === "ok" && (
+                        <span className="text-xs text-emerald-700 dark:text-emerald-400">
+                          Sent — check Jobs
+                        </span>
+                      )}
+                      {testPrint?.phase === "error" && (
+                        <span className="max-w-[16rem] text-xs text-red-600 dark:text-red-400">
+                          {testPrint.message}
+                        </span>
+                      )}
+                    </div>
+                  </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </Card>

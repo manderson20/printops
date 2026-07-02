@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -10,6 +11,8 @@ from app.deps import get_current_user
 from app.models.printer import Printer
 from app.printers.capabilities import parse_capabilities, sanitize_raw_attributes
 from app.printers.ipp_client import PrinterProbeError, probe_printer
+from app.printers.test_print import TestPrintError, submit_test_print
+from app.schemas.auth import UserOut
 from app.schemas.printer import PrinterCreate, PrinterOut, PrinterUpdate
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -109,3 +112,19 @@ async def discover_printer(printer_id: UUID, db: AsyncSession = Depends(get_db))
     await db.commit()
     await db.refresh(printer)
     return printer
+
+
+@router.post("/{printer_id}/test-print")
+async def test_print(
+    printer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+):
+    printer = await _get_printer_or_404(printer_id, db)
+    try:
+        message = await asyncio.to_thread(
+            submit_test_print, str(printer.id), printer.name, current_user.username
+        )
+    except TestPrintError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return {"message": message}
