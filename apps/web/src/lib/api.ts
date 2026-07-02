@@ -161,6 +161,7 @@ export async function getMdmConnection(id: string): Promise<MdmConnectionInfo> {
 }
 
 export type JobStatus = "received" | "forwarding" | "forwarded" | "failed";
+export type AttributionMethod = "cups" | "mosyle" | "unresolved";
 
 export type Job = {
   id: string;
@@ -168,6 +169,7 @@ export type Job = {
   printer_name: string;
   cups_job_id: number | null;
   submitted_by: string | null;
+  attribution_method: AttributionMethod;
   file_size_bytes: number | null;
   status: JobStatus;
   error_message: string | null;
@@ -181,5 +183,56 @@ export async function listJobs(params?: { printer_id?: string; limit?: number })
   if (params?.limit) query.set("limit", String(params.limit));
   const qs = query.toString();
   const response = await authorizedFetch(`/api/v1/jobs${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export type MosyleSettings = {
+  base_url: string;
+  admin_email: string | null;
+  has_access_token: boolean;
+  has_admin_password: boolean;
+  enabled: boolean;
+  last_synced_at: string | null;
+  last_sync_error: string | null;
+  device_count: number;
+};
+
+export type MosyleSettingsInput = {
+  base_url?: string;
+  access_token?: string;
+  admin_email?: string;
+  admin_password?: string;
+  enabled?: boolean;
+};
+
+export type MosyleTestResult = {
+  ok: boolean;
+  device_count: number | null;
+  error: string | null;
+};
+
+export async function getMosyleSettings(): Promise<MosyleSettings> {
+  const response = await authorizedFetch("/api/v1/settings/mosyle");
+  return response.json();
+}
+
+export async function updateMosyleSettings(input: MosyleSettingsInput): Promise<MosyleSettings> {
+  const response = await authorizedFetch("/api/v1/settings/mosyle", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function testMosyleConnection(input: MosyleSettingsInput): Promise<MosyleTestResult> {
+  const response = await authorizedFetch("/api/v1/settings/mosyle/test", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function syncMosyleDevices(): Promise<MosyleSettings> {
+  const response = await authorizedFetch("/api/v1/settings/mosyle/sync", { method: "POST" });
   return response.json();
 }

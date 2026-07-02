@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { listJobs, type Job } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
-import { jobStatusInfo } from "@/lib/jobStatus";
+import { attributionMethodInfo, jobStatusInfo } from "@/lib/jobStatus";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
@@ -66,6 +66,7 @@ function JobsList() {
             <tbody>
               {state.jobs.map((job) => {
                 const info = jobStatusInfo(job.status);
+                const attribution = attributionMethodInfo(job.attribution_method);
                 return (
                   <tr
                     key={job.id}
@@ -80,7 +81,10 @@ function JobsList() {
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
-                      {job.submitted_by ?? "—"}
+                      <div className="flex items-center gap-2">
+                        {job.submitted_by ?? "—"}
+                        <Badge tone={attribution.tone}>{attribution.label}</Badge>
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-1">

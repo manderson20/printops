@@ -18,7 +18,7 @@ import {
 } from "@/lib/api";
 import { capabilityBadges } from "@/lib/capabilities";
 import { formatBytes } from "@/lib/format";
-import { jobStatusInfo } from "@/lib/jobStatus";
+import { attributionMethodInfo, jobStatusInfo } from "@/lib/jobStatus";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
@@ -314,14 +314,16 @@ export default function PrinterDetailPage() {
           <div className="flex flex-col gap-2 text-sm">
             {jobs.map((job) => {
               const info = jobStatusInfo(job.status);
+              const attribution = attributionMethodInfo(job.attribution_method);
               return (
                 <div
                   key={job.id}
                   className="flex items-center justify-between border-t border-black/[.08] pt-2 first:border-t-0 first:pt-0 dark:border-white/[.1]"
                 >
                   <div className="flex flex-col">
-                    <span className="text-zinc-700 dark:text-zinc-300">
+                    <span className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
                       {job.submitted_by ?? "Unknown user"}
+                      <Badge tone={attribution.tone}>{attribution.label}</Badge>
                     </span>
                     <span className="text-xs text-zinc-400">
                       {new Date(job.created_at).toLocaleString()} · {formatBytes(job.file_size_bytes)}
