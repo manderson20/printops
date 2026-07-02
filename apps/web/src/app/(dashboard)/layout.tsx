@@ -10,7 +10,7 @@ import { useAuthGuard } from "@/lib/useAuthGuard";
 const NAV_LINKS = [
   { href: "/printers", label: "Printers" },
   { href: "/jobs", label: "Jobs" },
-  { href: "/settings/mosyle", label: "Settings" },
+  { href: "/integrations", label: "Integrations" },
 ] as const;
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
