@@ -53,7 +53,7 @@ async def test_list_devices_parses_real_shape_single_page(monkeypatch):
     monkeypatch.setattr(MosyleClient, "_post", fake_post)
     devices = await client.list_devices()
     assert devices == [{"serial_number": "SN1", "wifi_mac_address": "aa:bb:cc:dd:ee:ff"}]
-    assert calls == [("listdevices", {"options": {"os": "macos", "page": 0}})]
+    assert calls == [("listdevices", {"options": {"os": "mac", "page": 0}})]
 
 
 @pytest.mark.asyncio
@@ -102,7 +102,7 @@ async def test_sync_devices_requires_enabled_settings(db_session_factory):
 
 @pytest.mark.asyncio
 async def test_sync_devices_populates_cache_from_embedded_user_fields(db_session_factory, monkeypatch):
-    async def fake_list_devices(self, os="macos"):
+    async def fake_list_devices(self, os="mac"):
         return [
             {
                 "wifi_mac_address": "aa:bb:cc:dd:ee:ff",
@@ -143,7 +143,7 @@ async def test_sync_devices_populates_cache_from_embedded_user_fields(db_session
 
 @pytest.mark.asyncio
 async def test_run_sync_records_failure_on_settings(db_session_factory, monkeypatch):
-    async def fake_list_devices(self, os="macos"):
+    async def fake_list_devices(self, os="mac"):
         raise MosyleError("simulated API outage")
 
     monkeypatch.setattr(MosyleClient, "list_devices", fake_list_devices)

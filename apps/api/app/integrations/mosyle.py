@@ -103,7 +103,7 @@ class MosyleClient:
             raise MosyleError(f"Mosyle API did not return success: {json.dumps(data)[:300]}")
         return data.get("response", data)
 
-    async def list_devices(self, os: str = "macos") -> list[dict]:
+    async def list_devices(self, os: str = "mac") -> list[dict]:
         """Paginated — Mosyle returns devices a page at a time plus a
         `rows` total count."""
         devices: list[dict] = []
