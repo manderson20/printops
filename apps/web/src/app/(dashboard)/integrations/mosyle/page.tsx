@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
+import { PasswordField } from "@/components/ui/PasswordField";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
 
@@ -119,32 +120,39 @@ export default function MosyleSettingsPage() {
   }
 
   const { settings } = state;
+  const readyToTest = Boolean(
+    form.access_token || settings.has_access_token,
+  ) && Boolean(form.admin_email) && Boolean(form.admin_password || settings.has_admin_password);
 
   return (
     <div className="flex w-full max-w-2xl flex-col gap-6">
-      <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Mosyle Integration</h1>
+      <div>
+        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Mosyle Integration</h1>
+        <p className="mt-1 text-sm text-zinc-500">
+          Used for real print-job attribution via device→user lookup (see the Jobs page) instead
+          of relying on whatever CUPS reports. This deployment uses{" "}
+          <strong className="font-medium text-zinc-700 dark:text-zinc-300">Mosyle Manager</strong>{" "}
+          (the K-12 schools product) — not Mosyle Business, a different product with a different
+          API host.
+        </p>
+      </div>
 
       <Card>
-        <CardTitle className="mb-1">Connection</CardTitle>
-        <p className="mb-4 text-xs text-zinc-500">
-          Used to resolve real print-job attribution via device→user lookup (see the Jobs page)
-          instead of relying on whatever CUPS reports. Access token and admin password are stored
-          encrypted and never shown again after saving — leave them blank on an edit to keep the
-          existing value.
+        <div className="mb-1 flex items-center gap-2">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground">
+            1
+          </span>
+          <CardTitle className="mb-0">API Access Token</CardTitle>
+        </div>
+        <p className="mb-4 ml-7 text-xs text-zinc-500">
+          In Mosyle: <strong className="font-medium">My School → Integrations → API</strong> (wording
+          may vary slightly) → activate/add a new integration token, then paste it below.
         </p>
-
-        <div className="flex flex-col gap-4">
+        <div className="ml-7 flex flex-col gap-4">
           <Field label="Base URL">
             <Input value={form.base_url} onChange={(e) => update("base_url", e.target.value)} />
           </Field>
-          <Field label="Admin Email">
-            <Input
-              type="email"
-              value={form.admin_email}
-              onChange={(e) => update("admin_email", e.target.value)}
-            />
-          </Field>
-          <Field
+          <PasswordField
             label={
               <>
                 Access Token{" "}
@@ -153,15 +161,34 @@ export default function MosyleSettingsPage() {
                 )}
               </>
             }
-          >
+            value={form.access_token}
+            onChange={(v) => update("access_token", v)}
+            placeholder={settings.has_access_token ? "•••••••• (unchanged)" : ""}
+          />
+        </div>
+      </Card>
+
+      <Card>
+        <div className="mb-1 flex items-center gap-2">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground">
+            2
+          </span>
+          <CardTitle className="mb-0">Admin Login</CardTitle>
+        </div>
+        <p className="mb-4 ml-7 text-xs text-zinc-500">
+          Mosyle requires an admin&apos;s own login credentials <em>in addition to</em> the access
+          token above (not a separate API-only account) — this is Mosyle&apos;s requirement, not a
+          PrintOps design choice.
+        </p>
+        <div className="ml-7 flex flex-col gap-4">
+          <Field label="Admin Email">
             <Input
-              type="password"
-              value={form.access_token}
-              onChange={(e) => update("access_token", e.target.value)}
-              placeholder={settings.has_access_token ? "••••••••" : ""}
+              type="email"
+              value={form.admin_email}
+              onChange={(e) => update("admin_email", e.target.value)}
             />
           </Field>
-          <Field
+          <PasswordField
             label={
               <>
                 Admin Password{" "}
@@ -170,17 +197,33 @@ export default function MosyleSettingsPage() {
                 )}
               </>
             }
-          >
-            <Input
-              type="password"
-              value={form.admin_password}
-              onChange={(e) => update("admin_password", e.target.value)}
-              placeholder={settings.has_admin_password ? "••••••••" : ""}
-            />
-          </Field>
+            value={form.admin_password}
+            onChange={(v) => update("admin_password", v)}
+            placeholder={settings.has_admin_password ? "•••••••• (unchanged)" : ""}
+          />
+        </div>
+      </Card>
 
+      <Card>
+        <div className="mb-1 flex items-center gap-2">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground">
+            3
+          </span>
+          <CardTitle className="mb-0">Test &amp; Save</CardTitle>
+        </div>
+        <p className="mb-4 ml-7 text-xs text-zinc-500">
+          Test Connection checks whatever&apos;s currently in the fields above — including a
+          just-typed token — before you save anything, so a mistake shows up here first.
+        </p>
+
+        <div className="ml-7 flex flex-col gap-4">
           <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-            <input type="checkbox" className="mt-1" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+            />
             <span>
               Enabled
               <br />
@@ -189,22 +232,28 @@ export default function MosyleSettingsPage() {
               </span>
             </span>
           </label>
-        </div>
 
-        {actionError && <ErrorState>{actionError}</ErrorState>}
-        {testResult && (
-          <p className={`mt-3 text-sm ${testResult.ok ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-            {testResult.message}
-          </p>
-        )}
+          {actionError && <ErrorState>{actionError}</ErrorState>}
+          {testResult && (
+            <p
+              className={`text-sm ${testResult.ok ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
+            >
+              {testResult.ok ? "✓ " : "✗ "}
+              {testResult.message}
+            </p>
+          )}
+          {!readyToTest && !testResult && (
+            <p className="text-xs text-zinc-400">Fill in the token and admin login above to test.</p>
+          )}
 
-        <div className="mt-4 flex gap-3">
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? "Saving…" : "Save"}
-          </Button>
-          <Button variant="secondary" onClick={handleTest} disabled={testing}>
-            {testing ? "Testing…" : "Test Connection"}
-          </Button>
+          <div className="flex gap-3">
+            <Button variant="secondary" onClick={handleTest} disabled={testing || !readyToTest}>
+              {testing ? "Testing…" : "Test Connection"}
+            </Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          </div>
         </div>
       </Card>
 
