@@ -65,6 +65,7 @@ export type Printer = {
   port: number;
   use_tls: boolean;
   ipp_path: string | null;
+  airprint_enabled: boolean;
   manufacturer: string | null;
   model: string | null;
   hostname: string | null;
@@ -86,6 +87,7 @@ export type PrinterCreateInput = {
   port?: number;
   use_tls?: boolean;
   ipp_path?: string | null;
+  airprint_enabled?: boolean;
   manufacturer?: string | null;
   model?: string | null;
   hostname?: string | null;

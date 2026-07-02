@@ -22,6 +22,7 @@ export default function NewPrinterPage() {
   useAuthGuard();
   const router = useRouter();
   const [form, setForm] = useState(initialForm);
+  const [airprintEnabled, setAirprintEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -37,6 +38,7 @@ export default function NewPrinterPage() {
       const printer = await createPrinter({
         name: form.name,
         ip_address: form.ip_address,
+        airprint_enabled: airprintEnabled,
         manufacturer: form.manufacturer || null,
         model: form.model || null,
         hostname: form.hostname || null,
@@ -163,6 +165,25 @@ export default function NewPrinterPage() {
             onChange={(e) => update("notes", e.target.value)}
             rows={2}
           />
+        </label>
+
+        <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={airprintEnabled}
+            onChange={(e) => setAirprintEnabled(e.target.checked)}
+          />
+          <span>
+            Discoverable via AirPrint (Bonjour)
+            <br />
+            <span className="text-xs text-zinc-500">
+              Off by default. When off, this printer won&apos;t show up automatically on
+              Macs/iPads on the network — only devices explicitly configured to use it (e.g.
+              via an MDM-pushed printer profile) can print to it. Turn on for general-use
+              printers; leave off for anything handling confidential documents.
+            </span>
+          </span>
         </label>
 
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
