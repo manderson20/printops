@@ -18,6 +18,10 @@ class Settings(BaseSettings):
 
     database_url: str
 
+    # Shared secret for service-to-service calls (the CUPS backend script),
+    # separate from user JWT auth — see app/deps.py's verify_backend_token.
+    backend_token: str
+
     # Reserved for future use — not connected to anything yet in this scaffold.
     redis_url: str | None = None
 

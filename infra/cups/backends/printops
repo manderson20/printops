@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Custom CUPS backend for PrintOps's IPP proxy (Phase 1).
+
+Installed at /usr/lib/cups/backend/printops. CUPS invokes this for every job
+sent to a queue whose device-uri is "printops://<printer-uuid>". It logs the
+job to the PrintOps API, then delegates actual delivery to CUPS's own built-in
+`ipp` backend (pointed at the real printer) rather than re-implementing IPP
+Print-Job encoding — see infra/cups/README.md for the full design.
+
+Stdlib only: this runs directly under CUPS (as root, outside any venv), not
+through the app's own Python environment.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+API_BASE = "http://localhost:8000"
+REAL_IPP_BACKEND = "/usr/lib/cups/backend/ipp"
+ENV_FILE = "/home/itadmin/printops/apps/api/.env"
+
+
+def load_backend_token() -> str:
+    with open(ENV_FILE) as f:
+        for line in f:
+            if line.startswith("PRINTOPS_BACKEND_TOKEN="):
+                return line.strip().split("=", 1)[1]
+    raise RuntimeError(f"PRINTOPS_BACKEND_TOKEN not found in {ENV_FILE}")
+
+
+def api_request(token: str, method: str, path: str, body: dict | None = None) -> dict:
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(f"{API_BASE}{path}", data=data, method=method)
+    req.add_header("X-Backend-Token", token)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def main() -> int:
+    if len(sys.argv) == 1:
+        # Discovery mode (e.g. `lpinfo -v`) — queues are created explicitly
+        # with a printops:// device-uri, nothing to auto-advertise here.
+        return 0
+
+    if len(sys.argv) < 6:
+        sys.stderr.write("ERROR: printops backend: wrong number of arguments\n")
+        return 1
+
+    job_id, job_user, job_title, job_copies, job_options = sys.argv[1:6]
+    filename = sys.argv[6] if len(sys.argv) > 6 else None
+
+    try:
+        token = load_backend_token()
+    except (OSError, RuntimeError) as exc:
+        sys.stderr.write(f"ERROR: printops backend: {exc}\n")
+        return 1
+
+    device_uri = os.environ.get("DEVICE_URI", "")
+    printer_id = device_uri.removeprefix("printops://").split("/")[0]
+    if not printer_id:
+        sys.stderr.write(f"ERROR: printops backend: bad DEVICE_URI {device_uri!r}\n")
+        return 1
+
+    try:
+        printer = api_request(token, "GET", f"/api/v1/internal/printers/{printer_id}/connection")
+    except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+        sys.stderr.write(f"ERROR: printops backend: printer lookup failed: {exc}\n")
+        return 1
+
+    file_size = None
+    if filename:
+        try:
+            file_size = os.path.getsize(filename)
+        except OSError:
+            file_size = None
+
+    try:
+        job = api_request(
+            token,
+            "POST",
+            "/api/v1/jobs",
+            {
+                "printer_id": printer_id,
+                "cups_job_id": int(job_id),
+                "submitted_by": job_user,
+                "file_size_bytes": file_size,
+            },
+        )
+    except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+        sys.stderr.write(f"ERROR: printops backend: could not log job: {exc}\n")
+        return 1
+
+    job_record_id = job["id"]
+
+    scheme = "ipps" if printer["use_tls"] else "ipp"
+    real_uri = (
+        f"{scheme}://{printer['ip_address']}:{printer['port']}"
+        f"{printer.get('ipp_path') or '/ipp/print'}"
+    )
+
+    real_argv = [REAL_IPP_BACKEND, job_id, job_user, job_title, job_copies, job_options]
+    if filename:
+        real_argv.append(filename)
+
+    child_env = dict(os.environ)
+    child_env["DEVICE_URI"] = real_uri
+
+    result = subprocess.run(real_argv, env=child_env, stdin=None if filename else sys.stdin)
+    exit_code = result.returncode
+
+    try:
+        api_request(
+            token,
+            "PATCH",
+            f"/api/v1/jobs/{job_record_id}",
+            {
+                "status": "forwarded" if exit_code == 0 else "failed",
+                "error_message": None if exit_code == 0 else f"ipp backend exited {exit_code}",
+            },
+        )
+    except (urllib.error.URLError, urllib.error.HTTPError):
+        pass  # best-effort status report; don't fail the print over a logging hiccup
+
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

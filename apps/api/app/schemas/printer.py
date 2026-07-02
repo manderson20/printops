@@ -55,6 +55,19 @@ class PrinterUpdate(BaseModel):
     notes: str | None = None
 
 
+class PrinterConnectionOut(BaseModel):
+    """Minimal connection info for the CUPS backend script — not the full
+    printer record, and authenticated with the backend token, not user JWT."""
+
+    name: str
+    ip_address: str
+    port: int
+    use_tls: bool
+    ipp_path: str | None
+
+    model_config = {"from_attributes": True}
+
+
 class PrinterOut(BaseModel):
     id: UUID
     name: str

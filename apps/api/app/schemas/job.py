@@ -1,0 +1,30 @@
+from datetime import datetime
+from uuid import UUID
+
+from pydantic import BaseModel
+
+
+class JobCreate(BaseModel):
+    printer_id: UUID
+    cups_job_id: int | None = None
+    submitted_by: str | None = None
+    file_size_bytes: int | None = None
+
+
+class JobUpdate(BaseModel):
+    status: str
+    error_message: str | None = None
+
+
+class JobOut(BaseModel):
+    id: UUID
+    printer_id: UUID
+    cups_job_id: int | None
+    submitted_by: str | None
+    file_size_bytes: int | None
+    status: str
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
