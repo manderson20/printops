@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # separate from user JWT auth — see app/deps.py's verify_backend_token.
     backend_token: str
 
+    # Fernet key for encrypting third-party integration credentials at rest
+    # (e.g. Mosyle admin password/API token, entered via the web UI and
+    # stored in Postgres — see app/core/crypto.py). Generate with:
+    # python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    encryption_key: str
+
     # Reserved for future use — not connected to anything yet in this scaffold.
     redis_url: str | None = None
 

@@ -9,10 +9,24 @@ from dataclasses import dataclass
 from typing import Any
 
 from pyipp import IPP
-from pyipp.enums import IppOperation
+from pyipp.enums import ATTRIBUTE_ENUM_MAP, IppOperation
 from pyipp.exceptions import IPPError
 
 from app.printers.capabilities import REQUESTED_ATTRIBUTES
+
+# pyipp's IppFinishing enum only covers a subset of the PWG5100.1 Finishings
+# registry (missing e.g. job-offset=14 and the punch-dual-*/punch-triple-*
+# codes). When a printer reports a code outside that subset — confirmed
+# against a real Konica Minolta bizhub 750i, 2026-07-02 — pyipp's parser
+# crashes converting it to IppFinishing (raises ValueError deep inside
+# parse_response), which pyipp.IPP.execute() swallows into an opaque,
+# message-less IPPParseError, making an otherwise-successful response look
+# like a total probe failure. We parse finishing codes ourselves from raw
+# ints (capabilities.py's FINISHINGS_MAP covers the full registry and
+# doesn't need pyipp's enum at all), so drop the mapping — ints pass
+# straight through the parser instead of being coerced.
+for _key in ("finishings", "finishings-default", "finishings-supported"):
+    ATTRIBUTE_ENUM_MAP.pop(_key, None)
 
 # Real IPP Everywhere printers commonly respond at "/ipp/print" or "/".
 # CUPS-backed queues instead require the queue name in the path
