@@ -71,6 +71,7 @@ export default function PrintersPage() {
                   <th className="px-4 py-3 font-medium">Model</th>
                   <th className="px-4 py-3 font-medium">IP Address</th>
                   <th className="px-4 py-3 font-medium">Location</th>
+                  <th className="px-4 py-3 font-medium">AirPrint</th>
                   <th className="px-4 py-3 font-medium">Capabilities</th>
                 </tr>
               </thead>
@@ -103,6 +104,17 @@ export default function PrintersPage() {
                       {[printer.building, printer.room, printer.department]
                         .filter(Boolean)
                         .join(" / ") || "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      {printer.airprint_enabled ? (
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                          Discoverable
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                          Hidden
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">

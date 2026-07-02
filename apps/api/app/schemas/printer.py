@@ -19,6 +19,7 @@ class CapabilitiesOut(BaseModel):
     collation_supported: bool = False
     pin_printing_supported: bool = False
     accounting_supported: bool = False
+    document_formats: list[str] = []
 
 
 class PrinterCreate(BaseModel):
@@ -27,6 +28,9 @@ class PrinterCreate(BaseModel):
     port: int = 631
     use_tls: bool = False
     ipp_path: str | None = None
+    # Off by default — a new printer isn't visible to AirPrint discovery on
+    # the subnet until an admin explicitly opts in (see Printer model).
+    airprint_enabled: bool = False
 
     manufacturer: str | None = None
     model: str | None = None
@@ -44,6 +48,7 @@ class PrinterUpdate(BaseModel):
     port: int | None = None
     use_tls: bool | None = None
     ipp_path: str | None = None
+    airprint_enabled: bool | None = None
 
     manufacturer: str | None = None
     model: str | None = None
@@ -56,14 +61,17 @@ class PrinterUpdate(BaseModel):
 
 
 class PrinterConnectionOut(BaseModel):
-    """Minimal connection info for the CUPS backend script — not the full
-    printer record, and authenticated with the backend token, not user JWT."""
+    """Minimal connection + capability summary for the CUPS backend script and
+    the Avahi service-file generator — not the full printer record, and
+    authenticated with the backend token, not user JWT."""
 
     name: str
     ip_address: str
     port: int
     use_tls: bool
     ipp_path: str | None
+    airprint_enabled: bool
+    capabilities: CapabilitiesOut | None
 
     model_config = {"from_attributes": True}
 
@@ -75,6 +83,7 @@ class PrinterOut(BaseModel):
     port: int
     use_tls: bool
     ipp_path: str | None
+    airprint_enabled: bool
 
     manufacturer: str | None
     model: str | None

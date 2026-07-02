@@ -36,6 +36,7 @@ REQUESTED_ATTRIBUTES: list[str] = [
     "job-account-id-supported",
     "job-accounting-user-id-supported",
     "multiple-document-handling-supported",
+    "document-format-supported",
 ]
 
 # IPP "finishings" enum values, per the PWG5100.1 Finishings registry.
@@ -202,4 +203,5 @@ def parse_capabilities(raw: dict[str, Any]) -> dict[str, Any]:
         "collation_supported": _parse_collation_supported(raw),
         "pin_printing_supported": _parse_pin_printing_supported(raw),
         "accounting_supported": _parse_accounting_supported(raw),
+        "document_formats": [_scalar(v) for v in _as_list(raw.get("document-format-supported"))],
     }

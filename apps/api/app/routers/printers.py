@@ -52,6 +52,7 @@ async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_
         port=payload.port,
         use_tls=payload.use_tls,
         ipp_path=payload.ipp_path,
+        airprint_enabled=payload.airprint_enabled,
         manufacturer=payload.manufacturer,
         model=payload.model,
         hostname=payload.hostname,

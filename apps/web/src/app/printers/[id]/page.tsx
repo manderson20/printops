@@ -37,6 +37,7 @@ export default function PrinterDetailPage() {
   const params = useParams<{ id: string }>();
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [form, setForm] = useState<Record<string, string>>({});
+  const [airprintEnabled, setAirprintEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
   const [rediscovering, setRediscovering] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -50,6 +51,7 @@ export default function PrinterDetailPage() {
             EDITABLE_FIELDS.map(([field]) => [field, (printer as never)[field] ?? ""]),
           ),
         );
+        setAirprintEnabled(printer.airprint_enabled);
       })
       .catch((error: unknown) =>
         setState({
@@ -63,7 +65,7 @@ export default function PrinterDetailPage() {
     setSaving(true);
     setActionError(null);
     try {
-      const printer = await updatePrinter(params.id, form);
+      const printer = await updatePrinter(params.id, { ...form, airprint_enabled: airprintEnabled });
       setState({ phase: "ok", printer });
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : "Failed to save changes");
@@ -130,6 +132,25 @@ export default function PrinterDetailPage() {
               </label>
             ))}
           </div>
+
+          <label className="mt-4 flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={airprintEnabled}
+              onChange={(e) => setAirprintEnabled(e.target.checked)}
+            />
+            <span>
+              Discoverable via AirPrint (Bonjour)
+              <br />
+              <span className="text-xs text-zinc-500">
+                Off = hidden from automatic discovery on Macs/iPads; only devices explicitly
+                configured (e.g. via MDM) can print to it. Recommended off for printers
+                handling confidential documents.
+              </span>
+            </span>
+          </label>
+
           {actionError && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{actionError}</p>}
           <button
             onClick={handleSave}
