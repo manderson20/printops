@@ -15,6 +15,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "PrintOps",
   description: "Open-source enterprise print management platform.",
+  icons: {
+    icon: "/printops-logo.png",
+  },
 };
 
 export default function RootLayout({
