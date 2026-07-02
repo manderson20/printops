@@ -12,6 +12,8 @@ from pyipp import IPP
 from pyipp.enums import IppOperation
 from pyipp.exceptions import IPPError
 
+from app.printers.capabilities import REQUESTED_ATTRIBUTES
+
 # Real IPP Everywhere printers commonly respond at "/ipp/print" or "/".
 # CUPS-backed queues instead require the queue name in the path
 # ("/printers/<name>") — set Printer.ipp_path explicitly for those.
@@ -51,7 +53,7 @@ async def probe_printer(
         try:
             response = await ipp.execute(
                 IppOperation.GET_PRINTER_ATTRIBUTES,
-                {"operation-attributes-tag": {"requested-attributes": ["all"]}},
+                {"operation-attributes-tag": {"requested-attributes": REQUESTED_ATTRIBUTES}},
             )
             printers = response.get("printers") or []
             if not printers:
