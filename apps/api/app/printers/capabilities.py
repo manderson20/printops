@@ -10,6 +10,34 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+# The specific attributes parse_capabilities() below actually reads. Requesting
+# this curated list (instead of the IPP "all" shorthand) is a deliberate
+# workaround for a pyipp parser bug: some devices (confirmed on a Canon
+# imageCLASS MF642C/643C/644C) report enum values — e.g.
+# orientation-requested-supported=7 — that pyipp's parser doesn't recognize
+# and crashes on (ValueError -> IPPParseError) when attempting to decode
+# *any* attribute in the "all" response. None of the attributes that trigger
+# this are ones we use, so requesting only what we need avoids the crash
+# entirely rather than working around it after the fact.
+REQUESTED_ATTRIBUTES: list[str] = [
+    "printer-make-and-model",
+    "printer-firmware-string-version",
+    "sides-supported",
+    "color-supported",
+    "print-color-mode-supported",
+    "copies-supported",
+    "printer-resolution-supported",
+    "media-supported",
+    "media-source-supported",
+    "media-type-supported",
+    "output-bin-supported",
+    "finishings-supported",
+    "job-password-supported",
+    "job-account-id-supported",
+    "job-accounting-user-id-supported",
+    "multiple-document-handling-supported",
+]
+
 # IPP "finishings" enum values, per the PWG5100.1 Finishings registry.
 # Codes not in this table still surface (as "finishing-<code>") instead of
 # being silently dropped, in case a device reports something we haven't
