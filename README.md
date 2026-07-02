@@ -16,8 +16,17 @@ Open-source, self-hosted enterprise print management platform for K-12 schools, 
 ## Prerequisites
 
 - Node.js 20 (see `.nvmrc`) + pnpm (`corepack enable`)
-- Python 3.12+ (see `.python-version`)
+- Python 3.12+ (see `.python-version`) + [uv](https://docs.astral.sh/uv/) for managing it
 - Docker + Docker Compose
+- GitHub CLI (`gh`), for repo/auth workflows
+
+On a fresh machine, `./scripts/bootstrap.sh` installs all of the above (idempotent — safe
+to re-run, and the place to add future tooling as the project grows). Pass `--yes` to skip
+the confirmation prompts before sudo-requiring steps (Docker, `gh`).
+
+```bash
+./scripts/bootstrap.sh
+```
 
 ## Quickstart
 
@@ -30,8 +39,8 @@ docker compose ps   # confirm postgres/redis/cups are up
 
 # 2. API
 cd ../apps/api
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+uv venv --python 3.12 .venv && source .venv/bin/activate
+uv pip install -e ".[dev]"
 cp .env.example .env
 uvicorn app.main:app --reload --port 8000
 # -> http://localhost:8000/docs
