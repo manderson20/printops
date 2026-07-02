@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.db import get_db
+from app.integrations.classguard import ClassGuardClient
 from app.integrations.mosyle import MosyleClient
 from app.main import app
 from app.models.base import Base
@@ -128,3 +129,70 @@ def test_sync_endpoint_surfaces_failure_as_502(client, auth_headers):
     # Nothing configured yet -> sync_devices raises "not configured/enabled".
     response = client.post("/api/v1/settings/mosyle/sync", headers=auth_headers)
     assert response.status_code == 502
+
+
+def test_get_classguard_settings_creates_default_row(client, auth_headers):
+    response = client.get("/api/v1/settings/classguard", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["enabled"] is False
+    assert body["has_access_token"] is False
+    assert body["base_url"] == "https://classguard.example.org"
+
+
+def test_update_classguard_settings_hides_token(client, auth_headers):
+    response = client.put(
+        "/api/v1/settings/classguard",
+        headers=auth_headers,
+        json={"access_token": "super-secret-token", "enabled": True},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["has_access_token"] is True
+    assert body["enabled"] is True
+    assert "super-secret-token" not in response.text
+
+
+def test_classguard_test_connection_hit(client, auth_headers, monkeypatch):
+    async def fake_lookup_mac(self, ip):
+        assert ip == "10.0.0.42"
+        return "AA:BB:CC:DD:EE:FF"
+
+    monkeypatch.setattr(ClassGuardClient, "lookup_mac", fake_lookup_mac)
+
+    response = client.post(
+        "/api/v1/settings/classguard/test",
+        headers=auth_headers,
+        json={"base_url": "https://classguard.example.org", "access_token": "tok", "test_ip": "10.0.0.42"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["mac_address"] == "AA:BB:CC:DD:EE:FF"
+
+
+def test_classguard_test_connection_no_lease_still_ok(client, auth_headers, monkeypatch):
+    async def fake_lookup_mac(self, ip):
+        return None
+
+    monkeypatch.setattr(ClassGuardClient, "lookup_mac", fake_lookup_mac)
+
+    response = client.post(
+        "/api/v1/settings/classguard/test",
+        headers=auth_headers,
+        json={"base_url": "https://classguard.example.org", "access_token": "tok", "test_ip": "10.0.0.42"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["mac_address"] is None
+
+
+def test_classguard_test_connection_missing_fields(client, auth_headers):
+    response = client.post(
+        "/api/v1/settings/classguard/test", headers=auth_headers, json={"test_ip": "10.0.0.42"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert "required" in body["error"]

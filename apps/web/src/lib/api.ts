@@ -236,3 +236,48 @@ export async function syncMosyleDevices(): Promise<MosyleSettings> {
   const response = await authorizedFetch("/api/v1/settings/mosyle/sync", { method: "POST" });
   return response.json();
 }
+
+export type ClassGuardSettings = {
+  base_url: string;
+  has_access_token: boolean;
+  enabled: boolean;
+  last_test_at: string | null;
+  last_test_error: string | null;
+};
+
+export type ClassGuardSettingsInput = {
+  base_url?: string;
+  access_token?: string;
+  enabled?: boolean;
+};
+
+export type ClassGuardTestResult = {
+  ok: boolean;
+  mac_address: string | null;
+  error: string | null;
+};
+
+export async function getClassGuardSettings(): Promise<ClassGuardSettings> {
+  const response = await authorizedFetch("/api/v1/settings/classguard");
+  return response.json();
+}
+
+export async function updateClassGuardSettings(
+  input: ClassGuardSettingsInput,
+): Promise<ClassGuardSettings> {
+  const response = await authorizedFetch("/api/v1/settings/classguard", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function testClassGuardConnection(
+  input: ClassGuardSettingsInput & { test_ip: string },
+): Promise<ClassGuardTestResult> {
+  const response = await authorizedFetch("/api/v1/settings/classguard/test", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
