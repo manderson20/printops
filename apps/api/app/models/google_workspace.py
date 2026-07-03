@@ -34,6 +34,17 @@ class GoogleWorkspaceSettings(Base, TimestampMixin):
     last_sync_error: Mapped[str | None] = mapped_column(default=None)
     device_count: Mapped[int] = mapped_column(default=0, server_default="0")
 
+    # Which Workspace Organizational Unit the copier PIN roster export
+    # (app/routers/settings.py:export_copier_pin_roster) should be limited
+    # to — every org names this differently ("/Employees", "/Staff",
+    # "/Personnel/Certified", ...), so this has to be admin-configured, not
+    # hardcoded. Matches GoogleWorkspaceUser.org_unit_path plus anything
+    # nested under it. Null/empty means no OU filter is applied (every
+    # synced user with an Employee ID is included — not recommended if
+    # students also have one set, but kept as the safe default rather than
+    # silently excluding everyone before this is configured).
+    staff_org_unit_path: Mapped[str | None] = mapped_column(default=None)
+
 
 class GoogleWorkspaceDevice(Base):
     """Local cache of Workspace's ChromeOS device inventory, refreshed
@@ -71,5 +82,11 @@ class GoogleWorkspaceUser(Base):
     # the copier PIN roster export (app/routers/settings.py); null for
     # anyone without one set in their Workspace profile.
     employee_id: Mapped[str | None] = mapped_column(default=None)
+    # Full OU path (e.g. "/Employees/Teachers") — used to filter the
+    # copier PIN roster export down to real staff via
+    # GoogleWorkspaceSettings.staff_org_unit_path. Stored for every synced
+    # user regardless of that setting, since this roster also has to stay
+    # complete (students included) for job-attribution/device-override use.
+    org_unit_path: Mapped[str | None] = mapped_column(default=None)
 
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -32,6 +32,7 @@ export default function GoogleWorkspaceSettingsPage() {
     service_account_json: "",
     admin_email: "",
     customer_id: "",
+    staff_org_unit_path: "",
   });
   const [enabled, setEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -58,6 +59,7 @@ export default function GoogleWorkspaceSettingsPage() {
           ...prev,
           admin_email: settings.admin_email ?? "",
           customer_id: settings.customer_id,
+          staff_org_unit_path: settings.staff_org_unit_path ?? "",
         }));
         setEnabled(settings.enabled);
       })
@@ -75,7 +77,10 @@ export default function GoogleWorkspaceSettingsPage() {
     }
   }, [currentUser, router]);
 
-  function update(field: "service_account_json" | "admin_email" | "customer_id", value: string) {
+  function update(
+    field: "service_account_json" | "admin_email" | "customer_id" | "staff_org_unit_path",
+    value: string,
+  ) {
     setForm((prev) => ({ ...prev, [field]: value }));
   }
 
@@ -88,6 +93,9 @@ export default function GoogleWorkspaceSettingsPage() {
         admin_email: form.admin_email || undefined,
         customer_id: form.customer_id || undefined,
         enabled,
+        // Always sent (even blank) so clearing the field actually clears
+        // the saved setting — see app/routers/settings.py's "" -> None rule.
+        staff_org_unit_path: form.staff_org_unit_path,
       });
       setState({ phase: "ok", settings });
       setForm((prev) => ({ ...prev, service_account_json: "" }));
@@ -446,7 +454,7 @@ export default function GoogleWorkspaceSettingsPage() {
             {exportingRoster ? "Exporting…" : "Export CSV"}
           </Button>
         </div>
-        <p className="text-xs text-zinc-500">
+        <p className="mb-4 text-xs text-zinc-500">
           One row per synced staff member with a Google Workspace Employee ID set (Name, Email,
           PIN) — for loading into a copier&apos;s local PIN/Account Track user list, e.g. Konica
           Minolta&apos;s User Authentication → User Registration screen. This is a starting column
@@ -455,6 +463,23 @@ export default function GoogleWorkspaceSettingsPage() {
           change. Anyone without an Employee ID set in Workspace is skipped rather than given a
           made-up PIN.
         </p>
+        <Field label="Staff Organizational Unit">
+          <Input
+            value={form.staff_org_unit_path}
+            onChange={(e) => update("staff_org_unit_path", e.target.value)}
+            placeholder="/Employees"
+          />
+          <span className="text-xs text-zinc-500">
+            The exact OU path from admin.google.com → Directory → Organizational units (e.g.{" "}
+            <code className="text-[11px]">/Employees</code>) that staff accounts live under —
+            every district names this differently, so it&apos;s never assumed. Anyone in this OU
+            or a nested one is included; everyone else is left out even if they have an Employee
+            ID (e.g. students). Leave blank to include everyone with an Employee ID set.
+          </span>
+        </Field>
+        <Button onClick={handleSave} disabled={saving} className="mt-3">
+          {saving ? "Saving…" : "Save"}
+        </Button>
       </Card>
     </div>
   );

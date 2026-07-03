@@ -308,3 +308,88 @@ async def test_copier_pin_roster_includes_only_users_with_employee_id(
     assert body.splitlines()[0] == "Name,Email,PIN"
     assert "Alice,alice@example.com,1001" in body
     assert "bob@example.com" not in body
+
+
+async def test_copier_pin_roster_unfiltered_without_staff_ou_setting(
+    client, auth_headers, db_session_factory
+):
+    async with db_session_factory() as session:
+        session.add(
+            GoogleWorkspaceUser(
+                email="teacher@example.com",
+                name="Teacher",
+                employee_id="1001",
+                org_unit_path="/Employees",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            GoogleWorkspaceUser(
+                email="student@example.com",
+                name="Student",
+                employee_id="9001",
+                org_unit_path="/Students",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    response = client.get(
+        "/api/v1/settings/google-workspace/copier-pin-roster.csv", headers=auth_headers
+    )
+    body = response.text
+    assert "teacher@example.com" in body
+    assert "student@example.com" in body
+
+
+async def test_copier_pin_roster_filters_by_configured_staff_ou(
+    client, auth_headers, db_session_factory
+):
+    client.put(
+        "/api/v1/settings/google-workspace",
+        headers=auth_headers,
+        json={"staff_org_unit_path": "/Employees"},
+    )
+    async with db_session_factory() as session:
+        session.add(
+            GoogleWorkspaceUser(
+                email="teacher@example.com",
+                name="Teacher",
+                employee_id="1001",
+                org_unit_path="/Employees/Teachers",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            GoogleWorkspaceUser(
+                email="student@example.com",
+                name="Student",
+                employee_id="9001",
+                org_unit_path="/Students",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    response = client.get(
+        "/api/v1/settings/google-workspace/copier-pin-roster.csv", headers=auth_headers
+    )
+    body = response.text
+    assert "teacher@example.com" in body
+    assert "student@example.com" not in body
+
+
+def test_staff_org_unit_path_can_be_cleared(client, auth_headers):
+    set_response = client.put(
+        "/api/v1/settings/google-workspace",
+        headers=auth_headers,
+        json={"staff_org_unit_path": "/Employees"},
+    )
+    assert set_response.json()["staff_org_unit_path"] == "/Employees"
+
+    cleared = client.put(
+        "/api/v1/settings/google-workspace",
+        headers=auth_headers,
+        json={"staff_org_unit_path": ""},
+    )
+    assert cleared.json()["staff_org_unit_path"] is None

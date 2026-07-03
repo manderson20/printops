@@ -47,6 +47,28 @@ def extract_employee_id(user: dict) -> str | None:
     return None
 
 
+def normalize_org_unit_path(path: str) -> str:
+    """"/Employees", "/Employees/", " /Employees " all mean the same OU —
+    normalize to a leading slash, no trailing slash, so a saved setting
+    and a value read back off a synced user compare consistently."""
+    trimmed = path.strip()
+    if not trimmed.startswith("/"):
+        trimmed = f"/{trimmed}"
+    return trimmed.rstrip("/") or "/"
+
+
+def org_unit_matches(user_org_unit_path: str | None, configured_org_unit_path: str) -> bool:
+    """True if a user's OU is the configured one or nested under it — every
+    org names/structures this differently ("/Employees", "/Staff",
+    "/Personnel/Certified", possibly with sub-OUs like "/Employees/Teachers"),
+    so this is never hardcoded (see GoogleWorkspaceSettings.staff_org_unit_path)."""
+    if not user_org_unit_path:
+        return False
+    target = normalize_org_unit_path(configured_org_unit_path)
+    user_path = normalize_org_unit_path(user_org_unit_path)
+    return user_path == target or user_path.startswith(f"{target}/")
+
+
 class GoogleWorkspaceClient:
     """Client for the Admin SDK Directory API, reading ChromeOS device
     inventory. Auth is a service-account + domain-wide delegation flow —
@@ -289,6 +311,7 @@ async def sync_users(db: AsyncSession) -> int:
                 email=email.lower(),
                 name=(user.get("name") or {}).get("fullName"),
                 employee_id=extract_employee_id(user),
+                org_unit_path=user.get("orgUnitPath"),
                 synced_at=now,
             )
         )
