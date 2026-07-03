@@ -350,10 +350,37 @@ async def get_google_sso_settings(db: AsyncSession = Depends(get_db)):
     return _google_sso_to_out(await _get_or_create_google_sso_settings(db))
 
 
+def _validate_client_secret(secret: str, client_id: str | None) -> None:
+    """Google Client IDs and Client Secrets are easy to mix up when
+    copy-pasting from Google Cloud Console's credentials page — both are
+    just long opaque strings sitting next to each other. Catch the most
+    common version of that mistake (pasting the Client ID into the
+    Secret field) before it's stored, rather than letting it surface
+    later as a confusing "invalid_client" error from Google mid-login."""
+    if client_id and secret == client_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Client Secret is identical to Client ID — you've likely pasted the wrong "
+            "value. The secret looks different (e.g. starts with \"GOCSPX-\"), not like "
+            "\"...apps.googleusercontent.com\".",
+        )
+    if secret.endswith(".apps.googleusercontent.com"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="That looks like a Client ID, not a Client Secret — Client IDs end in "
+            '".apps.googleusercontent.com"; the secret is a shorter, differently-formatted '
+            'string (e.g. starting with "GOCSPX-").',
+        )
+
+
 @router.put("/google-sso", response_model=GoogleSsoSettingsOut, dependencies=[Depends(require_role("admin"))])
 async def update_google_sso_settings(payload: GoogleSsoSettingsUpdate, db: AsyncSession = Depends(get_db)):
     settings = await _get_or_create_google_sso_settings(db)
     updates = payload.model_dump(exclude_unset=True)
+    if updates.get("client_secret"):
+        _validate_client_secret(
+            updates["client_secret"], updates.get("client_id") or settings.client_id
+        )
     if updates.get("client_id") is not None:
         settings.client_id = updates["client_id"]
     if updates.get("workspace_domain") is not None:

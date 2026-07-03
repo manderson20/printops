@@ -70,6 +70,27 @@ def google_settings(client, auth_headers):
     return response.json()
 
 
+def test_google_sso_settings_rejects_secret_matching_client_id(client, auth_headers):
+    response = client.put(
+        "/api/v1/settings/google-sso",
+        headers=auth_headers,
+        json={"client_id": "same-value", "client_secret": "same-value"},
+    )
+    assert response.status_code == 422
+
+
+def test_google_sso_settings_rejects_secret_shaped_like_client_id(client, auth_headers):
+    response = client.put(
+        "/api/v1/settings/google-sso",
+        headers=auth_headers,
+        json={
+            "client_id": "123-abc.apps.googleusercontent.com",
+            "client_secret": "456-xyz.apps.googleusercontent.com",
+        },
+    )
+    assert response.status_code == 422
+
+
 def _stub_google(monkeypatch, claims=None):
     async def fake_exchange_code(**kwargs):
         return {"id_token": "fake-id-token"}
