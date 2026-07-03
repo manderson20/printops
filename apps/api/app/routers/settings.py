@@ -22,6 +22,7 @@ from app.models.classguard import ClassGuardSettings
 from app.models.google_sso import GoogleSsoSettings
 from app.models.google_workspace import GoogleWorkspaceSettings, GoogleWorkspaceUser
 from app.models.mosyle import MosyleSettings
+from app.models.release import PrintReleaseSettings
 from app.models.report import ReportFormulaSettings
 from app.schemas.classguard import ClassGuardSettingsOut, ClassGuardSettingsUpdate, ClassGuardTestRequest, ClassGuardTestResult
 from app.schemas.google_sso import GoogleSsoSettingsOut, GoogleSsoSettingsUpdate
@@ -32,6 +33,7 @@ from app.schemas.google_workspace import (
     GoogleWorkspaceUserOut,
 )
 from app.schemas.mosyle import MosyleSettingsOut, MosyleSettingsUpdate, MosyleTestResult
+from app.schemas.release import PrintReleaseSettingsOut, PrintReleaseSettingsUpdate
 from app.schemas.report import ReportFormulaSettingsOut, ReportFormulaSettingsUpdate
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -523,3 +525,36 @@ async def update_report_formula_settings(
     await db.commit()
     await db.refresh(settings)
     return _report_formula_settings_out(settings)
+
+
+async def _get_or_create_print_release_settings(db: AsyncSession) -> PrintReleaseSettings:
+    result = await db.execute(select(PrintReleaseSettings).limit(1))
+    settings = result.scalar_one_or_none()
+    if settings is None:
+        settings = PrintReleaseSettings()
+        db.add(settings)
+        await db.commit()
+        await db.refresh(settings)
+    return settings
+
+
+@router.get("/print-release", response_model=PrintReleaseSettingsOut)
+async def get_print_release_settings(db: AsyncSession = Depends(get_db)):
+    settings = await _get_or_create_print_release_settings(db)
+    return PrintReleaseSettingsOut(hold_expiry_hours=settings.hold_expiry_hours)
+
+
+@router.put(
+    "/print-release",
+    response_model=PrintReleaseSettingsOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def update_print_release_settings(
+    payload: PrintReleaseSettingsUpdate, db: AsyncSession = Depends(get_db)
+):
+    settings = await _get_or_create_print_release_settings(db)
+    if payload.hold_expiry_hours is not None:
+        settings.hold_expiry_hours = payload.hold_expiry_hours
+    await db.commit()
+    await db.refresh(settings)
+    return PrintReleaseSettingsOut(hold_expiry_hours=settings.hold_expiry_hours)

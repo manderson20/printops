@@ -339,3 +339,65 @@ def test_resync_queue_clears_prior_error(client, auth_headers, mock_failed_probe
     response = client.post(f"/api/v1/printers/{printer_id}/resync-queue", headers=auth_headers)
     assert response.status_code == 200
     assert response.json()["queue_sync_error"] is None
+
+
+def test_enabling_release_required_generates_a_token(client, auth_headers, mock_failed_probe):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Kiosk Printer", "ip_address": "10.0.0.20"},
+    )
+    printer_id = create.json()["id"]
+    assert create.json()["release_token"] is None
+
+    updated = client.patch(
+        f"/api/v1/printers/{printer_id}", headers=auth_headers, json={"release_required": True}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["release_required"] is True
+    assert updated.json()["release_token"] is not None
+
+
+def test_toggling_release_required_does_not_change_existing_token(
+    client, auth_headers, mock_failed_probe
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Kiosk Printer", "ip_address": "10.0.0.20"},
+    )
+    printer_id = create.json()["id"]
+    first = client.patch(
+        f"/api/v1/printers/{printer_id}", headers=auth_headers, json={"release_required": True}
+    )
+    token = first.json()["release_token"]
+
+    second = client.patch(
+        f"/api/v1/printers/{printer_id}", headers=auth_headers, json={"release_required": False}
+    )
+    assert second.json()["release_token"] == token
+
+
+def test_regenerate_release_token_rotates_it(client, auth_headers, mock_failed_probe):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Kiosk Printer", "ip_address": "10.0.0.20"},
+    )
+    printer_id = create.json()["id"]
+    enabled = client.patch(
+        f"/api/v1/printers/{printer_id}", headers=auth_headers, json={"release_required": True}
+    )
+    original_token = enabled.json()["release_token"]
+
+    regenerated = client.post(
+        f"/api/v1/printers/{printer_id}/regenerate-release-token", headers=auth_headers
+    )
+    assert regenerated.status_code == 200
+    assert regenerated.json()["release_token"] != original_token
+
+
+def test_regenerate_release_token_requires_admin(client, mock_failed_probe):
+    url = "/api/v1/printers/00000000-0000-0000-0000-000000000000/regenerate-release-token"
+    response = client.post(url)
+    assert response.status_code == 401

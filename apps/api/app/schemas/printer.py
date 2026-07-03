@@ -59,6 +59,8 @@ class PrinterUpdate(BaseModel):
     department: str | None = None
     notes: str | None = None
 
+    release_required: bool | None = None
+
 
 class PrinterConnectionOut(BaseModel):
     """Minimal connection + capability summary for the CUPS backend script and
@@ -72,6 +74,7 @@ class PrinterConnectionOut(BaseModel):
     ipp_path: str | None
     airprint_enabled: bool
     capabilities: CapabilitiesOut | None
+    release_required: bool
 
     model_config = {"from_attributes": True}
 
@@ -117,6 +120,9 @@ class PrinterOut(BaseModel):
     status_reasons: list[str] | None
     status_message: str | None
     status_checked_at: datetime | None
+
+    release_required: bool
+    release_token: str | None
 
     created_at: datetime
     updated_at: datetime

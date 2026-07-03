@@ -14,6 +14,7 @@ through the app's own Python environment.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -22,6 +23,15 @@ import urllib.request
 API_BASE = "http://localhost:8000"
 REAL_IPP_BACKEND = "/usr/lib/cups/backend/ipp"
 ENV_FILE = "/home/itadmin/printops/apps/api/.env"
+
+# Held documents live here until released (app/printers/release.py, invoked
+# from printops-api running as `itadmin`) or purged past their expiry
+# (app/main.py's background sweep, same process). This script runs as
+# root (see module docstring), so the directory is made world read/write —
+# no sticky bit, since the release/purge path (itadmin) needs to delete
+# files this script (root) created. Acceptable on a single-purpose print
+# server where only these two trusted processes ever touch it.
+HELD_SPOOL_DIR = "/var/spool/printops-held"
 
 
 def load_backend_token() -> str:
@@ -132,6 +142,26 @@ def get_job_completion_attributes(queue_name: str, job_id: str) -> dict:
     }
 
 
+def spool_held_file(job_record_id: str, filename: str | None) -> str:
+    """Takes durable custody of the job's document, outside CUPS's own
+    temp-file lifecycle — CUPS may clean up `filename` as soon as this
+    backend process exits, but a held job's real delivery
+    (app/printers/release.py) happens later, in a different process
+    entirely. If CUPS handed the document over via stdin instead of a temp
+    file (no `filename` arg), it has to be read and saved now — there's no
+    second chance to read this process's stdin later."""
+    os.makedirs(HELD_SPOOL_DIR, exist_ok=True)
+    os.chmod(HELD_SPOOL_DIR, 0o777)
+    dest = os.path.join(HELD_SPOOL_DIR, job_record_id)
+    if filename:
+        shutil.copyfile(filename, dest)
+    else:
+        with open(dest, "wb") as out:
+            shutil.copyfileobj(sys.stdin.buffer, out)
+    os.chmod(dest, 0o666)
+    return dest
+
+
 def api_request(token: str, method: str, path: str, body: dict | None = None) -> dict:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(f"{API_BASE}{path}", data=data, method=method)
@@ -202,6 +232,28 @@ def main() -> int:
         return 1
 
     job_record_id = job["id"]
+
+    if printer.get("release_required"):
+        try:
+            held_path = spool_held_file(job_record_id, filename)
+        except OSError as exc:
+            sys.stderr.write(f"ERROR: printops backend: could not spool held document: {exc}\n")
+            return 1
+        try:
+            api_request(
+                token,
+                "PATCH",
+                f"/api/v1/jobs/{job_record_id}",
+                {"status": "held", "held_file_path": held_path, "held_job_options": job_options},
+            )
+        except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+            # Unlike the best-effort PATCHes below: without this recorded,
+            # the job can never be found/released, so a spooled-but-unmarked
+            # file is a real (if rare) stuck state — surface it as a failure
+            # rather than silently succeeding.
+            sys.stderr.write(f"ERROR: printops backend: could not mark job held: {exc}\n")
+            return 1
+        return 0
 
     scheme = "ipps" if printer["use_tls"] else "ipp"
     real_uri = (

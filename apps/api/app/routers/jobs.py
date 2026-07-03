@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,6 +12,7 @@ from app.deps import get_current_user, require_role, verify_backend_token
 from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.job import Job
 from app.models.printer import Printer
+from app.models.release import PrintReleaseSettings
 from app.printers.job_control import JobControlError, cancel_cups_job
 from app.schemas.auth import UserOut
 from app.schemas.job import JobCreate, JobListOut, JobOut, JobUpdate, UserUsageOut
@@ -68,9 +69,23 @@ async def create_job(payload: JobCreate, db: AsyncSession = Depends(get_db)):
     return job
 
 
+async def _get_or_create_print_release_settings(db: AsyncSession) -> PrintReleaseSettings:
+    result = await db.execute(select(PrintReleaseSettings).limit(1))
+    settings = result.scalar_one_or_none()
+    if settings is None:
+        settings = PrintReleaseSettings()
+        db.add(settings)
+        await db.commit()
+        await db.refresh(settings)
+    return settings
+
+
 @router.patch("/{job_id}", response_model=JobOut)
 async def update_job(job_id: UUID, payload: JobUpdate, db: AsyncSession = Depends(get_db)):
-    """Called by the CUPS backend script to report the forwarding outcome."""
+    """Called by the CUPS backend script to report the forwarding outcome —
+    or, for a release_required printer, to record that a job is held
+    instead of forwarded (see infra/cups/backends/printops and
+    app/routers/release.py)."""
     job = await db.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
@@ -80,10 +95,21 @@ async def update_job(job_id: UUID, payload: JobUpdate, db: AsyncSession = Depend
     job.color_mode = payload.color_mode
     job.duplex = payload.duplex
     job.paper_size = payload.paper_size
-    # "forwarded"/"failed" are the only statuses this endpoint ever sets —
-    # both terminal (see Job.status's docstring), so this call always marks
-    # completion.
-    job.completed_at = datetime.now(UTC)
+
+    if payload.status == "held":
+        job.held_file_path = payload.held_file_path
+        job.held_job_options = payload.held_job_options
+        # Computed server-side, never trusted from the backend script's own
+        # clock (see JobUpdate's docstring).
+        release_settings = await _get_or_create_print_release_settings(db)
+        hold_hours = release_settings.hold_expiry_hours
+        job.held_expires_at = datetime.now(UTC) + timedelta(hours=hold_hours)
+    else:
+        # "forwarded"/"failed" are the only other statuses this endpoint
+        # ever sets — both terminal (see Job.status's docstring), so this
+        # call always marks completion for them.
+        job.completed_at = datetime.now(UTC)
+
     await db.commit()
     await db.refresh(job)
     return job

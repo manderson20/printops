@@ -45,9 +45,17 @@ class Job(Base, TimestampMixin):
     file_size_bytes: Mapped[int | None] = mapped_column(default=None)
 
     # received -> forwarding -> forwarded | failed | cancelled
-    # "cancelled" is set by an admin action (app/routers/jobs.py:cancel_job or
-    # app/routers/printers.py:purge_jobs) — only reachable from "forwarding",
-    # since forwarded/failed jobs are already terminal.
+    #          -> held -> forwarding -> forwarded | failed | cancelled
+    # "held" is set by the CUPS backend script instead of forwarding, only
+    # for a printer with Printer.release_required — see app/routers/release.py
+    # (the public kiosk API that resolves a PIN and releases it) and
+    # app/printers/release.py (the actual delivery once released). A held
+    # job also reaches "cancelled" if it's never released before
+    # held_expires_at (app/main.py's background purge loop).
+    # "cancelled" from "forwarding" is set by an admin action
+    # (app/routers/jobs.py:cancel_job or app/routers/printers.py:purge_jobs)
+    # — only reachable from "forwarding"/"held", since forwarded/failed jobs
+    # are already terminal.
     status: Mapped[str] = mapped_column(default="received", server_default="received")
     error_message: Mapped[str | None] = mapped_column(default=None)
 
@@ -83,3 +91,17 @@ class Job(Base, TimestampMixin):
     # Set when status becomes terminal (forwarded/failed/cancelled) —
     # created_at already serves as "submitted_at" for reporting purposes.
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+    # --- Print-and-release fields (app/routers/release.py) ---
+    # Where the spooled document sits while status="held"
+    # (/var/spool/printops-held/<job-id>) — cleared once released
+    # (app/printers/release.py) or purged after held_expires_at.
+    held_file_path: Mapped[str | None] = mapped_column(default=None)
+    # The raw CUPS options string handed to the backend script at submission
+    # time — replayed at release time to reconstruct the same real_argv
+    # shape the backend would have used for an immediate forward.
+    held_job_options: Mapped[str | None] = mapped_column(default=None)
+    # Computed server-side from PrintReleaseSettings.hold_expiry_hours when
+    # the job is held — never trusted from the CUPS backend script's own
+    # clock.
+    held_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

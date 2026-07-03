@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Creates (or updates) a printer's *internal* direct-delivery CUPS queue —
+# used only by app/printers/release.py to actually deliver a held job once
+# it's released, via `lp -d printops-release-<id>`. Unlike the client-facing
+# queue (scripts/sync_cups_queue.sh), this one's device-uri stays pointed at
+# the real printer — it never routes through our backend, is never shared,
+# and is never AirPrint-advertised, since no client should ever be able to
+# target it directly.
+#
+# Usage: ./scripts/sync_release_queue.sh <printer-id>
+#
+# Invoked automatically alongside the client-facing queue sync
+# (app/printers/queue_sync.py:sync_queue) for every printer, regardless of
+# whether release is currently enabled — cheap to keep around, and avoids a
+# separate create/remove lifecycle tied to toggling release_required.
+
+set -euo pipefail
+
+PRINTER_ID="${1:?Usage: sync_release_queue.sh <printer-id>}"
+API_BASE="${PRINTOPS_API_BASE:-http://localhost:8000}"
+ENV_FILE="${PRINTOPS_ENV_FILE:-/home/itadmin/printops/apps/api/.env}"
+
+TOKEN=$(grep '^PRINTOPS_BACKEND_TOKEN=' "$ENV_FILE" | cut -d= -f2)
+
+PRINTER_JSON=$(curl -sf -H "X-Backend-Token: $TOKEN" "$API_BASE/api/v1/internal/printers/$PRINTER_ID/connection")
+
+PRINTER_NAME=$(python3 -c "import json,sys; print(json.load(sys.stdin)['name'])" <<<"$PRINTER_JSON")
+REAL_IP=$(python3 -c "import json,sys; print(json.load(sys.stdin)['ip_address'])" <<<"$PRINTER_JSON")
+REAL_PORT=$(python3 -c "import json,sys; print(json.load(sys.stdin)['port'])" <<<"$PRINTER_JSON")
+REAL_SCHEME=$(python3 -c "import json,sys; print('ipps' if json.load(sys.stdin)['use_tls'] else 'ipp')" <<<"$PRINTER_JSON")
+REAL_PATH=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ipp_path') or '/ipp/print')" <<<"$PRINTER_JSON")
+
+REAL_URI="${REAL_SCHEME}://${REAL_IP}:${REAL_PORT}${REAL_PATH}"
+QUEUE_NAME="printops-release-${PRINTER_ID}"
+
+# -m everywhere builds an accurate driverless PPD from what the device
+# actually reports, same as the client-facing queue — this queue talks to
+# the real printer directly, so device-uri is left pointed there (no
+# repoint-to-printops:// step, unlike sync_cups_queue.sh).
+sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m everywhere -D "${PRINTER_NAME} (internal release queue)"
+
+# Deliberately NOT shared and NOT AirPrint-advertised — this queue only
+# ever receives jobs from app/printers/release.py's own `lp -d` call on
+# this same host, never from a network client.
+sudo lpadmin -p "$QUEUE_NAME" -o printer-is-shared=false -E
+
+echo "Release queue '$QUEUE_NAME' -> ${REAL_URI} (${PRINTER_NAME})"

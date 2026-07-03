@@ -262,6 +262,56 @@ def test_update_job_without_page_count_stays_null(client, printer_id, backend_he
     assert updated.json()["page_count"] is None
 
 
+def test_update_job_held_records_spool_path_and_computes_expiry(
+    client, printer_id, backend_headers
+):
+    create = client.post(
+        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
+    )
+    job_id = create.json()["id"]
+
+    updated = client.patch(
+        f"/api/v1/jobs/{job_id}",
+        json={
+            "status": "held",
+            "held_file_path": "/var/spool/printops-held/abc123",
+            "held_job_options": "finishings=3 job-uuid=urn:uuid:x",
+        },
+        headers=backend_headers,
+    )
+    assert updated.status_code == 200
+    body = updated.json()
+    assert body["status"] == "held"
+    assert body["completed_at"] is None
+    assert body["held_expires_at"] is not None
+
+
+def test_update_job_held_uses_configured_expiry_window(
+    client, printer_id, backend_headers, auth_headers
+):
+    settings = client.put(
+        "/api/v1/settings/print-release",
+        headers=auth_headers,
+        json={"hold_expiry_hours": 1},
+    )
+    assert settings.status_code == 200
+
+    create = client.post(
+        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
+    )
+    job_id = create.json()["id"]
+
+    updated = client.patch(
+        f"/api/v1/jobs/{job_id}",
+        json={"status": "held", "held_file_path": "/x", "held_job_options": ""},
+        headers=backend_headers,
+    )
+    created_at = datetime.fromisoformat(updated.json()["created_at"].replace("Z", "+00:00"))
+    expires_at = datetime.fromisoformat(updated.json()["held_expires_at"].replace("Z", "+00:00"))
+    delta_hours = (expires_at - created_at).total_seconds() / 3600
+    assert 0.9 < delta_hours < 1.1
+
+
 async def test_job_usage_aggregates_per_user(
     client, printer_id, backend_headers, auth_headers, db_session_factory
 ):

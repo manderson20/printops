@@ -31,6 +31,12 @@ class JobUpdate(BaseModel):
     color_mode: str | None = None
     duplex: bool | None = None
     paper_size: str | None = None
+    # Only sent alongside status="held" (app/routers/release.py) — where the
+    # spooled file sits and the raw CUPS options string needed to replay
+    # delivery later. held_expires_at is deliberately not accepted from the
+    # caller; the server computes it from PrintReleaseSettings itself.
+    held_file_path: str | None = None
+    held_job_options: str | None = None
 
 
 class JobOut(BaseModel):
@@ -50,6 +56,7 @@ class JobOut(BaseModel):
     paper_size: str | None
     source: str
     completed_at: datetime | None
+    held_expires_at: datetime | None
     created_at: datetime
     updated_at: datetime
 

@@ -91,6 +91,8 @@ export type Printer = {
   status_reasons: string[] | null;
   status_message: string | null;
   status_checked_at: string | null;
+  release_required: boolean;
+  release_token: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -114,7 +116,9 @@ export type PrinterCreateInput = {
   notes?: string | null;
 };
 
-export type PrinterUpdateInput = Partial<PrinterCreateInput>;
+export type PrinterUpdateInput = Partial<PrinterCreateInput> & {
+  release_required?: boolean;
+};
 
 export async function listPrinters(): Promise<Printer[]> {
   const response = await authorizedFetch("/api/v1/printers");
@@ -153,6 +157,13 @@ export async function rediscoverPrinter(id: string): Promise<Printer> {
 
 export async function resyncQueue(id: string): Promise<Printer> {
   const response = await authorizedFetch(`/api/v1/printers/${id}/resync-queue`, { method: "POST" });
+  return response.json();
+}
+
+export async function regeneratePrinterReleaseToken(id: string): Promise<Printer> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/regenerate-release-token`, {
+    method: "POST",
+  });
   return response.json();
 }
 
@@ -828,5 +839,77 @@ export async function updatePrinterCartridges(
     method: "PUT",
     body: JSON.stringify(cartridges),
   });
+  return response.json();
+}
+
+export type PrintReleaseSettings = {
+  hold_expiry_hours: number;
+};
+
+export type PrintReleaseSettingsInput = Partial<PrintReleaseSettings>;
+
+export async function getPrintReleaseSettings(): Promise<PrintReleaseSettings> {
+  const response = await authorizedFetch("/api/v1/settings/print-release");
+  return response.json();
+}
+
+export async function updatePrintReleaseSettings(
+  input: PrintReleaseSettingsInput,
+): Promise<PrintReleaseSettings> {
+  const response = await authorizedFetch("/api/v1/settings/print-release", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+// --- Public print-release kiosk API (app/routers/release.py) — no
+// PrintOps login involved, so this deliberately does NOT use
+// authorizedFetch (no JWT to attach, and its 401->redirect-to-login
+// behavior would be wrong for a kiosk visitor who was never logged in). ---
+
+export type HeldJob = {
+  id: string;
+  status: string;
+  document_name: string | null;
+  page_count: number | null;
+  created_at: string;
+  held_expires_at: string | null;
+};
+
+export class ReleaseApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function releaseFetch(path: string, body: unknown): Promise<Response> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const responseBody = await response.json().catch(() => ({}));
+    throw new ReleaseApiError(
+      response.status,
+      responseBody.detail ?? `Request failed: ${response.status}`,
+    );
+  }
+  return response;
+}
+
+export async function listHeldJobs(token: string, pin: string): Promise<HeldJob[]> {
+  const response = await releaseFetch(`/api/v1/release/${encodeURIComponent(token)}/jobs`, { pin });
+  return response.json();
+}
+
+export async function releaseHeldJob(token: string, jobId: string, pin: string): Promise<HeldJob> {
+  const response = await releaseFetch(
+    `/api/v1/release/${encodeURIComponent(token)}/jobs/${jobId}/release`,
+    { pin },
+  );
   return response.json();
 }
