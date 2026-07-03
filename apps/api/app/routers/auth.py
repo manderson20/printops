@@ -66,11 +66,13 @@ def _fail(message: str) -> RedirectResponse:
     """Redirects back into the SPA with the outcome in a URL *fragment*,
     not a query param, so a session token never ends up in server logs or
     the Referer header. A *relative* path — the browser is already doing a
-    same-origin top-level navigation here (Caddy proxies /auth/* to this
-    API on the same public domain as apps/web), so there's no need for a
-    configured frontend URL just to bounce back to the SPA."""
+    same-origin top-level navigation here, so there's no need for a
+    configured frontend URL just to bounce back to the SPA. Deliberately
+    NOT under /auth/* — Caddy proxies that whole prefix to this API, so a
+    frontend page living there would be unreachable (confirmed the hard
+    way: it 404'd from FastAPI instead of ever reaching Next.js)."""
     fragment = urlencode({"error": message})
-    return RedirectResponse(f"/auth/callback#{fragment}")
+    return RedirectResponse(f"/login/callback#{fragment}")
 
 
 @router.get("/google/login")
@@ -169,4 +171,4 @@ async def google_callback(
         name=user.name or "",
     )
     fragment = urlencode({"token": token})
-    return RedirectResponse(f"/auth/callback#{fragment}")
+    return RedirectResponse(f"/login/callback#{fragment}")
