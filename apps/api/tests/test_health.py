@@ -20,4 +20,4 @@ def test_auth_round_trip():
 
     me_response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert me_response.status_code == 200
-    assert me_response.json() == {"username": "admin"}
+    assert me_response.json() == {"username": "admin", "role": "admin", "email": None, "name": None}

@@ -19,6 +19,7 @@ import {
 import { capabilityBadges } from "@/lib/capabilities";
 import { formatBytes } from "@/lib/format";
 import { attributionMethodInfo, jobStatusInfo } from "@/lib/jobStatus";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
@@ -47,6 +48,7 @@ const EDITABLE_FIELDS = [
 export default function PrinterDetailPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
+  const isAdmin = useCurrentUser()?.role === "admin";
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [form, setForm] = useState<Record<string, string>>({});
   const [airprintEnabled, setAirprintEnabled] = useState(false);
@@ -148,9 +150,11 @@ export default function PrinterDetailPage() {
     <div className="flex w-full max-w-2xl flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">{printer.name}</h1>
-        <Button variant="danger" onClick={handleDelete}>
-          Delete
-        </Button>
+        {isAdmin && (
+          <Button variant="danger" onClick={handleDelete}>
+            Delete
+          </Button>
+        )}
       </div>
 
       <Card>
@@ -160,6 +164,7 @@ export default function PrinterDetailPage() {
             <Field key={field} label={label}>
               <Input
                 value={form[field] ?? ""}
+                disabled={!isAdmin}
                 onChange={(e) => setForm((prev) => ({ ...prev, [field]: e.target.value }))}
               />
             </Field>
@@ -171,6 +176,7 @@ export default function PrinterDetailPage() {
             type="checkbox"
             className="mt-1"
             checked={airprintEnabled}
+            disabled={!isAdmin}
             onChange={(e) => setAirprintEnabled(e.target.checked)}
           />
           <span>
@@ -185,17 +191,21 @@ export default function PrinterDetailPage() {
         </label>
 
         {actionError && <ErrorState>{actionError}</ErrorState>}
-        <Button onClick={handleSave} disabled={saving} className="mt-4">
-          {saving ? "Saving…" : "Save"}
-        </Button>
+        {isAdmin && (
+          <Button onClick={handleSave} disabled={saving} className="mt-4">
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        )}
       </Card>
 
       <Card>
         <div className="mb-1 flex items-center justify-between">
           <CardTitle>Connection Info</CardTitle>
-          <Button variant="secondary" onClick={handleResync} disabled={resyncing}>
-            {resyncing ? "Resyncing…" : "Resync Queue"}
-          </Button>
+          {isAdmin && (
+            <Button variant="secondary" onClick={handleResync} disabled={resyncing}>
+              {resyncing ? "Resyncing…" : "Resync Queue"}
+            </Button>
+          )}
         </div>
         <p className="mb-4 text-xs text-zinc-500">
           For manually adding this printer&apos;s PrintOps queue in an MDM tool (e.g. Mosyle).
@@ -244,9 +254,11 @@ export default function PrinterDetailPage() {
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <CardTitle>Discovered Capabilities</CardTitle>
-          <Button variant="secondary" onClick={handleRediscover} disabled={rediscovering}>
-            {rediscovering ? "Probing…" : "Rediscover"}
-          </Button>
+          {isAdmin && (
+            <Button variant="secondary" onClick={handleRediscover} disabled={rediscovering}>
+              {rediscovering ? "Probing…" : "Rediscover"}
+            </Button>
+          )}
         </div>
 
         {printer.capabilities_error && (

@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode } from "react";
 import { logout } from "@/lib/auth";
 import { useAuthGuard } from "@/lib/useAuthGuard";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 
 const NAV_LINKS = [
   { href: "/printers", label: "Printers" },
@@ -17,6 +18,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   useAuthGuard();
   const pathname = usePathname();
   const router = useRouter();
+  const currentUser = useCurrentUser();
+  const navLinks = currentUser?.role === "admin" ? [...NAV_LINKS, { href: "/users", label: "Users" }] : NAV_LINKS;
 
   function handleLogout() {
     logout();
@@ -32,7 +35,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         </Link>
 
         <nav className="flex flex-1 flex-col gap-1">
-          {NAV_LINKS.map((link) => {
+          {navLinks.map((link) => {
             const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
             return (
               <Link

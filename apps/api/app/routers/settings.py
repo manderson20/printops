@@ -6,16 +6,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt, encrypt
 from app.db import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, require_role
 from app.integrations.classguard import ClassGuardClient, ClassGuardError
 from app.integrations.google_workspace import GoogleWorkspaceClient, GoogleWorkspaceError
 from app.integrations.google_workspace import run_sync as run_google_workspace_sync
 from app.integrations.mosyle import MosyleClient, MosyleError
 from app.integrations.mosyle import run_sync as run_mosyle_sync
 from app.models.classguard import ClassGuardSettings
+from app.models.google_sso import GoogleSsoSettings
 from app.models.google_workspace import GoogleWorkspaceSettings
 from app.models.mosyle import MosyleSettings
 from app.schemas.classguard import ClassGuardSettingsOut, ClassGuardSettingsUpdate, ClassGuardTestRequest, ClassGuardTestResult
+from app.schemas.google_sso import GoogleSsoSettingsOut, GoogleSsoSettingsUpdate
 from app.schemas.google_workspace import (
     GoogleWorkspaceSettingsOut,
     GoogleWorkspaceSettingsUpdate,
@@ -55,7 +57,7 @@ async def get_mosyle_settings(db: AsyncSession = Depends(get_db)):
     return _to_out(await _get_or_create_settings(db))
 
 
-@router.put("/mosyle", response_model=MosyleSettingsOut)
+@router.put("/mosyle", response_model=MosyleSettingsOut, dependencies=[Depends(require_role("admin"))])
 async def update_mosyle_settings(
     payload: MosyleSettingsUpdate, db: AsyncSession = Depends(get_db)
 ):
@@ -81,7 +83,7 @@ async def update_mosyle_settings(
     return _to_out(settings)
 
 
-@router.post("/mosyle/test", response_model=MosyleTestResult)
+@router.post("/mosyle/test", response_model=MosyleTestResult, dependencies=[Depends(require_role("admin"))])
 async def test_mosyle_connection(
     payload: MosyleSettingsUpdate, db: AsyncSession = Depends(get_db)
 ):
@@ -112,7 +114,7 @@ async def test_mosyle_connection(
     return MosyleTestResult(ok=True, device_count=len(devices))
 
 
-@router.post("/mosyle/sync", response_model=MosyleSettingsOut)
+@router.post("/mosyle/sync", response_model=MosyleSettingsOut, dependencies=[Depends(require_role("admin"))])
 async def sync_mosyle_devices(db: AsyncSession = Depends(get_db)):
     settings = await _get_or_create_settings(db)
     try:
@@ -149,7 +151,7 @@ async def get_classguard_settings(db: AsyncSession = Depends(get_db)):
     return _classguard_to_out(await _get_or_create_classguard_settings(db))
 
 
-@router.put("/classguard", response_model=ClassGuardSettingsOut)
+@router.put("/classguard", response_model=ClassGuardSettingsOut, dependencies=[Depends(require_role("admin"))])
 async def update_classguard_settings(
     payload: ClassGuardSettingsUpdate, db: AsyncSession = Depends(get_db)
 ):
@@ -167,7 +169,9 @@ async def update_classguard_settings(
     return _classguard_to_out(settings)
 
 
-@router.post("/classguard/test", response_model=ClassGuardTestResult)
+@router.post(
+    "/classguard/test", response_model=ClassGuardTestResult, dependencies=[Depends(require_role("admin"))]
+)
 async def test_classguard_connection(
     payload: ClassGuardTestRequest, db: AsyncSession = Depends(get_db)
 ):
@@ -231,7 +235,9 @@ async def get_google_workspace_settings(db: AsyncSession = Depends(get_db)):
     return _google_workspace_to_out(await _get_or_create_google_workspace_settings(db))
 
 
-@router.put("/google-workspace", response_model=GoogleWorkspaceSettingsOut)
+@router.put(
+    "/google-workspace", response_model=GoogleWorkspaceSettingsOut, dependencies=[Depends(require_role("admin"))]
+)
 async def update_google_workspace_settings(
     payload: GoogleWorkspaceSettingsUpdate, db: AsyncSession = Depends(get_db)
 ):
@@ -251,7 +257,11 @@ async def update_google_workspace_settings(
     return _google_workspace_to_out(settings)
 
 
-@router.post("/google-workspace/test", response_model=GoogleWorkspaceTestResult)
+@router.post(
+    "/google-workspace/test",
+    response_model=GoogleWorkspaceTestResult,
+    dependencies=[Depends(require_role("admin"))],
+)
 async def test_google_workspace_connection(
     payload: GoogleWorkspaceSettingsUpdate, db: AsyncSession = Depends(get_db)
 ):
@@ -279,7 +289,11 @@ async def test_google_workspace_connection(
     return GoogleWorkspaceTestResult(ok=True, device_count=len(devices))
 
 
-@router.post("/google-workspace/sync", response_model=GoogleWorkspaceSettingsOut)
+@router.post(
+    "/google-workspace/sync",
+    response_model=GoogleWorkspaceSettingsOut,
+    dependencies=[Depends(require_role("admin"))],
+)
 async def sync_google_workspace_devices(db: AsyncSession = Depends(get_db)):
     settings = await _get_or_create_google_workspace_settings(db)
     try:
@@ -288,3 +302,58 @@ async def sync_google_workspace_devices(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     await db.refresh(settings)
     return _google_workspace_to_out(settings)
+
+
+async def _get_or_create_google_sso_settings(db: AsyncSession) -> GoogleSsoSettings:
+    result = await db.execute(select(GoogleSsoSettings).limit(1))
+    settings = result.scalar_one_or_none()
+    if settings is None:
+        settings = GoogleSsoSettings()
+        db.add(settings)
+        await db.commit()
+        await db.refresh(settings)
+    return settings
+
+
+def _parse_admin_emails(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [email.strip() for email in raw.split(",") if email.strip()]
+
+
+def _google_sso_to_out(settings: GoogleSsoSettings) -> GoogleSsoSettingsOut:
+    return GoogleSsoSettingsOut(
+        client_id=settings.client_id,
+        has_client_secret=bool(settings.client_secret_encrypted),
+        workspace_domain=settings.workspace_domain,
+        initial_admin_emails=_parse_admin_emails(settings.initial_admin_emails),
+        redirect_base_url=settings.redirect_base_url,
+        enabled=settings.enabled,
+    )
+
+
+@router.get("/google-sso", response_model=GoogleSsoSettingsOut)
+async def get_google_sso_settings(db: AsyncSession = Depends(get_db)):
+    return _google_sso_to_out(await _get_or_create_google_sso_settings(db))
+
+
+@router.put("/google-sso", response_model=GoogleSsoSettingsOut, dependencies=[Depends(require_role("admin"))])
+async def update_google_sso_settings(payload: GoogleSsoSettingsUpdate, db: AsyncSession = Depends(get_db)):
+    settings = await _get_or_create_google_sso_settings(db)
+    updates = payload.model_dump(exclude_unset=True)
+    if updates.get("client_id") is not None:
+        settings.client_id = updates["client_id"]
+    if updates.get("workspace_domain") is not None:
+        settings.workspace_domain = updates["workspace_domain"]
+    if updates.get("redirect_base_url") is not None:
+        settings.redirect_base_url = updates["redirect_base_url"]
+    if updates.get("initial_admin_emails") is not None:
+        settings.initial_admin_emails = ",".join(updates["initial_admin_emails"])
+    if updates.get("enabled") is not None:
+        settings.enabled = updates["enabled"]
+    if updates.get("client_secret"):
+        settings.client_secret_encrypted = encrypt(updates["client_secret"])
+
+    await db.commit()
+    await db.refresh(settings)
+    return _google_sso_to_out(settings)

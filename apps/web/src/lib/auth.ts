@@ -17,7 +17,7 @@ export function useToken(): string | null {
   return useSyncExternalStore(noopSubscribe, getToken, () => null);
 }
 
-function setToken(token: string): void {
+export function setToken(token: string): void {
   window.localStorage.setItem(TOKEN_KEY, token);
 }
 
@@ -36,4 +36,8 @@ export async function login(username: string, password: string): Promise<void> {
   }
   const data = await response.json();
   setToken(data.access_token);
+}
+
+export function startGoogleLogin(): void {
+  window.location.href = `${API_URL}/auth/google/login`;
 }

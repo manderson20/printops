@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ApiError,
   getMosyleSettings,
@@ -9,6 +10,7 @@ import {
   updateMosyleSettings,
   type MosyleSettings,
 } from "@/lib/api";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
@@ -23,6 +25,8 @@ type LoadState =
   | { phase: "error"; message: string };
 
 export default function MosyleSettingsPage() {
+  const router = useRouter();
+  const currentUser = useCurrentUser();
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [form, setForm] = useState({
     base_url: "",
@@ -51,6 +55,12 @@ export default function MosyleSettingsPage() {
         }),
       );
   }, []);
+
+  useEffect(() => {
+    if (currentUser && currentUser.role !== "admin") {
+      router.replace("/integrations");
+    }
+  }, [currentUser, router]);
 
   function update(field: "base_url" | "access_token" | "admin_email" | "admin_password", value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -112,7 +122,7 @@ export default function MosyleSettingsPage() {
     }
   }
 
-  if (state.phase === "loading") {
+  if (state.phase === "loading" || currentUser === undefined || currentUser?.role !== "admin") {
     return <Spinner label="Loading settings…" />;
   }
   if (state.phase === "error") {

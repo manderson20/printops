@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createPrinter, ApiError } from "@/lib/api";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Textarea } from "@/components/ui/Field";
 import { ErrorState } from "@/components/ui/EmptyState";
+import { Spinner } from "@/components/ui/Spinner";
 
 const initialForm = {
   name: "",
@@ -22,10 +24,17 @@ const initialForm = {
 
 export default function NewPrinterPage() {
   const router = useRouter();
+  const currentUser = useCurrentUser();
   const [form, setForm] = useState(initialForm);
   const [airprintEnabled, setAirprintEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (currentUser && currentUser.role !== "admin") {
+      router.replace("/printers");
+    }
+  }, [currentUser, router]);
 
   function update(field: keyof typeof initialForm, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -54,6 +63,10 @@ export default function NewPrinterPage() {
       setError(err instanceof ApiError ? err.message : "Failed to add printer");
       setSubmitting(false);
     }
+  }
+
+  if (currentUser === undefined || currentUser?.role !== "admin") {
+    return <Spinner label="Loading…" />;
   }
 
   return (

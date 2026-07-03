@@ -334,3 +334,75 @@ export async function syncGoogleWorkspaceDevices(): Promise<GoogleWorkspaceSetti
   const response = await authorizedFetch("/api/v1/settings/google-workspace/sync", { method: "POST" });
   return response.json();
 }
+
+export type Role = "admin" | "viewer";
+
+export type CurrentUser = {
+  username: string;
+  role: Role;
+  email: string | null;
+  name: string | null;
+};
+
+export async function getMe(): Promise<CurrentUser> {
+  const response = await authorizedFetch("/auth/me");
+  return response.json();
+}
+
+export type UserAccount = {
+  id: string;
+  email: string;
+  name: string | null;
+  role: Role;
+  is_active: boolean;
+  last_login_at: string | null;
+};
+
+export async function listUsers(): Promise<UserAccount[]> {
+  const response = await authorizedFetch("/api/v1/users");
+  return response.json();
+}
+
+export async function updateUser(
+  id: string,
+  input: { role?: Role; is_active?: boolean },
+): Promise<UserAccount> {
+  const response = await authorizedFetch(`/api/v1/users/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export type GoogleSsoSettings = {
+  client_id: string | null;
+  has_client_secret: boolean;
+  workspace_domain: string | null;
+  initial_admin_emails: string[];
+  redirect_base_url: string | null;
+  enabled: boolean;
+};
+
+export type GoogleSsoSettingsInput = {
+  client_id?: string;
+  client_secret?: string;
+  workspace_domain?: string;
+  initial_admin_emails?: string[];
+  redirect_base_url?: string;
+  enabled?: boolean;
+};
+
+export async function getGoogleSsoSettings(): Promise<GoogleSsoSettings> {
+  const response = await authorizedFetch("/api/v1/settings/google-sso");
+  return response.json();
+}
+
+export async function updateGoogleSsoSettings(
+  input: GoogleSsoSettingsInput,
+): Promise<GoogleSsoSettings> {
+  const response = await authorizedFetch("/api/v1/settings/google-sso", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
