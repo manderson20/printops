@@ -401,3 +401,24 @@ def test_regenerate_release_token_requires_admin(client, mock_failed_probe):
     url = "/api/v1/printers/00000000-0000-0000-0000-000000000000/regenerate-release-token"
     response = client.post(url)
     assert response.status_code == 401
+
+
+def test_enabling_release_required_resyncs_the_queue(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    calls = []
+    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id: calls.append(printer_id))
+
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Kiosk Printer", "ip_address": "10.0.0.20"},
+    )
+    printer_id = create.json()["id"]
+    calls.clear()  # ignore the create-time sync
+
+    updated = client.patch(
+        f"/api/v1/printers/{printer_id}", headers=auth_headers, json={"release_required": True}
+    )
+    assert updated.status_code == 200
+    assert calls == [printer_id]
