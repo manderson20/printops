@@ -8,45 +8,61 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.db import AsyncSessionLocal
-from app.integrations.mosyle import MosyleError, run_sync
+from app.integrations.google_workspace import GoogleWorkspaceError
+from app.integrations.google_workspace import run_sync as run_google_workspace_sync
+from app.integrations.mosyle import MosyleError
+from app.integrations.mosyle import run_sync as run_mosyle_sync
+from app.models.google_workspace import GoogleWorkspaceSettings
 from app.models.mosyle import MosyleSettings
 from app.routers import auth, health, internal, jobs, printers, settings as settings_router
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-MOSYLE_SYNC_INTERVAL_SECONDS = 15 * 60
+DEVICE_SYNC_INTERVAL_SECONDS = 15 * 60
 
 
-async def _mosyle_sync_loop() -> None:
-    """Refreshes the Mosyle device cache periodically so per-job attribution
-    lookups (app/attribution/resolve.py) never make a live API call — see
-    ARCHITECTURE.md's Mosyle section. Runs forever until cancelled at
-    shutdown; a sync failure just logs and retries next interval rather
-    than crashing the loop."""
-    while True:
-        try:
-            async with AsyncSessionLocal() as db:
-                result = await db.execute(select(MosyleSettings.enabled).limit(1))
-                enabled = result.scalar_one_or_none()
-                if enabled:
-                    await run_sync(db)
-        except MosyleError as exc:
-            logger.warning("Mosyle device sync failed: %s", exc)
-        except Exception:
-            logger.exception("Unexpected error in Mosyle device sync loop")
-        await asyncio.sleep(MOSYLE_SYNC_INTERVAL_SECONDS)
+def _make_device_sync_loop(name: str, settings_model, run_sync_fn, error_cls: type[Exception]):
+    """Builds a periodic device-cache sync loop for a device→user
+    integration (Mosyle, Google Workspace, ...) — refreshed periodically
+    so per-job attribution lookups (app/attribution/resolve.py) never make
+    a live API call. Runs forever until cancelled at shutdown; a sync
+    failure just logs and retries next interval rather than crashing."""
+
+    async def _loop() -> None:
+        while True:
+            try:
+                async with AsyncSessionLocal() as db:
+                    result = await db.execute(select(settings_model.enabled).limit(1))
+                    if result.scalar_one_or_none():
+                        await run_sync_fn(db)
+            except error_cls as exc:
+                logger.warning("%s device sync failed: %s", name, exc)
+            except Exception:
+                logger.exception("Unexpected error in %s device sync loop", name)
+            await asyncio.sleep(DEVICE_SYNC_INTERVAL_SECONDS)
+
+    return _loop
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(_mosyle_sync_loop())
+    tasks = [
+        asyncio.create_task(_make_device_sync_loop("Mosyle", MosyleSettings, run_mosyle_sync, MosyleError)()),
+        asyncio.create_task(
+            _make_device_sync_loop(
+                "Google Workspace", GoogleWorkspaceSettings, run_google_workspace_sync, GoogleWorkspaceError
+            )()
+        ),
+    ]
     yield
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    for task in tasks:
+        task.cancel()
+    for task in tasks:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(

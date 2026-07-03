@@ -8,10 +8,19 @@ from app.core.crypto import decrypt, encrypt
 from app.db import get_db
 from app.deps import get_current_user
 from app.integrations.classguard import ClassGuardClient, ClassGuardError
-from app.integrations.mosyle import MosyleClient, MosyleError, run_sync
+from app.integrations.google_workspace import GoogleWorkspaceClient, GoogleWorkspaceError
+from app.integrations.google_workspace import run_sync as run_google_workspace_sync
+from app.integrations.mosyle import MosyleClient, MosyleError
+from app.integrations.mosyle import run_sync as run_mosyle_sync
 from app.models.classguard import ClassGuardSettings
+from app.models.google_workspace import GoogleWorkspaceSettings
 from app.models.mosyle import MosyleSettings
 from app.schemas.classguard import ClassGuardSettingsOut, ClassGuardSettingsUpdate, ClassGuardTestRequest, ClassGuardTestResult
+from app.schemas.google_workspace import (
+    GoogleWorkspaceSettingsOut,
+    GoogleWorkspaceSettingsUpdate,
+    GoogleWorkspaceTestResult,
+)
 from app.schemas.mosyle import MosyleSettingsOut, MosyleSettingsUpdate, MosyleTestResult
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -107,7 +116,7 @@ async def test_mosyle_connection(
 async def sync_mosyle_devices(db: AsyncSession = Depends(get_db)):
     settings = await _get_or_create_settings(db)
     try:
-        await run_sync(db)
+        await run_mosyle_sync(db)
     except MosyleError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     await db.refresh(settings)
@@ -192,3 +201,90 @@ async def test_classguard_connection(
     if mac:
         return ClassGuardTestResult(ok=True, mac_address=mac)
     return ClassGuardTestResult(ok=True, error=f"Connected, but no active lease found for {payload.test_ip}.")
+
+
+async def _get_or_create_google_workspace_settings(db: AsyncSession) -> GoogleWorkspaceSettings:
+    result = await db.execute(select(GoogleWorkspaceSettings).limit(1))
+    settings = result.scalar_one_or_none()
+    if settings is None:
+        settings = GoogleWorkspaceSettings()
+        db.add(settings)
+        await db.commit()
+        await db.refresh(settings)
+    return settings
+
+
+def _google_workspace_to_out(settings: GoogleWorkspaceSettings) -> GoogleWorkspaceSettingsOut:
+    return GoogleWorkspaceSettingsOut(
+        admin_email=settings.admin_email,
+        customer_id=settings.customer_id,
+        has_service_account_json=bool(settings.service_account_json_encrypted),
+        enabled=settings.enabled,
+        last_synced_at=settings.last_synced_at,
+        last_sync_error=settings.last_sync_error,
+        device_count=settings.device_count,
+    )
+
+
+@router.get("/google-workspace", response_model=GoogleWorkspaceSettingsOut)
+async def get_google_workspace_settings(db: AsyncSession = Depends(get_db)):
+    return _google_workspace_to_out(await _get_or_create_google_workspace_settings(db))
+
+
+@router.put("/google-workspace", response_model=GoogleWorkspaceSettingsOut)
+async def update_google_workspace_settings(
+    payload: GoogleWorkspaceSettingsUpdate, db: AsyncSession = Depends(get_db)
+):
+    settings = await _get_or_create_google_workspace_settings(db)
+    updates = payload.model_dump(exclude_unset=True)
+    if updates.get("admin_email") is not None:
+        settings.admin_email = updates["admin_email"]
+    if updates.get("customer_id") is not None:
+        settings.customer_id = updates["customer_id"]
+    if updates.get("enabled") is not None:
+        settings.enabled = updates["enabled"]
+    if updates.get("service_account_json"):
+        settings.service_account_json_encrypted = encrypt(updates["service_account_json"])
+
+    await db.commit()
+    await db.refresh(settings)
+    return _google_workspace_to_out(settings)
+
+
+@router.post("/google-workspace/test", response_model=GoogleWorkspaceTestResult)
+async def test_google_workspace_connection(
+    payload: GoogleWorkspaceSettingsUpdate, db: AsyncSession = Depends(get_db)
+):
+    """Tests connectivity using the provided values, falling back to
+    already-saved ones for anything omitted."""
+    settings = await _get_or_create_google_workspace_settings(db)
+    service_account_json = payload.service_account_json or (
+        decrypt(settings.service_account_json_encrypted) if settings.service_account_json_encrypted else None
+    )
+    admin_email = payload.admin_email or settings.admin_email
+    customer_id = payload.customer_id or settings.customer_id
+
+    if not (service_account_json and admin_email):
+        return GoogleWorkspaceTestResult(
+            ok=False, error="Service account JSON and admin email are both required."
+        )
+
+    try:
+        client = GoogleWorkspaceClient(
+            service_account_json=service_account_json, admin_email=admin_email, customer_id=customer_id
+        )
+        devices = await client.list_chromeos_devices()
+    except GoogleWorkspaceError as exc:
+        return GoogleWorkspaceTestResult(ok=False, error=str(exc))
+    return GoogleWorkspaceTestResult(ok=True, device_count=len(devices))
+
+
+@router.post("/google-workspace/sync", response_model=GoogleWorkspaceSettingsOut)
+async def sync_google_workspace_devices(db: AsyncSession = Depends(get_db)):
+    settings = await _get_or_create_google_workspace_settings(db)
+    try:
+        await run_google_workspace_sync(db)
+    except GoogleWorkspaceError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    await db.refresh(settings)
+    return _google_workspace_to_out(settings)

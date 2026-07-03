@@ -4,8 +4,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+import json
+
 from app.db import get_db
 from app.integrations.classguard import ClassGuardClient
+from app.integrations.google_workspace import GoogleWorkspaceClient
 from app.integrations.mosyle import MosyleClient
 from app.main import app
 from app.models.base import Base
@@ -196,3 +199,74 @@ def test_classguard_test_connection_missing_fields(client, auth_headers):
     body = response.json()
     assert body["ok"] is False
     assert "required" in body["error"]
+
+
+FAKE_SERVICE_ACCOUNT_JSON = json.dumps({"client_email": "svc@project.iam.gserviceaccount.com", "private_key": "fake"})
+
+
+def test_get_google_workspace_settings_creates_default_row(client, auth_headers):
+    response = client.get("/api/v1/settings/google-workspace", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["enabled"] is False
+    assert body["has_service_account_json"] is False
+    assert body["customer_id"] == "my_customer"
+
+
+def test_update_google_workspace_settings_hides_key(client, auth_headers):
+    response = client.put(
+        "/api/v1/settings/google-workspace",
+        headers=auth_headers,
+        json={
+            "service_account_json": FAKE_SERVICE_ACCOUNT_JSON,
+            "admin_email": "admin@example.com",
+            "enabled": True,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["has_service_account_json"] is True
+    assert body["admin_email"] == "admin@example.com"
+    assert "svc@project.iam.gserviceaccount.com" not in response.text
+
+
+def test_google_workspace_test_connection_success(client, auth_headers, monkeypatch):
+    async def fake_list_devices(self):
+        return [{"serialNumber": "SN1"}, {"serialNumber": "SN2"}, {"serialNumber": "SN3"}]
+
+    monkeypatch.setattr(GoogleWorkspaceClient, "list_chromeos_devices", fake_list_devices)
+
+    response = client.post(
+        "/api/v1/settings/google-workspace/test",
+        headers=auth_headers,
+        json={"service_account_json": FAKE_SERVICE_ACCOUNT_JSON, "admin_email": "admin@example.com"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["device_count"] == 3
+
+
+def test_google_workspace_test_connection_missing_fields(client, auth_headers):
+    response = client.post("/api/v1/settings/google-workspace/test", headers=auth_headers, json={})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert "required" in body["error"]
+
+
+def test_google_workspace_test_connection_invalid_json(client, auth_headers):
+    response = client.post(
+        "/api/v1/settings/google-workspace/test",
+        headers=auth_headers,
+        json={"service_account_json": "not json", "admin_email": "admin@example.com"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert "not valid JSON" in body["error"]
+
+
+def test_google_workspace_sync_endpoint_surfaces_failure_as_502(client, auth_headers):
+    response = client.post("/api/v1/settings/google-workspace/sync", headers=auth_headers)
+    assert response.status_code == 502

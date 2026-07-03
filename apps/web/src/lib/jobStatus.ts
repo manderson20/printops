@@ -14,6 +14,7 @@ export function jobStatusInfo(status: JobStatus) {
 const ATTRIBUTION_METHOD: Record<AttributionMethod, { label: string; tone: "neutral" | "info" | "warning" }> = {
   cups: { label: "CUPS", tone: "neutral" },
   mosyle: { label: "Mosyle", tone: "info" },
+  google_workspace: { label: "Google Workspace", tone: "info" },
   unresolved: { label: "Unresolved", tone: "warning" },
 };
 

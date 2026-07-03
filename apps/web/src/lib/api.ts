@@ -161,7 +161,7 @@ export async function getMdmConnection(id: string): Promise<MdmConnectionInfo> {
 }
 
 export type JobStatus = "received" | "forwarding" | "forwarded" | "failed";
-export type AttributionMethod = "cups" | "mosyle" | "unresolved";
+export type AttributionMethod = "cups" | "mosyle" | "google_workspace" | "unresolved";
 
 export type Job = {
   id: string;
@@ -279,5 +279,58 @@ export async function testClassGuardConnection(
     method: "POST",
     body: JSON.stringify(input),
   });
+  return response.json();
+}
+
+export type GoogleWorkspaceSettings = {
+  admin_email: string | null;
+  customer_id: string;
+  has_service_account_json: boolean;
+  enabled: boolean;
+  last_synced_at: string | null;
+  last_sync_error: string | null;
+  device_count: number;
+};
+
+export type GoogleWorkspaceSettingsInput = {
+  service_account_json?: string;
+  admin_email?: string;
+  customer_id?: string;
+  enabled?: boolean;
+};
+
+export type GoogleWorkspaceTestResult = {
+  ok: boolean;
+  device_count: number | null;
+  error: string | null;
+};
+
+export async function getGoogleWorkspaceSettings(): Promise<GoogleWorkspaceSettings> {
+  const response = await authorizedFetch("/api/v1/settings/google-workspace");
+  return response.json();
+}
+
+export async function updateGoogleWorkspaceSettings(
+  input: GoogleWorkspaceSettingsInput,
+): Promise<GoogleWorkspaceSettings> {
+  const response = await authorizedFetch("/api/v1/settings/google-workspace", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function testGoogleWorkspaceConnection(
+  input: GoogleWorkspaceSettingsInput,
+): Promise<GoogleWorkspaceTestResult> {
+  const response = await authorizedFetch("/api/v1/settings/google-workspace/test", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function syncGoogleWorkspaceDevices(): Promise<GoogleWorkspaceSettings> {
+  const response = await authorizedFetch("/api/v1/settings/google-workspace/sync", { method: "POST" });
   return response.json();
 }

@@ -2,7 +2,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getClassGuardSettings, getMosyleSettings, type ClassGuardSettings, type MosyleSettings } from "@/lib/api";
+import {
+  getClassGuardSettings,
+  getGoogleWorkspaceSettings,
+  getMosyleSettings,
+  type ClassGuardSettings,
+  type GoogleWorkspaceSettings,
+  type MosyleSettings,
+} from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
@@ -42,6 +49,7 @@ function IntegrationCard({
 export default function IntegrationsPage() {
   const [mosyle, setMosyle] = useState<MosyleSettings | null>(null);
   const [classguard, setClassGuard] = useState<ClassGuardSettings | null>(null);
+  const [googleWorkspace, setGoogleWorkspace] = useState<GoogleWorkspaceSettings | null>(null);
 
   useEffect(() => {
     getMosyleSettings()
@@ -50,6 +58,9 @@ export default function IntegrationsPage() {
     getClassGuardSettings()
       .then(setClassGuard)
       .catch(() => setClassGuard(null));
+    getGoogleWorkspaceSettings()
+      .then(setGoogleWorkspace)
+      .catch(() => setGoogleWorkspace(null));
   }, []);
 
   return (
@@ -69,9 +80,15 @@ export default function IntegrationsPage() {
         enabled={mosyle?.enabled ?? null}
       />
       <IntegrationCard
+        href="/integrations/google-workspace"
+        name="Google Workspace"
+        description="ChromeOS device→user lookup for print job attribution (tried after Mosyle)."
+        enabled={googleWorkspace?.enabled ?? null}
+      />
+      <IntegrationCard
         href="/integrations/classguard"
         name="ClassGuard"
-        description="DHCP lease lookup — resolves a print job's source IP to a MAC address for Mosyle matching."
+        description="DHCP lease lookup — resolves a print job's source IP to a MAC address for Mosyle/Google Workspace matching."
         enabled={classguard?.enabled ?? null}
       />
     </div>

@@ -10,6 +10,7 @@ from app.core.crypto import encrypt
 from app.integrations.classguard import ClassGuardClient, ClassGuardError
 from app.models.base import Base
 from app.models.classguard import ClassGuardSettings
+from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceSettings
 from app.models.mosyle import MosyleDevice, MosyleSettings
 
 
@@ -162,3 +163,56 @@ async def test_hostname_source_host_is_not_treated_as_ip(db_session_factory):
 
     async with db_session_factory() as db:
         assert await _lookup_mac_for_source(db, "some-mac.local") is None
+
+
+@pytest.mark.asyncio
+async def test_resolves_via_google_workspace_when_mosyle_misses(db_session_factory, monkeypatch):
+    """Mosyle is enabled but has no matching device cached; Google
+    Workspace is also enabled and does — strategy 3 should still resolve
+    it, not just stop at strategy 2's miss."""
+
+    async def fake_lookup_mac(self, ip):
+        return "aa:bb:cc:dd:ee:ff"
+
+    monkeypatch.setattr(ClassGuardClient, "lookup_mac", fake_lookup_mac)
+
+    async with db_session_factory() as db:
+        db.add(MosyleSettings(enabled=True))  # enabled, but no matching MosyleDevice row
+        db.add(GoogleWorkspaceSettings(enabled=True, service_account_json_encrypted=encrypt("{}"), admin_email="a@x.com"))
+        db.add(ClassGuardSettings(enabled=True, access_token_encrypted=encrypt("tok")))
+        db.add(
+            GoogleWorkspaceDevice(
+                mac_address="AA:BB:CC:DD:EE:FF",
+                user_email="student@example.com",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await db.commit()
+        user, method = await resolve_user(db, None, "10.0.0.5")
+    assert (user, method) == ("student@example.com", "google_workspace")
+
+
+@pytest.mark.asyncio
+async def test_mosyle_takes_priority_over_google_workspace(db_session_factory, monkeypatch):
+    async def fake_lookup_mac(self, ip):
+        return "aa:bb:cc:dd:ee:ff"
+
+    monkeypatch.setattr(ClassGuardClient, "lookup_mac", fake_lookup_mac)
+
+    async with db_session_factory() as db:
+        db.add(MosyleSettings(enabled=True))
+        db.add(GoogleWorkspaceSettings(enabled=True, service_account_json_encrypted=encrypt("{}"), admin_email="a@x.com"))
+        db.add(ClassGuardSettings(enabled=True, access_token_encrypted=encrypt("tok")))
+        db.add(
+            MosyleDevice(
+                mac_address="AA:BB:CC:DD:EE:FF", user_email="mosyle-user@example.com", synced_at=datetime.now(UTC)
+            )
+        )
+        db.add(
+            GoogleWorkspaceDevice(
+                mac_address="AA:BB:CC:DD:EE:FF", user_email="gw-user@example.com", synced_at=datetime.now(UTC)
+            )
+        )
+        await db.commit()
+        user, method = await resolve_user(db, None, "10.0.0.5")
+    assert (user, method) == ("mosyle-user@example.com", "mosyle")
