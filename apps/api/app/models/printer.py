@@ -68,3 +68,15 @@ class Printer(Base, TimestampMixin):
     status_checked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+
+    # Print-and-release. When true, the CUPS backend script
+    # (infra/cups/backends/printops) holds every job sent to this printer's
+    # queue instead of forwarding it immediately — see app/routers/release.py
+    # and app/printers/release.py for how a held job is later delivered via
+    # a second, internal-only CUPS queue (scripts/sync_release_queue.sh).
+    release_required: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # Opaque, unguessable — identifies this printer in the public kiosk URL
+    # (/release/<token>) instead of exposing the raw printer id. Regenerable
+    # by an admin (e.g. a lost/reissued kiosk iPad) without needing to
+    # rebuild the printer itself.
+    release_token: Mapped[str | None] = mapped_column(unique=True, default=None)

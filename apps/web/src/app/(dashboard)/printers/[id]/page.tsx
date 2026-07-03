@@ -29,6 +29,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { PrintReleaseCard } from "./PrintRelease";
 import { TonerCartridgesCard } from "./TonerCartridges";
 
 type LoadState =
@@ -383,6 +384,11 @@ export default function PrinterDetailPage() {
       </Card>
 
       <TonerCartridgesCard printerId={printer.id} colorSupported={!!caps?.color_supported} />
+
+      <PrintReleaseCard
+        printer={printer}
+        onUpdate={(updated) => setState({ phase: "ok", printer: updated })}
+      />
 
       <Card>
         <div className="mb-4 flex items-center justify-between">

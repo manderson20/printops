@@ -1,4 +1,5 @@
 import asyncio
+import secrets
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -124,6 +125,12 @@ async def update_printer(
         updates["ip_address"] = str(updates["ip_address"])
     for field, value in updates.items():
         setattr(printer, field, value)
+    # First time release is turned on for this printer, it needs a token to
+    # exist at all — generated here rather than requiring a separate manual
+    # step before the toggle does anything useful. Regenerating an existing
+    # one (e.g. a lost/reissued kiosk) is POST /{id}/regenerate-release-token.
+    if printer.release_required and not printer.release_token:
+        printer.release_token = secrets.token_urlsafe(16)
     await db.commit()
     await db.refresh(printer)
     if QUEUE_AFFECTING_FIELDS & updates.keys():
@@ -159,6 +166,22 @@ async def resync_queue(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     caused queue_sync_error, without needing another printer edit."""
     printer = await _get_printer_or_404(printer_id, db)
     await _apply_queue_sync(printer, db)
+    return printer
+
+
+@router.post(
+    "/{printer_id}/regenerate-release-token",
+    response_model=PrinterOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def regenerate_release_token(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Rotates this printer's kiosk release URL (app/routers/release.py) —
+    e.g. a lost/reissued kiosk iPad. The old URL stops working immediately
+    since it's looked up by token on every call, not cached anywhere."""
+    printer = await _get_printer_or_404(printer_id, db)
+    printer.release_token = secrets.token_urlsafe(16)
+    await db.commit()
+    await db.refresh(printer)
     return printer
 
 

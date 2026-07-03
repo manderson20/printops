@@ -1,6 +1,8 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +16,7 @@ from app.integrations.google_workspace import run_sync as run_google_workspace_s
 from app.integrations.mosyle import MosyleError
 from app.integrations.mosyle import run_sync as run_mosyle_sync
 from app.models.google_workspace import GoogleWorkspaceSettings
+from app.models.job import Job
 from app.models.mosyle import MosyleSettings
 from app.models.printer import Printer
 from app.printers.status import refresh_printer_status
@@ -24,6 +27,7 @@ from app.routers import (
     internal,
     jobs,
     printers,
+    release,
     reports,
     settings as settings_router,
     updates,
@@ -84,6 +88,34 @@ async def _printer_status_poll_loop() -> None:
         await asyncio.sleep(PRINTER_STATUS_POLL_INTERVAL_SECONDS)
 
 
+HELD_JOB_PURGE_INTERVAL_SECONDS = 15 * 60
+
+
+async def _held_job_purge_loop() -> None:
+    """Cancels any held job (app/routers/release.py) that was never
+    released before Job.held_expires_at — a forgotten sensitive document
+    shouldn't sit in the spool indefinitely. Same tolerant per-cycle error
+    handling as the other background loops."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                now = datetime.now(UTC)
+                result = await db.execute(
+                    select(Job).where(Job.status == "held", Job.held_expires_at < now)
+                )
+                for job in result.scalars().all():
+                    if job.held_file_path:
+                        Path(job.held_file_path).unlink(missing_ok=True)
+                    job.status = "cancelled"
+                    job.error_message = "Expired unreleased hold"
+                    job.completed_at = now
+                    job.held_file_path = None
+                await db.commit()
+        except Exception:
+            logger.exception("Unexpected error in held job purge loop")
+        await asyncio.sleep(HELD_JOB_PURGE_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tasks = [
@@ -94,6 +126,7 @@ async def lifespan(app: FastAPI):
             )()
         ),
         asyncio.create_task(_printer_status_poll_loop()),
+        asyncio.create_task(_held_job_purge_loop()),
     ]
     yield
     for task in tasks:
@@ -131,3 +164,4 @@ app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(device_overrides.router, prefix="/api/v1/devices", tags=["devices"])
 app.include_router(updates.router, prefix="/api/v1/updates", tags=["updates"])
 app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])
+app.include_router(release.router, prefix="/api/v1/release", tags=["release"])
