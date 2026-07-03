@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel
@@ -15,6 +16,7 @@ class SnmpDefaultsOut(BaseModel):
     port: int
     has_community: bool
     enabled: bool
+    retention_days: int
 
 
 class SnmpDefaultsUpdate(BaseModel):
@@ -22,3 +24,16 @@ class SnmpDefaultsUpdate(BaseModel):
     port: int | None = None
     community: str | None = None
     enabled: bool | None = None
+    retention_days: int | None = None
+
+
+class DailyCounterDeltaOut(BaseModel):
+    """One day's usage — omitted entirely (not sent as a zero) for a day
+    with no SNMP reading at all; a field is null specifically when a
+    counter reset/wraparound made that day's delta unavailable (see
+    app/printers/counter_history.py:_field_delta)."""
+
+    bucket_start: date
+    total_delta: int | None
+    copy_delta: int | None
+    print_delta: int | None

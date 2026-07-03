@@ -1,12 +1,12 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.config import get_settings
 from app.db import AsyncSessionLocal
@@ -19,7 +19,12 @@ from app.models.google_workspace import GoogleWorkspaceSettings
 from app.models.job import Job
 from app.models.mosyle import MosyleSettings
 from app.models.printer import Printer
-from app.printers.snmp_counters import get_or_create_snmp_defaults, refresh_printer_counters
+from app.models.snmp import PrinterCounterReading
+from app.printers.snmp_counters import (
+    get_or_create_snmp_defaults,
+    record_reading,
+    refresh_printer_counters,
+)
 from app.printers.status import refresh_printer_status
 from app.routers import (
     auth,
@@ -115,7 +120,8 @@ async def _snmp_counter_poll_loop() -> None:
                     )
 
                     async def _refresh_one(printer: Printer) -> None:
-                        await refresh_printer_counters(printer, defaults)
+                        if await refresh_printer_counters(printer, defaults):
+                            db.add(record_reading(printer))
 
                     await asyncio.gather(
                         *(_refresh_one(p) for p in printers), return_exceptions=True
@@ -124,6 +130,33 @@ async def _snmp_counter_poll_loop() -> None:
         except Exception:
             logger.exception("Unexpected error in SNMP counter poll loop")
         await asyncio.sleep(SNMP_COUNTER_POLL_INTERVAL_SECONDS)
+
+
+COUNTER_READING_PURGE_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+async def _counter_reading_purge_loop() -> None:
+    """Deletes PrinterCounterReading rows older than
+    SnmpDefaultsSettings.retention_days — unlike the held-job purge (15
+    min, time-sensitive since it's deleting spooled documents), this isn't
+    urgent: readings accumulate slowly (one per printer per successful
+    30-min poll) and a day's delay in pruning old ones is harmless, so a
+    24h cadence is plenty. Same tolerant per-cycle error handling as the
+    other background loops."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                defaults = await get_or_create_snmp_defaults(db)
+                cutoff = datetime.now(UTC) - timedelta(days=defaults.retention_days)
+                await db.execute(
+                    delete(PrinterCounterReading).where(
+                        PrinterCounterReading.recorded_at < cutoff
+                    )
+                )
+                await db.commit()
+        except Exception:
+            logger.exception("Unexpected error in counter reading purge loop")
+        await asyncio.sleep(COUNTER_READING_PURGE_INTERVAL_SECONDS)
 
 
 HELD_JOB_PURGE_INTERVAL_SECONDS = 15 * 60
@@ -165,6 +198,7 @@ async def lifespan(app: FastAPI):
         ),
         asyncio.create_task(_printer_status_poll_loop()),
         asyncio.create_task(_snmp_counter_poll_loop()),
+        asyncio.create_task(_counter_reading_purge_loop()),
         asyncio.create_task(_held_job_purge_loop()),
     ]
     yield

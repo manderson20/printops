@@ -227,6 +227,7 @@ def _snmp_defaults_to_out(settings: SnmpDefaultsSettings) -> SnmpDefaultsOut:
         port=settings.port,
         has_community=bool(settings.community_encrypted),
         enabled=settings.enabled,
+        retention_days=settings.retention_days,
     )
 
 
@@ -245,6 +246,8 @@ async def update_snmp_defaults(payload: SnmpDefaultsUpdate, db: AsyncSession = D
         settings.port = updates["port"]
     if updates.get("enabled") is not None:
         settings.enabled = updates["enabled"]
+    if updates.get("retention_days") is not None:
+        settings.retention_days = updates["retention_days"]
     if updates.get("community"):
         settings.community_encrypted = encrypt(updates["community"])
 

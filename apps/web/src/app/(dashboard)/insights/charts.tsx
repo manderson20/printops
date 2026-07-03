@@ -22,7 +22,10 @@ type ChartTooltipProps = {
   chrome: ReturnType<typeof chartChrome>;
 };
 
-function ChartTooltip({ active, label, payload, chrome }: ChartTooltipProps) {
+/** Generic tooltip, reused outside Insights too (e.g. the per-printer
+ * usage chart in printers/[id]/UsageHistory.tsx) — nothing here is
+ * Insights-specific. */
+export function ChartTooltip({ active, label, payload, chrome }: ChartTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
   return (
     <div

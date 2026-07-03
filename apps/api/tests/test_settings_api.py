@@ -405,6 +405,7 @@ def test_get_snmp_defaults_creates_default_row(client, auth_headers):
     assert body["enabled"] is False
     assert body["version"] == "v2c"
     assert body["port"] == 161
+    assert body["retention_days"] == 180
 
 
 def test_update_snmp_defaults_hides_community(client, auth_headers):
@@ -430,3 +431,16 @@ def test_update_snmp_defaults_hides_community(client, auth_headers):
 def test_update_snmp_defaults_requires_admin(client):
     response = client.put("/api/v1/settings/snmp", json={"enabled": True})
     assert response.status_code == 401
+
+
+def test_snmp_retention_days_round_trips(client, auth_headers):
+    response = client.put(
+        "/api/v1/settings/snmp",
+        headers=auth_headers,
+        json={"retention_days": 90},
+    )
+    assert response.status_code == 200
+    assert response.json()["retention_days"] == 90
+
+    fetched = client.get("/api/v1/settings/snmp", headers=auth_headers)
+    assert fetched.json()["retention_days"] == 90

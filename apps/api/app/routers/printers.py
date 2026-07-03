@@ -15,15 +15,21 @@ from app.models.job import Job
 from app.models.printer import Printer
 from app.models.report import PrinterTonerCartridge
 from app.printers.capabilities import parse_capabilities, sanitize_raw_attributes
+from app.printers.counter_history import get_daily_deltas
 from app.printers.ipp_client import PrinterProbeError, probe_printer
 from app.printers.job_control import JobControlError, purge_cups_queue
 from app.printers.queue_sync import QueueSyncError, remove_queue, sync_queue
-from app.printers.snmp_counters import get_or_create_snmp_defaults, refresh_printer_counters
+from app.printers.snmp_counters import (
+    get_or_create_snmp_defaults,
+    record_reading,
+    refresh_printer_counters,
+)
 from app.printers.status import refresh_printer_status
 from app.printers.test_print import TestPrintError, submit_test_print
 from app.schemas.auth import UserOut
 from app.schemas.printer import PrinterCreate, PrinterMdmConnectionOut, PrinterOut, PrinterUpdate
 from app.schemas.report import CartridgeIn, CartridgeOut
+from app.schemas.snmp import DailyCounterDeltaOut
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -237,10 +243,23 @@ async def check_counters(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     open to any logged-in user (not admin-gated), matching check-status."""
     printer = await _get_printer_or_404(printer_id, db)
     defaults = await get_or_create_snmp_defaults(db)
-    await refresh_printer_counters(printer, defaults)
+    if await refresh_printer_counters(printer, defaults):
+        db.add(record_reading(printer))
     await db.commit()
     await db.refresh(printer)
     return printer
+
+
+@router.get("/{printer_id}/counter-history", response_model=list[DailyCounterDeltaOut])
+async def counter_history(
+    printer_id: UUID, days: int = 30, db: AsyncSession = Depends(get_db)
+):
+    """Per-day usage deltas computed from the SNMP counter reading
+    history (app/printers/counter_history.py) — powers the printer
+    detail page's usage-over-time chart. Read-only telemetry, open to
+    any logged-in user, matching check-counters/check-status."""
+    await _get_printer_or_404(printer_id, db)
+    return await get_daily_deltas(db, printer_id, days)
 
 
 @router.post(

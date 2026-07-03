@@ -536,3 +536,94 @@ def test_check_counters_requires_some_auth(client, mock_failed_probe):
     url = "/api/v1/printers/00000000-0000-0000-0000-000000000000/check-counters"
     response = client.post(url)
     assert response.status_code == 401
+
+
+def test_check_counters_records_a_reading_on_success(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "SNMP Printer", "ip_address": "10.0.0.30"},
+    )
+    printer_id = create.json()["id"]
+
+    # Simulate the two calls landing on different calendar days — real
+    # readings a day apart, not two calls a few milliseconds apart in the
+    # test, since same-day readings collapse to the day's last value only
+    # (see app/printers/counter_history.py's module docstring).
+    from datetime import UTC, datetime, timedelta
+
+    simulated_times = iter([datetime.now(UTC) - timedelta(days=1), datetime.now(UTC)])
+    totals = iter([4000, 4242])
+
+    async def fake_refresh_printer_counters(printer, defaults):
+        printer.page_count_total = next(totals)
+        printer.page_count_copy = None
+        printer.page_count_print = None
+        printer.page_count_confidence = "unsupported"
+        printer.page_count_checked_at = next(simulated_times)
+        return True
+
+    monkeypatch.setattr(printers_router, "refresh_printer_counters", fake_refresh_printer_counters)
+    client.post(f"/api/v1/printers/{printer_id}/check-counters", headers=auth_headers)
+    client.post(f"/api/v1/printers/{printer_id}/check-counters", headers=auth_headers)
+
+    history = client.get(
+        f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers
+    )
+    assert history.status_code == 200
+    # Two readings a day apart, both inside the default 30-day window —
+    # two buckets. Yesterday's has no earlier reading to diff against
+    # (null); today's reflects today's reading minus yesterday's — proving
+    # check-counters actually persisted both readings, not just returned
+    # the latest values.
+    body = {row["bucket_start"]: row for row in history.json()}
+    assert len(body) == 2
+    yesterday, today = sorted(body.keys())
+    assert body[yesterday]["total_delta"] is None
+    assert body[today]["total_delta"] == 242
+
+
+def test_check_counters_does_not_record_a_reading_on_failure(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "SNMP Printer", "ip_address": "10.0.0.30"},
+    )
+    printer_id = create.json()["id"]
+
+    async def fake_refresh_printer_counters(printer, defaults):
+        return False
+
+    monkeypatch.setattr(printers_router, "refresh_printer_counters", fake_refresh_printer_counters)
+    response = client.post(f"/api/v1/printers/{printer_id}/check-counters", headers=auth_headers)
+    assert response.status_code == 200
+
+    history = client.get(
+        f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers
+    )
+    assert history.json() == []
+
+
+def test_counter_history_defaults_to_30_days(client, auth_headers, mock_failed_probe):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "SNMP Printer", "ip_address": "10.0.0.30"},
+    )
+    printer_id = create.json()["id"]
+
+    response = client.get(
+        f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers
+    )
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_counter_history_requires_some_auth(client, mock_failed_probe):
+    url = "/api/v1/printers/00000000-0000-0000-0000-000000000000/counter-history"
+    response = client.get(url)
+    assert response.status_code == 401
