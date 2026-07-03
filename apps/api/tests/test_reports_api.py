@@ -107,7 +107,16 @@ def viewer_headers(client, google_settings, monkeypatch):
     return {"Authorization": f"Bearer {token}"}
 
 
-def _make_job(client, printer_id, backend_headers, submitted_by, page_count, status="forwarded"):
+def _make_job(
+    client,
+    printer_id,
+    backend_headers,
+    submitted_by,
+    page_count,
+    status="forwarded",
+    color_mode=None,
+    duplex=None,
+):
     create = client.post(
         "/api/v1/jobs",
         json={"printer_id": printer_id, "submitted_by": submitted_by},
@@ -116,7 +125,12 @@ def _make_job(client, printer_id, backend_headers, submitted_by, page_count, sta
     job_id = create.json()["id"]
     client.patch(
         f"/api/v1/jobs/{job_id}",
-        json={"status": status, "page_count": page_count},
+        json={
+            "status": status,
+            "page_count": page_count,
+            "color_mode": color_mode,
+            "duplex": duplex,
+        },
         headers=backend_headers,
     )
     return job_id
@@ -274,3 +288,142 @@ def test_report_formula_settings_requires_admin(client, viewer_headers):
         json={"cost_per_page_mono": 1.0},
     )
     assert response.status_code == 403
+
+
+def test_report_formula_settings_include_paper_cost(client, admin_headers):
+    response = client.get("/api/v1/settings/report-formulas", headers=admin_headers)
+    assert response.json()["cost_per_sheet_paper"] == 0.01
+
+    updated = client.put(
+        "/api/v1/settings/report-formulas",
+        headers=admin_headers,
+        json={"cost_per_sheet_paper": 0.02},
+    )
+    assert updated.json()["cost_per_sheet_paper"] == 0.02
+
+
+def test_toner_cartridges_default_empty_and_admin_can_set(client, printer_id, admin_headers):
+    empty = client.get(f"/api/v1/printers/{printer_id}/toner-cartridges", headers=admin_headers)
+    assert empty.status_code == 200
+    assert empty.json() == []
+
+    updated = client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=admin_headers,
+        json=[
+            {"color": "black", "cost": 60.0, "yield_pages": 3000},
+            {"color": "cyan", "cost": 80.0, "yield_pages": 2000},
+        ],
+    )
+    assert updated.status_code == 200
+    colors = {c["color"] for c in updated.json()}
+    assert colors == {"black", "cyan"}
+
+    refetched = client.get(f"/api/v1/printers/{printer_id}/toner-cartridges", headers=admin_headers)
+    assert len(refetched.json()) == 2
+
+
+def test_toner_cartridges_put_replaces_full_set(client, printer_id, admin_headers):
+    client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=admin_headers,
+        json=[{"color": "black", "cost": 60.0, "yield_pages": 3000}],
+    )
+    replaced = client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=admin_headers,
+        json=[{"color": "cyan", "cost": 80.0, "yield_pages": 2000}],
+    )
+    assert [c["color"] for c in replaced.json()] == ["cyan"]
+
+
+def test_toner_cartridges_rejects_duplicate_color(client, printer_id, admin_headers):
+    response = client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=admin_headers,
+        json=[
+            {"color": "black", "cost": 60.0, "yield_pages": 3000},
+            {"color": "black", "cost": 61.0, "yield_pages": 3000},
+        ],
+    )
+    assert response.status_code == 400
+
+
+def test_toner_cartridges_put_requires_admin(client, printer_id, viewer_headers):
+    response = client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=viewer_headers,
+        json=[{"color": "black", "cost": 60.0, "yield_pages": 3000}],
+    )
+    assert response.status_code == 403
+
+
+def test_cost_breakdown_uses_real_cartridge_rate(
+    client, printer_id, backend_headers, admin_headers
+):
+    client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=admin_headers,
+        json=[{"color": "black", "cost": 20.0, "yield_pages": 1000}],  # $0.02/page
+    )
+    _make_job(
+        client, printer_id, backend_headers, "alice@example.org", 10,
+        color_mode="monochrome", duplex=False,
+    )
+
+    response = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["label"] == "alice@example.org"
+    assert body[0]["page_count"] == 10
+    assert body[0]["toner_cost"] == 0.2  # 10 pages * $0.02
+
+
+def test_cost_breakdown_falls_back_without_cartridges(
+    client, printer_id, backend_headers, admin_headers
+):
+    client.put(
+        "/api/v1/settings/report-formulas",
+        headers=admin_headers,
+        json={"cost_per_page_mono": 0.05},
+    )
+    _make_job(
+        client, printer_id, backend_headers, "alice@example.org", 4,
+        color_mode="monochrome", duplex=False,
+    )
+
+    response = client.get("/api/v1/reports/cost-breakdown?group_by=printer", headers=admin_headers)
+    body = response.json()
+    assert body[0]["toner_cost"] == round(4 * 0.05, 2)
+
+
+def test_cost_breakdown_scopes_to_viewer_identity(
+    client, printer_id, backend_headers, admin_headers, viewer_headers
+):
+    _make_job(client, printer_id, backend_headers, "viewer@example.org", 5)
+    _make_job(client, printer_id, backend_headers, "someone.else@example.org", 50)
+
+    response = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=viewer_headers)
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["label"] == "viewer@example.org"
+
+
+def test_cost_breakdown_rejects_bad_group_by(client, admin_headers):
+    response = client.get("/api/v1/reports/cost-breakdown?group_by=bogus", headers=admin_headers)
+    assert response.status_code == 400
+
+
+def test_summary_includes_paper_cost(client, printer_id, backend_headers, admin_headers):
+    client.put(
+        "/api/v1/settings/report-formulas",
+        headers=admin_headers,
+        json={"cost_per_sheet_paper": 0.5, "cost_per_page_mono": 0.0},
+    )
+    _make_job(client, printer_id, backend_headers, "alice@example.org", 4, duplex=False)
+
+    response = client.get("/api/v1/reports/summary", headers=admin_headers)
+    body = response.json()
+    assert body["estimated_cost_paper"] == 2.0  # 4 sheets * $0.50
+    assert body["estimated_cost_total"] == 2.0

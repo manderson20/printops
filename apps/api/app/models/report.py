@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import JSON, Date
+from sqlalchemy import JSON, Date, ForeignKey, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -26,6 +26,37 @@ class ReportFormulaSettings(Base, TimestampMixin):
     sheets_per_tree: Mapped[float] = mapped_column(default=8333.0, server_default="8333.0")
     # Rough estimate: ~4.6 grams of CO2 per sheet (production + printing).
     co2_grams_per_sheet: Mapped[float] = mapped_column(default=4.6, server_default="4.6")
+    # Fallback paper cost when computing real per-job cost (app/reports/formulas.py)
+    # — this one's a single global rate by design (paper is bought org-wide,
+    # not per-printer), unlike toner which comes from each printer's own
+    # PrinterTonerCartridge rows below.
+    cost_per_sheet_paper: Mapped[float] = mapped_column(default=0.01, server_default="0.01")
+
+
+class PrinterTonerCartridge(Base, TimestampMixin):
+    """A printer's current toner cartridge cost/yield for one color slot —
+    updated in place when a cartridge is replaced/repriced, not an
+    append-only purchase ledger (same one-row-per-scope convention as
+    ReportFormulaSettings above). Color printers have up to 4 rows
+    (black/cyan/magenta/yellow); a mono-only printer typically has just
+    black. See app/reports/formulas.py:compute_printer_rate for how these
+    turn into a real per-page cost — mono pages price off black alone;
+    color pages price off all 4 summed (the standard "worst-case click
+    cost" model), falling back to ReportFormulaSettings' flat
+    cost_per_page_mono/color for any color slot that isn't configured yet."""
+
+    __tablename__ = "printer_toner_cartridges"
+    __table_args__ = (UniqueConstraint("printer_id", "color", name="uq_printer_toner_color"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    printer_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("printers.id", ondelete="CASCADE"), index=True
+    )
+    # "black" | "cyan" | "magenta" | "yellow" — enforced at the API layer
+    # (schemas/report.py), not a DB constraint.
+    color: Mapped[str]
+    cost: Mapped[float]
+    yield_pages: Mapped[int]
 
 
 class ReportSnapshot(Base, TimestampMixin):

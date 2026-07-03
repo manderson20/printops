@@ -11,6 +11,7 @@ from app.db import get_db
 from app.deps import get_current_user, require_role
 from app.models.job import Job
 from app.models.printer import Printer
+from app.models.report import PrinterTonerCartridge
 from app.printers.capabilities import parse_capabilities, sanitize_raw_attributes
 from app.printers.ipp_client import PrinterProbeError, probe_printer
 from app.printers.job_control import JobControlError, purge_cups_queue
@@ -19,6 +20,7 @@ from app.printers.status import refresh_printer_status
 from app.printers.test_print import TestPrintError, submit_test_print
 from app.schemas.auth import UserOut
 from app.schemas.printer import PrinterCreate, PrinterMdmConnectionOut, PrinterOut, PrinterUpdate
+from app.schemas.report import CartridgeIn, CartridgeOut
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -240,3 +242,55 @@ async def test_print(
     except TestPrintError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     return {"message": message}
+
+
+@router.get("/{printer_id}/toner-cartridges", response_model=list[CartridgeOut])
+async def get_toner_cartridges(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    await _get_printer_or_404(printer_id, db)
+    result = await db.execute(
+        select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer_id)
+    )
+    return result.scalars().all()
+
+
+@router.put(
+    "/{printer_id}/toner-cartridges",
+    response_model=list[CartridgeOut],
+    dependencies=[Depends(require_role("admin"))],
+)
+async def update_toner_cartridges(
+    printer_id: UUID, payload: list[CartridgeIn], db: AsyncSession = Depends(get_db)
+):
+    """Replaces this printer's full cartridge set — simplest correct
+    approach for a handful (<=4) of rows representing "current cost
+    profile per color slot", not a purchase ledger (see
+    PrinterTonerCartridge's docstring). Used by app/reports/ cost
+    calculations (app/routers/reports.py's cost-breakdown endpoint)."""
+    await _get_printer_or_404(printer_id, db)
+    colors = [entry.color for entry in payload]
+    if len(colors) != len(set(colors)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Each cartridge color can only be listed once.",
+        )
+
+    await db.execute(
+        PrinterTonerCartridge.__table__.delete().where(
+            PrinterTonerCartridge.printer_id == printer_id
+        )
+    )
+    for entry in payload:
+        db.add(
+            PrinterTonerCartridge(
+                printer_id=printer_id,
+                color=entry.color,
+                cost=entry.cost,
+                yield_pages=entry.yield_pages,
+            )
+        )
+    await db.commit()
+
+    result = await db.execute(
+        select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer_id)
+    )
+    return result.scalars().all()

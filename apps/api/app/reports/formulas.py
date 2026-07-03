@@ -7,8 +7,9 @@ freezes the result — see app/models/report.py:ReportSnapshot)."""
 
 import math
 from dataclasses import dataclass
+from typing import Protocol
 
-from app.reports.aggregation import SummaryTotals
+from app.reports.aggregation import SummaryTotals, physical_sheets_used
 
 
 @dataclass
@@ -64,4 +65,90 @@ def compute_environmental_impact(
         duplex_sheets_saved=duplex_sheets_saved,
         trees_used=trees_used,
         co2_grams=round(sheets_of_paper * formulas.co2_grams_per_sheet, 1),
+    )
+
+
+# --- Real per-printer toner + paper cost (app/reports/aggregation.py's
+# get_cost_breakdown) — a more accurate replacement for the flat
+# cost_per_page_mono/color estimate above, once a printer's actual
+# cartridges are entered. Kept separate from compute_environmental_impact
+# rather than folded in: that function works off pre-aggregated
+# SummaryTotals, but per-job physical sheet rounding (ceil(pages/2) per
+# job, not per aggregate sum) means accurate cost has to be computed one
+# job row at a time — see the module-level docstring in aggregation.py's
+# get_cost_breakdown for why.
+
+
+@dataclass
+class PrinterTonerRate:
+    mono_cost_per_page: float
+    color_cost_per_page: float
+
+
+class CartridgeLike(Protocol):
+    """Structural type, not sqlalchemy-specific — compute_printer_rate only
+    needs `.color`/`.cost`/`.yield_pages`, so tests can pass plain objects
+    instead of real ORM rows."""
+
+    color: str
+    cost: float
+    yield_pages: int
+
+
+CARTRIDGE_COLORS = ("black", "cyan", "magenta", "yellow")
+
+
+def compute_printer_rate(
+    cartridges: list[CartridgeLike], fallback: FormulaValues
+) -> PrinterTonerRate:
+    """Mono prices off the black cartridge alone; color prices off all 4
+    summed (the standard "worst-case click cost" model) — confirmed with
+    the user rather than assumed. Any color slot missing a configured
+    cartridge (yield_pages of 0 would divide by zero, so also treated as
+    "not configured") falls back to the flat admin-set rate for that
+    color mode, so cost estimates never go blank mid-rollout."""
+    by_color = {c.color: c for c in cartridges if c.yield_pages > 0}
+
+    black = by_color.get("black")
+    mono_rate = (black.cost / black.yield_pages) if black else fallback.cost_per_page_mono
+
+    if all(color in by_color for color in CARTRIDGE_COLORS):
+        color_rate = sum(
+            by_color[color].cost / by_color[color].yield_pages for color in CARTRIDGE_COLORS
+        )
+    else:
+        color_rate = fallback.cost_per_page_color
+
+    return PrinterTonerRate(mono_cost_per_page=mono_rate, color_cost_per_page=color_rate)
+
+
+@dataclass
+class JobCost:
+    toner_cost: float
+    sheets: int
+    paper_cost: float
+    total_cost: float
+
+
+def job_cost(
+    page_count: int,
+    color_mode: str | None,
+    duplex: bool | None,
+    rate: PrinterTonerRate,
+    cost_per_sheet_paper: float,
+) -> JobCost:
+    """Real cost for one job — toner priced per page at that printer's
+    actual rate (color rate if color_mode == "color", else the mono rate;
+    an unreported color_mode prices at mono, the same conservative rule
+    compute_environmental_impact already uses for unknown-color-mode
+    pages), plus paper at physical sheets actually consumed."""
+    toner_rate = rate.color_cost_per_page if color_mode == "color" else rate.mono_cost_per_page
+    toner_cost = page_count * toner_rate
+    sheets = physical_sheets_used(page_count, duplex)
+    paper_cost = sheets * cost_per_sheet_paper
+    return JobCost(
+        toner_cost=toner_cost,
+        sheets=sheets,
+        paper_cost=paper_cost,
+        total_cost=toner_cost + paper_cost,
     )

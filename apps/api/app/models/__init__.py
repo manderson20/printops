@@ -6,7 +6,7 @@ from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceSe
 from app.models.job import Job
 from app.models.mosyle import MosyleDevice, MosyleSettings
 from app.models.printer import Printer
-from app.models.report import ReportFormulaSettings, ReportSnapshot
+from app.models.report import PrinterTonerCartridge, ReportFormulaSettings, ReportSnapshot
 from app.models.update_schedule import UpdateSchedule
 from app.models.user import User
 
@@ -22,6 +22,7 @@ __all__ = [
     "MosyleDevice",
     "MosyleSettings",
     "Printer",
+    "PrinterTonerCartridge",
     "ReportFormulaSettings",
     "ReportSnapshot",
     "UpdateSchedule",

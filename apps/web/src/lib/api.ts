@@ -605,6 +605,7 @@ export type ReportSummary = {
   unknown_duplex_pages: number;
   estimated_cost_mono: number;
   estimated_cost_color: number;
+  estimated_cost_paper: number;
   estimated_cost_total: number;
   sheets_of_paper: number;
   duplex_sheets_saved: number;
@@ -653,6 +654,25 @@ export async function getReportLeaderboard(
 ): Promise<LeaderboardEntry[]> {
   const qs = buildReportQuery(filters, { type, limit: String(limit) });
   const response = await authorizedFetch(`/api/v1/reports/leaderboard${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export type CostEntry = {
+  key: string;
+  label: string;
+  job_count: number;
+  page_count: number;
+  toner_cost: number;
+  paper_cost: number;
+  total_cost: number;
+};
+
+export async function getCostBreakdown(
+  groupBy: "printer" | "user",
+  filters?: ReportFilters,
+): Promise<CostEntry[]> {
+  const qs = buildReportQuery(filters, { group_by: groupBy });
+  const response = await authorizedFetch(`/api/v1/reports/cost-breakdown${qs ? `?${qs}` : ""}`);
   return response.json();
 }
 
@@ -748,6 +768,7 @@ export type ReportFormulaSettings = {
   cost_per_page_color: number;
   sheets_per_tree: number;
   co2_grams_per_sheet: number;
+  cost_per_sheet_paper: number;
 };
 
 export type ReportFormulaSettingsInput = Partial<ReportFormulaSettings>;
@@ -763,6 +784,30 @@ export async function updateReportFormulaSettings(
   const response = await authorizedFetch("/api/v1/settings/report-formulas", {
     method: "PUT",
     body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export type CartridgeColor = "black" | "cyan" | "magenta" | "yellow";
+
+export type Cartridge = {
+  color: CartridgeColor;
+  cost: number;
+  yield_pages: number;
+};
+
+export async function getPrinterCartridges(printerId: string): Promise<Cartridge[]> {
+  const response = await authorizedFetch(`/api/v1/printers/${printerId}/toner-cartridges`);
+  return response.json();
+}
+
+export async function updatePrinterCartridges(
+  printerId: string,
+  cartridges: Cartridge[],
+): Promise<Cartridge[]> {
+  const response = await authorizedFetch(`/api/v1/printers/${printerId}/toner-cartridges`, {
+    method: "PUT",
+    body: JSON.stringify(cartridges),
   });
   return response.json();
 }

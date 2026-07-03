@@ -29,6 +29,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { TonerCartridgesCard } from "./TonerCartridges";
 
 type LoadState =
   | { phase: "loading" }
@@ -380,6 +381,8 @@ export default function PrinterDetailPage() {
           </div>
         )}
       </Card>
+
+      <TonerCartridgesCard printerId={printer.id} colorSupported={!!caps?.color_supported} />
 
       <Card>
         <div className="mb-4 flex items-center justify-between">
