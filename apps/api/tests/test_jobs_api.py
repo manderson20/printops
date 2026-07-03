@@ -227,3 +227,139 @@ def test_create_job_without_submitted_by_is_unresolved(client, printer_id, backe
     body = response.json()
     assert body["submitted_by"] == "unknown"
     assert body["attribution_method"] == "unresolved"
+
+
+def test_update_job_records_page_count(client, printer_id, backend_headers):
+    create = client.post(
+        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
+    )
+    job_id = create.json()["id"]
+
+    updated = client.patch(
+        f"/api/v1/jobs/{job_id}",
+        json={"status": "forwarded", "page_count": 7},
+        headers=backend_headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["page_count"] == 7
+
+
+def test_update_job_without_page_count_stays_null(client, printer_id, backend_headers):
+    create = client.post(
+        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
+    )
+    job_id = create.json()["id"]
+
+    updated = client.patch(
+        f"/api/v1/jobs/{job_id}",
+        json={"status": "forwarded"},
+        headers=backend_headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["page_count"] is None
+
+
+def test_job_usage_aggregates_per_user(client, printer_id, backend_headers, auth_headers):
+    adele_job_1 = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "adele", "file_size_bytes": 1000},
+        headers=backend_headers,
+    ).json()
+    adele_job_2 = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "adele", "file_size_bytes": 2000},
+        headers=backend_headers,
+    ).json()
+    bob_job = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "bob", "file_size_bytes": 500},
+        headers=backend_headers,
+    ).json()
+
+    client.patch(
+        f"/api/v1/jobs/{adele_job_1['id']}",
+        json={"status": "forwarded", "page_count": 3},
+        headers=backend_headers,
+    )
+    client.patch(
+        f"/api/v1/jobs/{adele_job_2['id']}",
+        json={"status": "forwarded", "page_count": 5},
+        headers=backend_headers,
+    )
+    client.patch(
+        f"/api/v1/jobs/{bob_job['id']}",
+        json={"status": "forwarded", "page_count": 1},
+        headers=backend_headers,
+    )
+
+    response = client.get("/api/v1/jobs/usage", headers=auth_headers)
+    assert response.status_code == 200
+    by_user = {row["submitted_by"]: row for row in response.json()}
+
+    assert by_user["adele"]["job_count"] == 2
+    assert by_user["adele"]["total_pages"] == 8
+    assert by_user["adele"]["total_bytes"] == 3000
+    assert by_user["bob"]["job_count"] == 1
+    assert by_user["bob"]["total_pages"] == 1
+
+
+def test_job_usage_requires_auth(client, printer_id, backend_headers):
+    client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
+    response = client.get("/api/v1/jobs/usage")
+    assert response.status_code == 401
+
+
+def test_job_usage_forbidden_for_viewer(client, printer_id, backend_headers, monkeypatch):
+    client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
+
+    google_settings = client.put(
+        "/api/v1/settings/google-sso",
+        headers={
+            "Authorization": (
+                "Bearer "
+                + client.post(
+                    "/auth/login", json={"username": "admin", "password": "changeme"}
+                ).json()["access_token"]
+            )
+        },
+        json={
+            "client_id": "test-client-id",
+            "client_secret": "test-client-secret",
+            "workspace_domain": "example.org",
+            "initial_admin_emails": [],
+            "redirect_base_url": "https://printops.test",
+            "enabled": True,
+        },
+    )
+    assert google_settings.status_code == 200
+
+    async def fake_exchange_code(**kwargs):
+        return {"id_token": "fake-id-token"}
+
+    def fake_verify_id_token(id_token, client_id):
+        return {
+            "sub": "google-sub-viewer",
+            "email": "viewer@example.org",
+            "email_verified": True,
+            "hd": "example.org",
+            "name": "Viewer Person",
+            "picture": None,
+        }
+
+    monkeypatch.setattr("app.routers.auth.exchange_code", fake_exchange_code)
+    monkeypatch.setattr("app.routers.auth.verify_id_token", fake_verify_id_token)
+
+    login_response = client.get("/auth/google/login", follow_redirects=False)
+    state = login_response.cookies["printops_oauth_state"]
+    callback = client.get(
+        "/auth/google/callback",
+        params={"code": "fake-code", "state": state},
+        cookies={"printops_oauth_state": state},
+        follow_redirects=False,
+    )
+    viewer_token = callback.headers["location"].split("token=", 1)[1]
+
+    response = client.get(
+        "/api/v1/jobs/usage", headers={"Authorization": f"Bearer {viewer_token}"}
+    )
+    assert response.status_code == 403

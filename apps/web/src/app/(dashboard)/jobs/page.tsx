@@ -59,6 +59,7 @@ function JobsList() {
                 <th className="px-4 py-3 font-medium">Printer</th>
                 <th className="px-4 py-3 font-medium">Submitted By</th>
                 <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Pages</th>
                 <th className="px-4 py-3 font-medium">Size</th>
                 <th className="px-4 py-3 font-medium">Submitted</th>
               </tr>
@@ -95,6 +96,9 @@ function JobsList() {
                           </span>
                         )}
                       </div>
+                    </td>
+                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
+                      {job.page_count ?? "—"}
                     </td>
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                       {formatBytes(job.file_size_bytes)}

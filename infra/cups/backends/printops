@@ -13,6 +13,7 @@ through the app's own Python environment.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -43,6 +44,44 @@ def parse_source_host(job_options: str) -> str | None:
             value = token.removeprefix("job-originating-host-name=")
             return value or None
     return None
+
+
+def get_page_count(queue_name: str, job_id: str) -> int | None:
+    """Reads job-media-sheets-completed off our own local CUPS job record via
+    ipptool, once the real `ipp` backend (below) has already finished
+    forwarding — by then cupsd's local job has already been updated with
+    whatever the physical printer reported back over the IPP back-channel
+    (the same back-channel fd close_fds=False below exists to preserve).
+    Best-effort only: attribute support varies by printer/CUPS version, so
+    any failure here must never affect delivery, only page-count telemetry.
+    """
+    test_definition = (
+        "{\n"
+        "    OPERATION Get-Job-Attributes\n"
+        "    GROUP operation-attributes-tag\n"
+        "    ATTR charset attributes-charset utf-8\n"
+        "    ATTR language attributes-natural-language en\n"
+        f"    ATTR uri printer-uri ipp://localhost/printers/{queue_name}\n"
+        f"    ATTR integer job-id {job_id}\n"
+        "    ATTR keyword requested-attributes job-media-sheets-completed\n"
+        "}\n"
+    )
+    try:
+        result = subprocess.run(
+            ["ipptool", "-X", f"ipp://localhost/printers/{queue_name}", "-"],
+            input=test_definition,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    match = re.search(
+        r"<key>job-media-sheets-completed</key>\s*<array>\s*<integer>(\d+)</integer>",
+        result.stdout,
+    )
+    return int(match.group(1)) if match else None
 
 
 def api_request(token: str, method: str, path: str, body: dict | None = None) -> dict:
@@ -135,6 +174,11 @@ def main() -> int:
     )
     exit_code = result.returncode
 
+    page_count = None
+    if exit_code == 0:
+        queue_name = os.environ.get("PRINTER") or f"printops-{printer_id}"
+        page_count = get_page_count(queue_name, job_id)
+
     try:
         api_request(
             token,
@@ -143,6 +187,7 @@ def main() -> int:
             {
                 "status": "forwarded" if exit_code == 0 else "failed",
                 "error_message": None if exit_code == 0 else f"ipp backend exited {exit_code}",
+                "page_count": page_count,
             },
         )
     except (urllib.error.URLError, urllib.error.HTTPError):
