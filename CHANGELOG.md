@@ -5,6 +5,33 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.2.0] - 2026-07-03
+
+- **Printer status monitoring.** A background check now polls every
+  printer's real IPP state every 60 seconds and reports online/error/
+  offline (plus a manual "Check Now"), shown on the printers list and
+  detail page.
+- **Job cancel / queue purge.** Admins can cancel a single stuck job or
+  purge a printer's entire CUPS queue when a bad job jams it. The Jobs
+  page gained printer/status filters, sortable columns, and a stuck-job
+  hint.
+- **Print Insights.** A new `/insights` dashboard turns job history into a
+  timeline, fun facts, printer/user leaderboards, and environmental/cost
+  estimates, with filters, CSV export, a print-friendly summary view, and
+  admin-saved snapshots that freeze their numbers even if formulas change
+  later. Also extends job capture (going forward only) with document
+  name, copy count, color mode, duplex, and paper size.
+- **Real toner/paper cost model.** Cost estimates now use each printer's
+  actual toner cartridge costs and rated page yields (configurable per
+  printer, color printers get separate black/cyan/magenta/yellow rows)
+  plus a global paper cost per sheet, instead of one flat org-wide rate —
+  falling back to the flat rate for any printer that isn't configured
+  yet. A new cost-by-user (or by-printer) breakdown is available from the
+  Insights leaderboard.
+- **Devices page fix.** The device list no longer renders a full copy of
+  the Google Workspace roster per row — with a large roster and device
+  count this was creating millions of DOM nodes and freezing the page.
+
 ## [0.1.0] - 2026-07-03
 
 - **Device attribution overrides.** Admins can now view every device seen
