@@ -1,6 +1,8 @@
+import csv
+import io
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -317,7 +319,44 @@ async def list_google_workspace_users(db: AsyncSession = Depends(get_db)):
     sync_users) — used by the device-override admin UI to validate/autocomplete
     a correction email against a real org address rather than free text."""
     result = await db.execute(select(GoogleWorkspaceUser).order_by(GoogleWorkspaceUser.email))
-    return [GoogleWorkspaceUserOut(email=u.email, name=u.name) for u in result.scalars().all()]
+    return [
+        GoogleWorkspaceUserOut(email=u.email, name=u.name, employee_id=u.employee_id)
+        for u in result.scalars().all()
+    ]
+
+
+@router.get(
+    "/google-workspace/copier-pin-roster.csv",
+    dependencies=[Depends(require_role("admin"))],
+)
+async def export_copier_pin_roster(db: AsyncSession = Depends(get_db)):
+    """A starting point for loading staff into a copier's local PIN list
+    (e.g. Konica Minolta's Account Track/User Authentication user
+    registration) — PIN is each person's Google Workspace Employee ID, so
+    entering that number at the copier identifies them the same way it
+    would in PrintOps. Skips anyone without an Employee ID set in their
+    Workspace profile rather than fabricating one.
+
+    This is a best-effort default column layout (Name, Email, PIN), not a
+    confirmed match for any specific bizhub firmware's bulk-import
+    template — the local "User Registration" import format varies by
+    device/firmware, so check it against a real device's admin panel and
+    adjust the columns here if needed."""
+    result = await db.execute(
+        select(GoogleWorkspaceUser)
+        .where(GoogleWorkspaceUser.employee_id.is_not(None))
+        .order_by(GoogleWorkspaceUser.email)
+    )
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["Name", "Email", "PIN"])
+    for user in result.scalars().all():
+        writer.writerow([user.name or "", user.email, user.employee_id])
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=copier-pin-roster.csv"},
+    )
 
 
 async def _get_or_create_google_sso_settings(db: AsyncSession) -> GoogleSsoSettings:

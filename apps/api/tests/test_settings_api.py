@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
@@ -12,6 +14,7 @@ from app.integrations.google_workspace import GoogleWorkspaceClient
 from app.integrations.mosyle import MosyleClient
 from app.main import app
 from app.models.base import Base
+from app.models.google_workspace import GoogleWorkspaceUser
 
 
 @pytest_asyncio.fixture
@@ -270,3 +273,38 @@ def test_google_workspace_test_connection_invalid_json(client, auth_headers):
 def test_google_workspace_sync_endpoint_surfaces_failure_as_502(client, auth_headers):
     response = client.post("/api/v1/settings/google-workspace/sync", headers=auth_headers)
     assert response.status_code == 502
+
+
+def test_copier_pin_roster_requires_auth(client):
+    response = client.get("/api/v1/settings/google-workspace/copier-pin-roster.csv")
+    assert response.status_code == 401
+
+
+async def test_copier_pin_roster_includes_only_users_with_employee_id(
+    client, auth_headers, db_session_factory
+):
+    async with db_session_factory() as session:
+        session.add(
+            GoogleWorkspaceUser(
+                email="alice@example.com",
+                name="Alice",
+                employee_id="1001",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            GoogleWorkspaceUser(
+                email="bob@example.com", name="Bob", employee_id=None, synced_at=datetime.now(UTC)
+            )
+        )
+        await session.commit()
+
+    response = client.get(
+        "/api/v1/settings/google-workspace/copier-pin-roster.csv", headers=auth_headers
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    body = response.text
+    assert body.splitlines()[0] == "Name,Email,PIN"
+    assert "Alice,alice@example.com,1001" in body
+    assert "bob@example.com" not in body

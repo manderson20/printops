@@ -28,7 +28,12 @@ git merge --ff-only origin/main
 echo "== Syncing API dependencies =="
 cd "$REPO_DIR/apps/api"
 source .venv/bin/activate
-uv sync --quiet
+# --extra dev: this box doubles as the dev/test environment (pytest/ruff
+# are how changes get verified here) as well as the deployment target —
+# a plain `uv sync` reconciles the venv to the base dependency set only
+# and silently removes them, discovered when a real scheduled update did
+# exactly that mid-session.
+uv sync --quiet --extra dev
 
 echo "== Running database migrations =="
 timeout 120 alembic upgrade head

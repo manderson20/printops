@@ -66,5 +66,10 @@ class GoogleWorkspaceUser(Base):
 
     email: Mapped[str] = mapped_column(index=True, unique=True)
     name: Mapped[str | None] = mapped_column(default=None)
+    # Google's built-in Employee ID field (externalIds[type=organization] —
+    # see app/integrations/google_workspace.py:extract_employee_id). Feeds
+    # the copier PIN roster export (app/routers/settings.py); null for
+    # anyone without one set in their Workspace profile.
+    employee_id: Mapped[str | None] = mapped_column(default=None)
 
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
