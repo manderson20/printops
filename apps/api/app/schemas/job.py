@@ -43,7 +43,16 @@ class JobListOut(JobOut):
 
 
 class UserUsageOut(BaseModel):
-    submitted_by: str | None
+    """One row of the usage report — either a synced Google Workspace
+    roster user (email/name set, zero-filled if they've never printed) or
+    the single aggregated `is_other` row covering everything printed under
+    a name/email that isn't in the roster (e.g. attribution_method
+    "unresolved", or a local username that never matched a Workspace
+    address) — see app/routers/jobs.py:list_job_usage."""
+
+    email: str | None
+    name: str | None
+    is_other: bool = False
     job_count: int
     total_pages: int
     total_bytes: int

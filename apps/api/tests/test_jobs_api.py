@@ -4,10 +4,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from datetime import UTC, datetime
+
 from app.core.config import get_settings
 from app.db import get_db
 from app.main import app
 from app.models.base import Base
+from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.printer import Printer
 from app.printers.ipp_client import PrinterProbeError
 from app.routers import printers as printers_router
@@ -259,20 +262,41 @@ def test_update_job_without_page_count_stays_null(client, printer_id, backend_he
     assert updated.json()["page_count"] is None
 
 
-def test_job_usage_aggregates_per_user(client, printer_id, backend_headers, auth_headers):
+async def test_job_usage_aggregates_per_user(
+    client, printer_id, backend_headers, auth_headers, db_session_factory
+):
+    async with db_session_factory() as session:
+        session.add(
+            GoogleWorkspaceUser(email="adele@example.com", name="Adele", synced_at=datetime.now(UTC))
+        )
+        session.add(
+            GoogleWorkspaceUser(email="bob@example.com", name="Bob", synced_at=datetime.now(UTC))
+        )
+        session.add(
+            GoogleWorkspaceUser(
+                email="never.printed@example.com", name="Never Printed", synced_at=datetime.now(UTC)
+            )
+        )
+        await session.commit()
+
     adele_job_1 = client.post(
         "/api/v1/jobs",
-        json={"printer_id": printer_id, "submitted_by": "adele", "file_size_bytes": 1000},
+        json={"printer_id": printer_id, "submitted_by": "adele@example.com", "file_size_bytes": 1000},
         headers=backend_headers,
     ).json()
     adele_job_2 = client.post(
         "/api/v1/jobs",
-        json={"printer_id": printer_id, "submitted_by": "adele", "file_size_bytes": 2000},
+        json={"printer_id": printer_id, "submitted_by": "adele@example.com", "file_size_bytes": 2000},
         headers=backend_headers,
     ).json()
     bob_job = client.post(
         "/api/v1/jobs",
-        json={"printer_id": printer_id, "submitted_by": "bob", "file_size_bytes": 500},
+        json={"printer_id": printer_id, "submitted_by": "bob@example.com", "file_size_bytes": 500},
+        headers=backend_headers,
+    ).json()
+    unmatched_job = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "some.local.user", "file_size_bytes": 250},
         headers=backend_headers,
     ).json()
 
@@ -291,16 +315,34 @@ def test_job_usage_aggregates_per_user(client, printer_id, backend_headers, auth
         json={"status": "forwarded", "page_count": 1},
         headers=backend_headers,
     )
+    client.patch(
+        f"/api/v1/jobs/{unmatched_job['id']}",
+        json={"status": "forwarded", "page_count": 2},
+        headers=backend_headers,
+    )
 
     response = client.get("/api/v1/jobs/usage", headers=auth_headers)
     assert response.status_code == 200
-    by_user = {row["submitted_by"]: row for row in response.json()}
+    rows = response.json()
+    by_email = {row["email"]: row for row in rows if not row["is_other"]}
 
-    assert by_user["adele"]["job_count"] == 2
-    assert by_user["adele"]["total_pages"] == 8
-    assert by_user["adele"]["total_bytes"] == 3000
-    assert by_user["bob"]["job_count"] == 1
-    assert by_user["bob"]["total_pages"] == 1
+    assert by_email["adele@example.com"]["job_count"] == 2
+    assert by_email["adele@example.com"]["total_pages"] == 8
+    assert by_email["adele@example.com"]["total_bytes"] == 3000
+    assert by_email["bob@example.com"]["job_count"] == 1
+    assert by_email["bob@example.com"]["total_pages"] == 1
+
+    never_printed = by_email["never.printed@example.com"]
+    assert never_printed["job_count"] == 0
+    assert never_printed["total_pages"] == 0
+    assert never_printed["total_bytes"] == 0
+
+    other_rows = [row for row in rows if row["is_other"]]
+    assert len(other_rows) == 1
+    assert other_rows[0]["job_count"] == 1
+    assert other_rows[0]["total_pages"] == 2
+    assert other_rows[0]["total_bytes"] == 250
+    assert other_rows[0]["email"] is None
 
 
 def test_job_usage_requires_auth(client, printer_id, backend_headers):

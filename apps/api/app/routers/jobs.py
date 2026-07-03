@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.attribution.resolve import resolve_user
 from app.db import get_db
 from app.deps import get_current_user, require_role, verify_backend_token
+from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.job import Job
 from app.models.printer import Printer
 from app.schemas.job import JobCreate, JobListOut, JobOut, JobUpdate, UserUsageOut
@@ -43,7 +44,7 @@ async def list_jobs(
 @router.post("", response_model=JobOut, status_code=status.HTTP_201_CREATED)
 async def create_job(payload: JobCreate, db: AsyncSession = Depends(get_db)):
     """Called by the CUPS backend script right before it attempts delivery."""
-    attributed_user, attribution_method = await resolve_user(
+    attributed_user, attribution_method, mac_address = await resolve_user(
         db, payload.submitted_by, payload.source_host
     )
     job = Job(
@@ -51,6 +52,7 @@ async def create_job(payload: JobCreate, db: AsyncSession = Depends(get_db)):
         cups_job_id=payload.cups_job_id,
         submitted_by=attributed_user,
         attribution_method=attribution_method,
+        mac_address=mac_address,
         file_size_bytes=payload.file_size_bytes,
         status="forwarding",
     )
@@ -78,25 +80,61 @@ async def update_job(job_id: UUID, payload: JobUpdate, db: AsyncSession = Depend
     "/usage", response_model=list[UserUsageOut], dependencies=[Depends(require_role("admin"))]
 )
 async def list_job_usage(db: AsyncSession = Depends(get_db)):
-    """Per-user page/byte totals across all logged jobs — admin-only since it
-    aggregates data across every user, not just the caller."""
-    stmt = (
-        select(
-            Job.submitted_by,
-            func.count(Job.id).label("job_count"),
-            func.coalesce(func.sum(Job.page_count), 0).label("total_pages"),
-            func.coalesce(func.sum(Job.file_size_bytes), 0).label("total_bytes"),
-        )
-        .group_by(Job.submitted_by)
-        .order_by(func.coalesce(func.sum(Job.page_count), 0).desc())
+    """Per-user page/byte totals, one row per synced Google Workspace
+    roster user — including roster users who have never printed (zero
+    totals) — so this reads as an org roster report, not just a list of
+    whoever happened to submit a job. Anything printed under a name/email
+    that isn't in the roster (attribution_method "unresolved", or a local
+    username ClassGuard/Mosyle/Google Workspace never resolved to a
+    roster address) is rolled into a single trailing `is_other` row
+    rather than dropped, so admins keep visibility into that volume.
+    Admin-only since it aggregates data across every user, not just the
+    caller."""
+    roster = (
+        (await db.execute(select(GoogleWorkspaceUser).order_by(GoogleWorkspaceUser.email)))
+        .scalars()
+        .all()
     )
-    rows = (await db.execute(stmt)).all()
-    return [
-        UserUsageOut(
-            submitted_by=row.submitted_by,
-            job_count=row.job_count,
-            total_pages=row.total_pages,
-            total_bytes=row.total_bytes,
+
+    job_stats_stmt = select(
+        func.lower(Job.submitted_by).label("email_key"),
+        func.count(Job.id).label("job_count"),
+        func.coalesce(func.sum(Job.page_count), 0).label("total_pages"),
+        func.coalesce(func.sum(Job.file_size_bytes), 0).label("total_bytes"),
+    ).group_by(func.lower(Job.submitted_by))
+    job_stats = {row.email_key: row for row in (await db.execute(job_stats_stmt)).all()}
+
+    roster_emails = {u.email.lower() for u in roster}
+    rows = []
+    for user in roster:
+        stats = job_stats.get(user.email.lower())
+        rows.append(
+            UserUsageOut(
+                email=user.email,
+                name=user.name,
+                job_count=stats.job_count if stats else 0,
+                total_pages=stats.total_pages if stats else 0,
+                total_bytes=stats.total_bytes if stats else 0,
+            )
         )
-        for row in rows
-    ]
+    rows.sort(key=lambda r: r.total_pages, reverse=True)
+
+    other_job_count = other_pages = other_bytes = 0
+    for email_key, stats in job_stats.items():
+        if email_key not in roster_emails:
+            other_job_count += stats.job_count
+            other_pages += stats.total_pages
+            other_bytes += stats.total_bytes
+    if other_job_count:
+        rows.append(
+            UserUsageOut(
+                email=None,
+                name=None,
+                is_other=True,
+                job_count=other_job_count,
+                total_pages=other_pages,
+                total_bytes=other_bytes,
+            )
+        )
+
+    return rows

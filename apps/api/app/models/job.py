@@ -25,10 +25,21 @@ class Job(Base, TimestampMixin):
     # anymore. See attribution_method for how this was determined.
     submitted_by: Mapped[str | None] = mapped_column(default=None)
 
-    # "cups" (trusted CUPS requesting-user-name), "mosyle" (resolved via
-    # MDM device->user lookup), or "unresolved" (fell through every
-    # strategy — submitted_by is either the raw CUPS value or "unknown").
+    # "cups" (trusted CUPS requesting-user-name), "mosyle"/"google_workspace"
+    # (resolved via MDM device->user lookup), "override" (admin-set device
+    # correction, app/models/device_override.py), or "unresolved" (fell
+    # through every strategy — submitted_by is either the raw CUPS value or
+    # "unknown").
     attribution_method: Mapped[str] = mapped_column(default="unresolved", server_default="unresolved")
+
+    # The MAC address resolved for this job's source IP (via ClassGuard),
+    # if any — independent of whether that MAC actually resolved to a user.
+    # Captured so a later DeviceUserOverride can backfill this specific
+    # job's attribution without touching any other job (see
+    # app/routers/device_overrides.py). Only populated going forward from
+    # when this column was added — not backfillable for older jobs, since
+    # the MAC was never persisted before now.
+    mac_address: Mapped[str | None] = mapped_column(index=True, default=None)
 
     file_size_bytes: Mapped[int | None] = mapped_column(default=None)
 
