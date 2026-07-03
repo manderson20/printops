@@ -14,7 +14,7 @@ from app.integrations.mosyle import MosyleClient, MosyleError
 from app.integrations.mosyle import run_sync as run_mosyle_sync
 from app.models.classguard import ClassGuardSettings
 from app.models.google_sso import GoogleSsoSettings
-from app.models.google_workspace import GoogleWorkspaceSettings
+from app.models.google_workspace import GoogleWorkspaceSettings, GoogleWorkspaceUser
 from app.models.mosyle import MosyleSettings
 from app.schemas.classguard import ClassGuardSettingsOut, ClassGuardSettingsUpdate, ClassGuardTestRequest, ClassGuardTestResult
 from app.schemas.google_sso import GoogleSsoSettingsOut, GoogleSsoSettingsUpdate
@@ -22,6 +22,7 @@ from app.schemas.google_workspace import (
     GoogleWorkspaceSettingsOut,
     GoogleWorkspaceSettingsUpdate,
     GoogleWorkspaceTestResult,
+    GoogleWorkspaceUserOut,
 )
 from app.schemas.mosyle import MosyleSettingsOut, MosyleSettingsUpdate, MosyleTestResult
 
@@ -302,6 +303,19 @@ async def sync_google_workspace_devices(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     await db.refresh(settings)
     return _google_workspace_to_out(settings)
+
+
+@router.get(
+    "/google-workspace/users",
+    response_model=list[GoogleWorkspaceUserOut],
+    dependencies=[Depends(require_role("admin"))],
+)
+async def list_google_workspace_users(db: AsyncSession = Depends(get_db)):
+    """The synced canonical email roster (app/integrations/google_workspace.py's
+    sync_users) — used by the device-override admin UI to validate/autocomplete
+    a correction email against a real org address rather than free text."""
+    result = await db.execute(select(GoogleWorkspaceUser).order_by(GoogleWorkspaceUser.email))
+    return [GoogleWorkspaceUserOut(email=u.email, name=u.name) for u in result.scalars().all()]
 
 
 async def _get_or_create_google_sso_settings(db: AsyncSession) -> GoogleSsoSettings:

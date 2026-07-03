@@ -50,3 +50,21 @@ class GoogleWorkspaceDevice(Base):
     user_email: Mapped[str | None] = mapped_column(default=None)
 
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class GoogleWorkspaceUser(Base):
+    """Local cache of the org's full Workspace user directory (not just
+    device-assigned users), refreshed by sync_users alongside the device
+    sync. This is the canonical identity roster used to validate device
+    override emails (app/models/device_override.py) and to disambiguate
+    a bare, non-unique local username (e.g. two different people's Mac
+    accounts both named "matt") — see app/attribution/resolve.py."""
+
+    __tablename__ = "google_workspace_users"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+
+    email: Mapped[str] = mapped_column(index=True, unique=True)
+    name: Mapped[str | None] = mapped_column(default=None)
+
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

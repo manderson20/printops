@@ -27,3 +27,8 @@ class GoogleWorkspaceTestResult(BaseModel):
     ok: bool
     device_count: int | None = None
     error: str | None = None
+
+
+class GoogleWorkspaceUserOut(BaseModel):
+    email: str
+    name: str | None

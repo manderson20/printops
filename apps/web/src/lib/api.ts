@@ -197,7 +197,9 @@ export async function listJobs(params?: { printer_id?: string; limit?: number })
 }
 
 export type UserUsage = {
-  submitted_by: string | null;
+  email: string | null;
+  name: string | null;
+  is_other: boolean;
   job_count: number;
   total_pages: number;
   total_bytes: number;
@@ -393,6 +395,58 @@ export async function updateUser(
     method: "PATCH",
     body: JSON.stringify(input),
   });
+  return response.json();
+}
+
+export type KnownDevice = {
+  mac_address: string;
+  source: "mosyle" | "google_workspace";
+  serial_number: string | null;
+  device_name: string | null;
+  reported_email: string | null;
+  reported_username: string | null;
+  override_email: string | null;
+  override_note: string | null;
+};
+
+export async function listKnownDevices(): Promise<KnownDevice[]> {
+  const response = await authorizedFetch("/api/v1/devices");
+  return response.json();
+}
+
+export type DeviceOverride = {
+  mac_address: string;
+  resolved_email: string;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+  backfilled_job_count: number;
+};
+
+export async function setDeviceOverride(
+  macAddress: string,
+  input: { resolved_email: string; note?: string | null },
+): Promise<DeviceOverride> {
+  const response = await authorizedFetch(`/api/v1/devices/${encodeURIComponent(macAddress)}/override`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function deleteDeviceOverride(macAddress: string): Promise<void> {
+  await authorizedFetch(`/api/v1/devices/${encodeURIComponent(macAddress)}/override`, {
+    method: "DELETE",
+  });
+}
+
+export type GoogleWorkspaceUserEntry = {
+  email: string;
+  name: string | null;
+};
+
+export async function listGoogleWorkspaceUsers(): Promise<GoogleWorkspaceUserEntry[]> {
+  const response = await authorizedFetch("/api/v1/settings/google-workspace/users");
   return response.json();
 }
 

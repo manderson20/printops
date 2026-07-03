@@ -8,12 +8,18 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt
-from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceSettings
+from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceSettings, GoogleWorkspaceUser
 
 REQUEST_TIMEOUT_SECONDS = 30
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 DIRECTORY_API_BASE = "https://admin.googleapis.com/admin/directory/v1"
-SCOPE = "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly"
+# Space-separated per OAuth2 scope syntax — device inventory (existing) plus
+# read-only access to the full user directory, needed to build a canonical
+# email roster for attribution reconciliation (app/attribution/resolve.py).
+SCOPE = (
+    "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly "
+    "https://www.googleapis.com/auth/admin.directory.user.readonly"
+)
 # OAuth access tokens from this flow are short-lived (~1h); refresh a
 # little early rather than racing expiry mid-sync.
 JWT_LIFETIME_SECONDS = 3600
@@ -131,6 +137,44 @@ class GoogleWorkspaceClient:
                     break
         return devices
 
+    async def list_users(self) -> list[dict]:
+        """Full Workspace user directory (not just device-assigned users) —
+        the canonical identity roster, distinct from list_chromeos_devices'
+        per-device recentUsers snapshot."""
+        users: list[dict] = []
+        page_token: str | None = None
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+            access_token = await self._get_access_token(client)
+            for _ in range(MAX_PAGES):
+                params: dict = {"customer": self.customer_id, "maxResults": 500}
+                if page_token:
+                    params["pageToken"] = page_token
+                try:
+                    response = await client.get(
+                        f"{DIRECTORY_API_BASE}/users",
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        params=params,
+                    )
+                except httpx.HTTPError as exc:
+                    raise GoogleWorkspaceError(f"Could not reach Google's Directory API: {exc}") from exc
+
+                if response.status_code != 200:
+                    raise GoogleWorkspaceError(
+                        f"Google Directory API returned HTTP {response.status_code}: {response.text[:300]}"
+                    )
+                try:
+                    data = response.json()
+                except ValueError as exc:
+                    raise GoogleWorkspaceError(
+                        f"Google Directory API returned non-JSON response: {response.text[:300]}"
+                    ) from exc
+
+                users.extend(data.get("users", []))
+                page_token = data.get("nextPageToken")
+                if not page_token:
+                    break
+        return users
+
 
 async def get_settings(db: AsyncSession) -> GoogleWorkspaceSettings | None:
     result = await db.execute(select(GoogleWorkspaceSettings).limit(1))
@@ -199,13 +243,47 @@ async def sync_devices(db: AsyncSession) -> int:
     return count
 
 
+async def sync_users(db: AsyncSession) -> int:
+    """Refreshes the local GoogleWorkspaceUser cache — the canonical email
+    roster used to validate device overrides and disambiguate bare local
+    usernames (app/attribution/resolve.py). Raises GoogleWorkspaceError on
+    failure without touching last_sync_error itself — see run_sync()."""
+    settings = await get_settings(db)
+    if settings is None or not settings.enabled:
+        raise GoogleWorkspaceError("Google Workspace integration is not configured/enabled.")
+
+    client = _client_from_settings(settings)
+    users = await client.list_users()
+
+    now = datetime.now(UTC)
+    await db.execute(delete(GoogleWorkspaceUser))
+    count = 0
+    for user in users:
+        email = user.get("primaryEmail")
+        if not email:
+            continue
+        db.add(
+            GoogleWorkspaceUser(
+                email=email.lower(),
+                name=(user.get("name") or {}).get("fullName"),
+                synced_at=now,
+            )
+        )
+        count += 1
+    await db.commit()
+    return count
+
+
 async def run_sync(db: AsyncSession) -> int:
     """Wrapper for the background loop and the manual /sync endpoint —
     records failure on GoogleWorkspaceSettings.last_sync_error before
     re-raising, so a bad sync is visible in the UI instead of failing
-    silently."""
+    silently. Syncs both the device cache and the user roster — the
+    latter powers attribution overrides, not just device attribution."""
     try:
-        return await sync_devices(db)
+        device_count = await sync_devices(db)
+        await sync_users(db)
+        return device_count
     except GoogleWorkspaceError as exc:
         settings = await get_settings(db)
         if settings is not None:

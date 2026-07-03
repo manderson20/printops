@@ -21,7 +21,12 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const currentUser = useCurrentUser();
   const navLinks =
     currentUser?.role === "admin"
-      ? [...NAV_LINKS, { href: "/usage", label: "Usage" }, { href: "/users", label: "Users" }]
+      ? [
+          ...NAV_LINKS,
+          { href: "/usage", label: "Usage" },
+          { href: "/devices", label: "Devices" },
+          { href: "/users", label: "Users" },
+        ]
       : NAV_LINKS;
 
   function handleLogout() {
