@@ -38,6 +38,15 @@ export default function GoogleWorkspaceSettingsPage() {
   const [syncing, setSyncing] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const DELEGATION_SCOPE = "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly";
+
+  function handleCopyScope() {
+    navigator.clipboard.writeText(DELEGATION_SCOPE).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
 
   useEffect(() => {
     getGoogleWorkspaceSettings()
@@ -144,6 +153,142 @@ export default function GoogleWorkspaceSettingsPage() {
       </div>
 
       <Card>
+        <details className="group" open={!settings.has_service_account_json}>
+          <summary className="cursor-pointer list-none">
+            <div className="flex items-center justify-between">
+              <CardTitle className="mb-0">Setup Guide — Start Here</CardTitle>
+              <span className="text-xs text-zinc-500 group-open:hidden">Show</span>
+              <span className="hidden text-xs text-zinc-500 group-open:inline">Hide</span>
+            </div>
+          </summary>
+          <div className="mt-4 flex flex-col gap-5 text-sm text-zinc-600 dark:text-zinc-400">
+            <p>
+              This uses two different Google sites, which is the part people most often get
+              confused by: <strong className="font-medium">Google Cloud Console</strong> (for
+              developers, where you create the credential) and{" "}
+              <strong className="font-medium">Google Admin Console</strong> (your Workspace admin
+              panel, where you authorize what that credential is allowed to read). You&apos;ll need
+              super-admin access to the Admin Console step. It takes about five minutes.
+            </p>
+
+            <div>
+              <p className="font-medium text-zinc-700 dark:text-zinc-300">
+                Step 1 — Turn on the Admin SDK API
+              </p>
+              <p className="mt-1">
+                Go to{" "}
+                <a
+                  href="https://console.cloud.google.com/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-accent hover:underline"
+                >
+                  console.cloud.google.com
+                </a>
+                , select or create a project, then go to{" "}
+                <strong className="font-medium">APIs &amp; Services → Library</strong>, search for{" "}
+                <strong className="font-medium">Admin SDK API</strong>, open it, and click{" "}
+                <strong className="font-medium">Enable</strong>.
+              </p>
+            </div>
+
+            <div>
+              <p className="font-medium text-zinc-700 dark:text-zinc-300">
+                Step 2 — Create a service account and download its key
+              </p>
+              <p className="mt-1">
+                Go to <strong className="font-medium">APIs &amp; Services → Credentials → Create
+                Credentials → Service account</strong>. Give it any name (e.g.
+                &quot;printops-workspace-sync&quot;) and click through the remaining steps using
+                the defaults — you don&apos;t need to grant it any project roles.
+              </p>
+              <p className="mt-2">
+                Once created, click on it, open the{" "}
+                <strong className="font-medium">Keys</strong> tab, then{" "}
+                <strong className="font-medium">Add Key → Create new key → JSON → Create</strong>.
+                A <code className="text-[11px]">.json</code> file downloads — open it in any text
+                editor, copy everything inside, and paste it into the{" "}
+                <strong className="font-medium">Service Account JSON Key</strong> field below.
+              </p>
+            </div>
+
+            <div>
+              <p className="font-medium text-zinc-700 dark:text-zinc-300">
+                Step 3 — Authorize it in Google Admin Console
+              </p>
+              <p className="mt-1">
+                Still on that service account&apos;s page in Cloud Console, find and copy its{" "}
+                <strong className="font-medium">Unique ID</strong> (a long number — different from
+                its email address).
+              </p>
+              <p className="mt-2">
+                Then, in a new tab, go to{" "}
+                <a
+                  href="https://admin.google.com/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-accent hover:underline"
+                >
+                  admin.google.com
+                </a>{" "}
+                (not Cloud Console — this is a different site) and sign in with a super-admin
+                account. Go to{" "}
+                <strong className="font-medium">
+                  Security → Access and data control → API controls → Domain-wide Delegation
+                </strong>
+                , click <strong className="font-medium">Add new</strong>, and paste in:
+              </p>
+              <ul className="mt-2 flex flex-col gap-3">
+                <li>
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300">Client ID</span> —
+                  the Unique ID you copied above.
+                </li>
+                <li>
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300">OAuth Scopes</span>{" "}
+                  — paste in exactly (click to copy, so there&apos;s no typo):
+                  <div className="mt-2 flex items-center gap-2">
+                    <code className="flex-1 overflow-x-auto rounded-lg bg-zinc-100 px-3 py-2 text-[12px] text-zinc-800 dark:bg-white/[.08] dark:text-zinc-200">
+                      {DELEGATION_SCOPE}
+                    </code>
+                    <Button type="button" variant="secondary" onClick={handleCopyScope}>
+                      {copied ? "Copied!" : "Copy"}
+                    </Button>
+                  </div>
+                </li>
+              </ul>
+              <p className="mt-2">
+                Click <strong className="font-medium">Authorize</strong>.
+              </p>
+            </div>
+
+            <div>
+              <p className="font-medium text-zinc-700 dark:text-zinc-300">
+                Step 4 — Fill in who it acts as
+              </p>
+              <p className="mt-1">
+                A service account with domain-wide delegation must impersonate a real person to
+                read the directory — enter that person&apos;s email in{" "}
+                <strong className="font-medium">Admin Email</strong> below (any Workspace user with
+                directory-read access; doesn&apos;t need to be a super-admin). Leave{" "}
+                <strong className="font-medium">Customer ID</strong> as{" "}
+                <code className="text-[11px]">my_customer</code> unless Google support has told you
+                otherwise.
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+              <p className="font-medium">Test Connection fails with a permission/unauthorized error?</p>
+              <p className="mt-1">
+                Most often this means the Client ID or scope in Domain-wide Delegation
+                (admin.google.com) doesn&apos;t exactly match — re-check Step 3. Delegation changes
+                can also take a few minutes to take effect after saving.
+              </p>
+            </div>
+          </div>
+        </details>
+      </Card>
+
+      <Card>
         <div className="mb-1 flex items-center gap-2">
           <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground">
             1
@@ -151,10 +296,8 @@ export default function GoogleWorkspaceSettingsPage() {
           <CardTitle className="mb-0">Service Account</CardTitle>
         </div>
         <p className="mb-4 ml-7 text-xs text-zinc-500">
-          In Google Cloud Console: create a service account, generate a JSON key, and paste its
-          full contents below. Then, in Google Admin Console → Security → API Controls → Domain-wide
-          Delegation, authorize that service account&apos;s numeric Client ID for the scope{" "}
-          <code className="text-[11px]">admin.directory.device.chromeos.readonly</code>.
+          From the setup guide above: paste the full contents of the service account&apos;s JSON
+          key file.
         </p>
         <div className="ml-7 flex flex-col gap-4">
           <Field
@@ -187,7 +330,7 @@ export default function GoogleWorkspaceSettingsPage() {
         </div>
         <p className="mb-4 ml-7 text-xs text-zinc-500">
           The Workspace admin/user the service account impersonates — needs directory-read
-          permission. This is who the API calls are made "as," not a secret itself.
+          permission. This is who the API calls are made &quot;as,&quot; not a secret itself.
         </p>
         <div className="ml-7 flex flex-col gap-4">
           <Field label="Admin Email">
