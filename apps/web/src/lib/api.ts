@@ -471,11 +471,28 @@ export async function deleteDeviceOverride(macAddress: string): Promise<void> {
 export type GoogleWorkspaceUserEntry = {
   email: string;
   name: string | null;
+  employee_id: string | null;
 };
 
 export async function listGoogleWorkspaceUsers(): Promise<GoogleWorkspaceUserEntry[]> {
   const response = await authorizedFetch("/api/v1/settings/google-workspace/users");
   return response.json();
+}
+
+/** Downloads a CSV of Name/Email/PIN (PIN = Google Workspace Employee ID)
+ * for loading into a copier's local PIN list — see
+ * app/routers/settings.py:export_copier_pin_roster for the caveat that the
+ * column layout is a starting point, not a confirmed match for any
+ * specific device's bulk-import format. */
+export async function downloadCopierPinRoster(): Promise<void> {
+  const response = await authorizedFetch("/api/v1/settings/google-workspace/copier-pin-roster.csv");
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "copier-pin-roster.csv";
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export async function getVersion(): Promise<string> {

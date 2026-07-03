@@ -32,3 +32,4 @@ class GoogleWorkspaceTestResult(BaseModel):
 class GoogleWorkspaceUserOut(BaseModel):
     email: str
     name: str | None
+    employee_id: str | None = None

@@ -34,6 +34,19 @@ def normalize_mac(mac: str) -> str:
     return mac.strip().upper().replace("-", ":")
 
 
+def extract_employee_id(user: dict) -> str | None:
+    """Google's built-in Employee ID field is exposed as an entry in the
+    user's `externalIds` array with `type == "organization"` — only
+    present in the API response when the request asks for the "full"
+    projection (see list_users below); the default "basic" projection
+    omits it entirely, not just leaves it null. Feeds the copier PIN
+    roster export (app/routers/settings.py)."""
+    for external_id in user.get("externalIds") or []:
+        if external_id.get("type") == "organization" and external_id.get("value"):
+            return external_id["value"]
+    return None
+
+
 class GoogleWorkspaceClient:
     """Client for the Admin SDK Directory API, reading ChromeOS device
     inventory. Auth is a service-account + domain-wide delegation flow —
@@ -140,13 +153,22 @@ class GoogleWorkspaceClient:
     async def list_users(self) -> list[dict]:
         """Full Workspace user directory (not just device-assigned users) —
         the canonical identity roster, distinct from list_chromeos_devices'
-        per-device recentUsers snapshot."""
+        per-device recentUsers snapshot.
+
+        projection=full (vs the "basic" default) is required to get
+        externalIds back at all — Employee ID lives there (see
+        extract_employee_id) and is silently omitted under "basic", not
+        just null."""
         users: list[dict] = []
         page_token: str | None = None
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
             access_token = await self._get_access_token(client)
             for _ in range(MAX_PAGES):
-                params: dict = {"customer": self.customer_id, "maxResults": 500}
+                params: dict = {
+                    "customer": self.customer_id,
+                    "maxResults": 500,
+                    "projection": "full",
+                }
                 if page_token:
                     params["pageToken"] = page_token
                 try:
@@ -266,6 +288,7 @@ async def sync_users(db: AsyncSession) -> int:
             GoogleWorkspaceUser(
                 email=email.lower(),
                 name=(user.get("name") or {}).get("fullName"),
+                employee_id=extract_employee_id(user),
                 synced_at=now,
             )
         )

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ApiError,
+  downloadCopierPinRoster,
   getGoogleWorkspaceSettings,
   syncGoogleWorkspaceDevices,
   testGoogleWorkspaceConnection,
@@ -39,6 +40,7 @@ export default function GoogleWorkspaceSettingsPage() {
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [exportingRoster, setExportingRoster] = useState(false);
   const DELEGATION_SCOPE = "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly";
 
   function handleCopyScope() {
@@ -128,6 +130,18 @@ export default function GoogleWorkspaceSettingsPage() {
       setActionError(err instanceof ApiError ? err.message : "Sync failed");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function handleExportRoster() {
+    setExportingRoster(true);
+    setActionError(null);
+    try {
+      await downloadCopierPinRoster();
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Export failed");
+    } finally {
+      setExportingRoster(false);
     }
   }
 
@@ -423,6 +437,24 @@ export default function GoogleWorkspaceSettingsPage() {
             <p className="mt-1 text-amber-800 dark:text-amber-300">{settings.last_sync_error}</p>
           </div>
         )}
+      </Card>
+
+      <Card>
+        <div className="mb-1 flex items-center justify-between">
+          <CardTitle>Copier PIN Roster</CardTitle>
+          <Button variant="secondary" onClick={handleExportRoster} disabled={exportingRoster}>
+            {exportingRoster ? "Exporting…" : "Export CSV"}
+          </Button>
+        </div>
+        <p className="text-xs text-zinc-500">
+          One row per synced staff member with a Google Workspace Employee ID set (Name, Email,
+          PIN) — for loading into a copier&apos;s local PIN/Account Track user list, e.g. Konica
+          Minolta&apos;s User Authentication → User Registration screen. This is a starting column
+          layout, not a confirmed match for any specific device&apos;s bulk-import format — check
+          it against your copier&apos;s own admin panel and let us know if the columns need to
+          change. Anyone without an Employee ID set in Workspace is skipped rather than given a
+          made-up PIN.
+        </p>
       </Card>
     </div>
   );
