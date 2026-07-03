@@ -171,6 +171,7 @@ export type Job = {
   submitted_by: string | null;
   attribution_method: AttributionMethod;
   file_size_bytes: number | null;
+  page_count: number | null;
   status: JobStatus;
   error_message: string | null;
   created_at: string;
@@ -183,6 +184,18 @@ export async function listJobs(params?: { printer_id?: string; limit?: number })
   if (params?.limit) query.set("limit", String(params.limit));
   const qs = query.toString();
   const response = await authorizedFetch(`/api/v1/jobs${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export type UserUsage = {
+  submitted_by: string | null;
+  job_count: number;
+  total_pages: number;
+  total_bytes: number;
+};
+
+export async function getJobUsage(): Promise<UserUsage[]> {
+  const response = await authorizedFetch("/api/v1/jobs/usage");
   return response.json();
 }
 

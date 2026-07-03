@@ -17,6 +17,9 @@ class JobCreate(BaseModel):
 class JobUpdate(BaseModel):
     status: str
     error_message: str | None = None
+    # Physical sheets printed (CUPS job-media-sheets-completed), reported
+    # best-effort by the CUPS backend script — see infra/cups/backends/printops.
+    page_count: int | None = None
 
 
 class JobOut(BaseModel):
@@ -28,6 +31,7 @@ class JobOut(BaseModel):
     file_size_bytes: int | None
     status: str
     error_message: str | None
+    page_count: int | None
     created_at: datetime
     updated_at: datetime
 
@@ -36,3 +40,10 @@ class JobOut(BaseModel):
 
 class JobListOut(JobOut):
     printer_name: str
+
+
+class UserUsageOut(BaseModel):
+    submitted_by: str | None
+    job_count: int
+    total_pages: int
+    total_bytes: int

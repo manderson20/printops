@@ -35,3 +35,9 @@ class Job(Base, TimestampMixin):
     # received -> forwarding -> forwarded | failed
     status: Mapped[str] = mapped_column(default="received", server_default="received")
     error_message: Mapped[str | None] = mapped_column(default=None)
+
+    # Physical sheets printed (CUPS job-media-sheets-completed, read from the
+    # local CUPS job record after forwarding completes — accounts for
+    # duplex/copies). Reported best-effort by the CUPS backend script
+    # (infra/cups/backends/printops); null if unavailable.
+    page_count: Mapped[int | None] = mapped_column(default=None)

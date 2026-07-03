@@ -1,15 +1,15 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.attribution.resolve import resolve_user
 from app.db import get_db
-from app.deps import get_current_user, verify_backend_token
+from app.deps import get_current_user, require_role, verify_backend_token
 from app.models.job import Job
 from app.models.printer import Printer
-from app.schemas.job import JobCreate, JobListOut, JobOut, JobUpdate
+from app.schemas.job import JobCreate, JobListOut, JobOut, JobUpdate, UserUsageOut
 
 router = APIRouter(dependencies=[Depends(verify_backend_token)])
 
@@ -68,6 +68,35 @@ async def update_job(job_id: UUID, payload: JobUpdate, db: AsyncSession = Depend
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     job.status = payload.status
     job.error_message = payload.error_message
+    job.page_count = payload.page_count
     await db.commit()
     await db.refresh(job)
     return job
+
+
+@user_router.get(
+    "/usage", response_model=list[UserUsageOut], dependencies=[Depends(require_role("admin"))]
+)
+async def list_job_usage(db: AsyncSession = Depends(get_db)):
+    """Per-user page/byte totals across all logged jobs — admin-only since it
+    aggregates data across every user, not just the caller."""
+    stmt = (
+        select(
+            Job.submitted_by,
+            func.count(Job.id).label("job_count"),
+            func.coalesce(func.sum(Job.page_count), 0).label("total_pages"),
+            func.coalesce(func.sum(Job.file_size_bytes), 0).label("total_bytes"),
+        )
+        .group_by(Job.submitted_by)
+        .order_by(func.coalesce(func.sum(Job.page_count), 0).desc())
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        UserUsageOut(
+            submitted_by=row.submitted_by,
+            job_count=row.job_count,
+            total_pages=row.total_pages,
+            total_bytes=row.total_bytes,
+        )
+        for row in rows
+    ]
