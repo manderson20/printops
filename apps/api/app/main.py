@@ -19,6 +19,7 @@ from app.models.google_workspace import GoogleWorkspaceSettings
 from app.models.job import Job
 from app.models.mosyle import MosyleSettings
 from app.models.printer import Printer
+from app.printers.snmp_counters import get_or_create_snmp_defaults, refresh_printer_counters
 from app.printers.status import refresh_printer_status
 from app.routers import (
     auth,
@@ -88,6 +89,43 @@ async def _printer_status_poll_loop() -> None:
         await asyncio.sleep(PRINTER_STATUS_POLL_INTERVAL_SECONDS)
 
 
+SNMP_COUNTER_POLL_INTERVAL_SECONDS = 30 * 60
+
+
+async def _snmp_counter_poll_loop() -> None:
+    """Refreshes every printer's page/copy/print counters (see
+    app/printers/snmp_counters.py) every 30 minutes — counters change far
+    slower than reachability, and a poll costs up to 3 SNMP round-trips
+    per printer, so this runs far less often than the 60s status loop
+    (a single unreachable device can cost ~18s worst case with the poller's
+    3s timeout/1 retry; wasteful to repeat that every minute across a
+    fleet with several offline devices). Gated on the global
+    SnmpDefaultsSettings.enabled flag — no-ops entirely until an admin
+    turns SNMP polling on. Same per-printer isolation via
+    asyncio.gather(..., return_exceptions=True) as the status loop."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                defaults = await get_or_create_snmp_defaults(db)
+                if defaults.enabled:
+                    printers = (
+                        (await db.execute(select(Printer).where(Printer.snmp_enabled.is_(True))))
+                        .scalars()
+                        .all()
+                    )
+
+                    async def _refresh_one(printer: Printer) -> None:
+                        await refresh_printer_counters(printer, defaults)
+
+                    await asyncio.gather(
+                        *(_refresh_one(p) for p in printers), return_exceptions=True
+                    )
+                await db.commit()
+        except Exception:
+            logger.exception("Unexpected error in SNMP counter poll loop")
+        await asyncio.sleep(SNMP_COUNTER_POLL_INTERVAL_SECONDS)
+
+
 HELD_JOB_PURGE_INTERVAL_SECONDS = 15 * 60
 
 
@@ -126,6 +164,7 @@ async def lifespan(app: FastAPI):
             )()
         ),
         asyncio.create_task(_printer_status_poll_loop()),
+        asyncio.create_task(_snmp_counter_poll_loop()),
         asyncio.create_task(_held_job_purge_loop()),
     ]
     yield

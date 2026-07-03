@@ -30,6 +30,7 @@ import { Field, Input } from "@/components/ui/Field";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
 import { PrintReleaseCard } from "./PrintRelease";
+import { SnmpCountersCard } from "./SnmpCounters";
 import { TonerCartridgesCard } from "./TonerCartridges";
 
 type LoadState =
@@ -386,6 +387,11 @@ export default function PrinterDetailPage() {
       <TonerCartridgesCard printerId={printer.id} colorSupported={!!caps?.color_supported} />
 
       <PrintReleaseCard
+        printer={printer}
+        onUpdate={(updated) => setState({ phase: "ok", printer: updated })}
+      />
+
+      <SnmpCountersCard
         printer={printer}
         onUpdate={(updated) => setState({ phase: "ok", printer: updated })}
       />

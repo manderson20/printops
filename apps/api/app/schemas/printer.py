@@ -1,7 +1,10 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, IPvAnyAddress
+
+from app.schemas.snmp import SnmpVersion, VendorProfile
 
 
 class CapabilitiesOut(BaseModel):
@@ -41,6 +44,12 @@ class PrinterCreate(BaseModel):
     department: str | None = None
     notes: str | None = None
 
+    snmp_enabled: bool = True
+    snmp_port: int | None = None
+    snmp_version: SnmpVersion | None = None
+    snmp_community: str | None = None
+    snmp_vendor_profile: VendorProfile | None = None
+
 
 class PrinterUpdate(BaseModel):
     name: str | None = None
@@ -60,6 +69,18 @@ class PrinterUpdate(BaseModel):
     notes: str | None = None
 
     release_required: bool | None = None
+
+    snmp_enabled: bool | None = None
+    snmp_port: int | None = None
+    # "" is accepted alongside the real values as an explicit "clear this
+    # override, fall back to the global default" signal (see update_printer
+    # in routers/printers.py) — a plain SnmpVersion|None would 422 on "",
+    # since Pydantic's Literal validation rejects it before that logic runs.
+    snmp_version: Literal["v1", "v2c", ""] | None = None
+    snmp_community: str | None = None
+    snmp_vendor_profile: Literal[
+        "canon", "konica_minolta", "hp", "lexmark", "kyocera", "generic", ""
+    ] | None = None
 
 
 class PrinterConnectionOut(BaseModel):
@@ -123,6 +144,20 @@ class PrinterOut(BaseModel):
 
     release_required: bool
     release_token: str | None
+
+    snmp_enabled: bool
+    snmp_port: int | None
+    snmp_version: SnmpVersion | None
+    has_snmp_community: bool
+    snmp_vendor_profile: VendorProfile | None
+
+    page_count_total: int | None
+    page_count_copy: int | None
+    page_count_print: int | None
+    page_count_confidence: str | None
+    page_count_vendor_profile_used: str | None
+    page_count_checked_at: datetime | None
+    page_count_error: str | None
 
     created_at: datetime
     updated_at: datetime

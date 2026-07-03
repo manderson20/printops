@@ -80,3 +80,43 @@ class Printer(Base, TimestampMixin):
     # by an admin (e.g. a lost/reissued kiosk iPad) without needing to
     # rebuild the printer itself.
     release_token: Mapped[str | None] = mapped_column(unique=True, default=None)
+
+    # SNMP page/copy counter polling (app/printers/snmp_counters.py). All
+    # connection-config fields are nullable — None means "use the global
+    # SnmpDefaultsSettings", letting a district set one community string
+    # once instead of per printer, with an override for the odd device
+    # configured differently.
+    snmp_enabled: Mapped[bool] = mapped_column(default=True, server_default="true")
+    snmp_port: Mapped[int | None] = mapped_column(default=None)
+    snmp_version: Mapped[str | None] = mapped_column(default=None)  # "v1" | "v2c"
+    snmp_community_encrypted: Mapped[str | None] = mapped_column(default=None)
+    # Manual override for detect_vendor_profile()'s heuristic — needed for
+    # OEM-rebadged hardware (e.g. a Kyocera engine sold as Copystar) the
+    # manufacturer/model text won't match. None = auto-detect.
+    snmp_vendor_profile: Mapped[str | None] = mapped_column(default=None)
+
+    # Poll results. On a failed probe, page_count_error is set but the last
+    # known-good counts are left in place (same convention as
+    # capabilities_error not wiping capabilities) — a transient SNMP hiccup
+    # shouldn't erase yesterday's good reading.
+    page_count_total: Mapped[int | None] = mapped_column(default=None)
+    page_count_copy: Mapped[int | None] = mapped_column(default=None)
+    page_count_print: Mapped[int | None] = mapped_column(default=None)
+    # "verified" (Canon's self-describing MIB, cross-checked against the
+    # total) | "best_effort" (numerically consistent but unlabeled, e.g.
+    # Konica Minolta) | "unsupported" (total only — unrecognized vendor, or
+    # a vendor with no confirmed breakdown yet).
+    page_count_confidence: Mapped[str | None] = mapped_column(default=None)
+    page_count_vendor_profile_used: Mapped[str | None] = mapped_column(default=None)
+    page_count_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    page_count_error: Mapped[str | None] = mapped_column(default=None)
+
+    @property
+    def has_snmp_community(self) -> bool:
+        """Masks snmp_community_encrypted for PrinterOut — a plain property
+        (not a column) so Pydantic's from_attributes=True picks it up via
+        getattr the same way it reads a real column, matching how routers
+        just `return printer` and let FastAPI do the ORM->schema mapping."""
+        return bool(self.snmp_community_encrypted)

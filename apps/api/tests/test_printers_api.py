@@ -422,3 +422,117 @@ def test_enabling_release_required_resyncs_the_queue(
     )
     assert updated.status_code == 200
     assert calls == [printer_id]
+
+
+def test_create_printer_with_snmp_community_never_echoes_it(
+    client, auth_headers, mock_failed_probe
+):
+    response = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "SNMP Printer", "ip_address": "10.0.0.30", "snmp_community": "s3cret"},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["has_snmp_community"] is True
+    assert "s3cret" not in response.text
+
+
+def test_create_printer_snmp_enabled_defaults_true(client, auth_headers, mock_failed_probe):
+    response = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "SNMP Printer", "ip_address": "10.0.0.30"},
+    )
+    assert response.json()["snmp_enabled"] is True
+    assert response.json()["has_snmp_community"] is False
+
+
+def test_update_printer_snmp_community_never_echoed(client, auth_headers, mock_failed_probe):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "SNMP Printer", "ip_address": "10.0.0.30"},
+    )
+    printer_id = create.json()["id"]
+
+    response = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"snmp_community": "another-secret", "snmp_version": "v1", "snmp_port": 1610},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["has_snmp_community"] is True
+    assert body["snmp_version"] == "v1"
+    assert body["snmp_port"] == 1610
+    assert "another-secret" not in response.text
+
+
+def test_update_printer_blank_string_clears_snmp_overrides(client, auth_headers, mock_failed_probe):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "SNMP Printer", "ip_address": "10.0.0.30"},
+    )
+    printer_id = create.json()["id"]
+
+    client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={
+            "snmp_community": "a-secret",
+            "snmp_version": "v1",
+            "snmp_port": 1610,
+            "snmp_vendor_profile": "canon",
+        },
+    )
+
+    cleared = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={
+            "snmp_community": "",
+            "snmp_version": "",
+            "snmp_port": None,
+            "snmp_vendor_profile": "",
+        },
+    )
+    assert cleared.status_code == 200
+    body = cleared.json()
+    assert body["has_snmp_community"] is False
+    assert body["snmp_version"] is None
+    assert body["snmp_port"] is None
+    assert body["snmp_vendor_profile"] is None
+
+
+def test_check_counters_returns_updated_printer(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "SNMP Printer", "ip_address": "10.0.0.30"},
+    )
+    printer_id = create.json()["id"]
+
+    async def fake_refresh_printer_counters(printer, defaults):
+        printer.page_count_total = 4242
+        printer.page_count_confidence = "unsupported"
+
+    monkeypatch.setattr(printers_router, "refresh_printer_counters", fake_refresh_printer_counters)
+
+    response = client.post(f"/api/v1/printers/{printer_id}/check-counters", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["page_count_total"] == 4242
+    assert body["page_count_confidence"] == "unsupported"
+
+
+def test_check_counters_requires_some_auth(client, mock_failed_probe):
+    """check-counters isn't admin-gated (read-only telemetry, matching
+    check-status) but the router still requires a logged-in session —
+    entirely unauthenticated calls are rejected."""
+    url = "/api/v1/printers/00000000-0000-0000-0000-000000000000/check-counters"
+    response = client.post(url)
+    assert response.status_code == 401
