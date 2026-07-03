@@ -10,6 +10,7 @@ from app.models.job import Job
 from app.models.printer import Printer
 from app.reports.aggregation import (
     ReportFilters,
+    get_cost_raw_rows,
     get_peak_times,
     get_printer_leaderboard,
     get_summary,
@@ -172,3 +173,19 @@ async def test_user_leaderboard_groups_by_submitted_by(session, sample_jobs):
 )
 def test_physical_sheets_used(page_count, duplex, expected):
     assert physical_sheets_used(page_count, duplex) == expected
+
+
+async def test_cost_raw_rows_include_printer_identity(session, sample_jobs, two_printers):
+    library, office = two_printers
+    rows = await get_cost_raw_rows(session, ReportFilters())
+    assert len(rows) == 4
+    library_rows = [r for r in rows if r.printer_id == library.id]
+    assert len(library_rows) == 2
+    assert all(r.printer_name == "Library Copier" for r in library_rows)
+    assert {r.submitted_by for r in library_rows} == {"alice@example.com"}
+
+
+async def test_cost_raw_rows_respect_filters(session, sample_jobs):
+    rows = await get_cost_raw_rows(session, ReportFilters(submitted_by="bob@example.com"))
+    assert len(rows) == 2
+    assert all(r.submitted_by == "bob@example.com" for r in rows)

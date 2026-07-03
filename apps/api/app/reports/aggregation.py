@@ -263,6 +263,52 @@ def physical_sheets_used(page_count: int, duplex: bool | None) -> int:
     return page_count
 
 
+@dataclass
+class CostRawRow:
+    """One job's worth of the fields needed to price it — printer identity
+    is included because toner rate is per-printer (see
+    app/reports/formulas.py:compute_printer_rate), unlike the plain
+    _RawRow above which only timeline/peak-times need."""
+
+    printer_id: UUID
+    printer_name: str
+    submitted_by: str | None
+    page_count: int
+    color_mode: str | None
+    duplex: bool | None
+
+
+async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[CostRawRow]:
+    """Feeds real per-job cost calculation (app/routers/reports.py's
+    cost-breakdown endpoint) — kept in this module rather than computing
+    cost here directly so aggregation.py stays DB-query-only and
+    app/reports/formulas.py stays a pure, DB-free calculation module (it
+    already imports from here; importing back would be circular)."""
+    stmt = _apply_filters(
+        select(
+            Job.printer_id,
+            Printer.name,
+            Job.submitted_by,
+            Job.page_count,
+            Job.color_mode,
+            Job.duplex,
+        ),
+        filters,
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        CostRawRow(
+            printer_id=r.printer_id,
+            printer_name=r.name,
+            submitted_by=r.submitted_by,
+            page_count=r.page_count or 0,
+            color_mode=r.color_mode,
+            duplex=r.duplex,
+        )
+        for r in rows
+    ]
+
+
 async def get_raw_rows_for_export(db: AsyncSession, filters: ReportFilters):
     """Filtered job rows joined with printer name, for CSV export — one row
     per job, newest first."""

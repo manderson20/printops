@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -18,6 +19,7 @@ class SummaryOut(BaseModel):
     unknown_duplex_pages: int
     estimated_cost_mono: float
     estimated_cost_color: float
+    estimated_cost_paper: float
     estimated_cost_total: float
     sheets_of_paper: int
     duplex_sheets_saved: int
@@ -56,6 +58,7 @@ class ReportFormulaSettingsOut(BaseModel):
     cost_per_page_color: float
     sheets_per_tree: float
     co2_grams_per_sheet: float
+    cost_per_sheet_paper: float
 
 
 class ReportFormulaSettingsUpdate(BaseModel):
@@ -63,6 +66,34 @@ class ReportFormulaSettingsUpdate(BaseModel):
     cost_per_page_color: float | None = None
     sheets_per_tree: float | None = None
     co2_grams_per_sheet: float | None = None
+    cost_per_sheet_paper: float | None = None
+
+
+CartridgeColor = Literal["black", "cyan", "magenta", "yellow"]
+
+
+class CartridgeIn(BaseModel):
+    color: CartridgeColor
+    cost: float
+    yield_pages: int
+
+
+class CartridgeOut(BaseModel):
+    color: CartridgeColor
+    cost: float
+    yield_pages: int
+
+    model_config = {"from_attributes": True}
+
+
+class CostEntryOut(BaseModel):
+    key: str
+    label: str
+    job_count: int
+    page_count: int
+    toner_cost: float
+    paper_cost: float
+    total_cost: float
 
 
 class SnapshotFiltersIn(BaseModel):

@@ -6,9 +6,9 @@ import {
   createReportSnapshot,
   deleteReportSnapshot,
   downloadReportCsv,
+  getCostBreakdown,
   getReportFormulaSettings,
   getReportFunFacts,
-  getReportLeaderboard,
   getReportPeakTimes,
   getReportSummary,
   getReportTimeline,
@@ -16,8 +16,8 @@ import {
   listPrinters,
   listReportSnapshots,
   updateReportFormulaSettings,
+  type CostEntry,
   type GoogleWorkspaceUserEntry,
-  type LeaderboardEntry,
   type PeakTimes,
   type Printer,
   type ReportFilters,
@@ -142,8 +142,8 @@ function StatCard({ label, value, tone }: { label: string; value: string; tone?:
 type ReportData = {
   summary: ReportSummary;
   timeline: TimelineBucket[];
-  printerLeaderboard: LeaderboardEntry[];
-  userLeaderboard: LeaderboardEntry[];
+  printerCosts: CostEntry[];
+  userCosts: CostEntry[];
   peakTimes: PeakTimes;
   funFacts: string[];
 };
@@ -219,15 +219,15 @@ export default function InsightsPage() {
     Promise.all([
       getReportSummary(filters),
       getReportTimeline(granularity, filters),
-      getReportLeaderboard("printer", filters),
-      getReportLeaderboard("user", filters),
+      getCostBreakdown("printer", filters),
+      getCostBreakdown("user", filters),
       getReportPeakTimes(filters),
       getReportFunFacts(periodLabel, filters),
     ])
-      .then(([summary, timeline, printerLeaderboard, userLeaderboard, peakTimes, funFacts]) =>
+      .then(([summary, timeline, printerCosts, userCosts, peakTimes, funFacts]) =>
         setState({
           phase: "ok",
-          data: { summary, timeline, printerLeaderboard, userLeaderboard, peakTimes, funFacts },
+          data: { summary, timeline, printerCosts, userCosts, peakTimes, funFacts },
         }),
       )
       .catch((error: unknown) =>
@@ -514,7 +514,7 @@ export default function InsightsPage() {
 
             <Card>
               <div className="mb-3 flex items-center justify-between">
-                <CardTitle>Leaderboard</CardTitle>
+                <CardTitle>Leaderboard &amp; Cost</CardTitle>
                 <div className="flex gap-1 print:hidden">
                   <Button
                     variant={leaderboardType === "printer" ? "primary" : "secondary"}
@@ -532,8 +532,7 @@ export default function InsightsPage() {
                   </Button>
                 </div>
               </div>
-              {(leaderboardType === "printer" ? state.data.printerLeaderboard : state.data.userLeaderboard)
-                .length === 0 ? (
+              {(leaderboardType === "printer" ? state.data.printerCosts : state.data.userCosts).length === 0 ? (
                 <EmptyState>No data for this range.</EmptyState>
               ) : (
                 <table className="w-full text-left text-sm">
@@ -542,23 +541,33 @@ export default function InsightsPage() {
                       <th className="py-2 font-medium">{leaderboardType === "printer" ? "Printer" : "User"}</th>
                       <th className="py-2 font-medium">Jobs</th>
                       <th className="py-2 font-medium">Pages</th>
+                      <th className="py-2 font-medium">Toner Cost</th>
+                      <th className="py-2 font-medium">Paper Cost</th>
+                      <th className="py-2 font-medium">Total Cost</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(leaderboardType === "printer" ? state.data.printerLeaderboard : state.data.userLeaderboard).map(
-                      (entry) => (
-                        <tr
-                          key={entry.key}
-                          className="border-b border-black/[.08] last:border-0 dark:border-white/[.145]"
-                        >
-                          <td className="py-2 text-black dark:text-zinc-50">{entry.label}</td>
-                          <td className="py-2 text-zinc-600 dark:text-zinc-400">{entry.job_count}</td>
-                          <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                            {entry.total_pages.toLocaleString()}
-                          </td>
-                        </tr>
-                      ),
-                    )}
+                    {(leaderboardType === "printer" ? state.data.printerCosts : state.data.userCosts).map((entry) => (
+                      <tr
+                        key={entry.key}
+                        className="border-b border-black/[.08] last:border-0 dark:border-white/[.145]"
+                      >
+                        <td className="py-2 text-black dark:text-zinc-50">{entry.label}</td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">{entry.job_count}</td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {entry.page_count.toLocaleString()}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {formatCurrency(entry.toner_cost)}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {formatCurrency(entry.paper_cost)}
+                        </td>
+                        <td className="py-2 font-medium text-black dark:text-zinc-50">
+                          {formatCurrency(entry.total_cost)}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               )}
@@ -580,8 +589,10 @@ export default function InsightsPage() {
               </div>
               <p className="mt-3 text-xs text-zinc-500">
                 Mono cost {formatCurrency(state.data.summary.estimated_cost_mono)} · Color cost{" "}
-                {formatCurrency(state.data.summary.estimated_cost_color)}. Formulas are configurable
-                under Settings.
+                {formatCurrency(state.data.summary.estimated_cost_color)} · Paper cost{" "}
+                {formatCurrency(state.data.summary.estimated_cost_paper)}. Toner cost uses each
+                printer&rsquo;s real cartridge cost/yield when configured (see the printer&rsquo;s
+                Toner Cartridges panel), falling back to the flat rates below otherwise.
               </p>
             </Card>
 
@@ -708,8 +719,9 @@ function SnapshotsSection({ filters, periodLabel }: { filters: ReportFilters; pe
 }
 
 const FORMULA_FIELDS: { key: keyof ReportFormulaSettings; label: string; step: string }[] = [
-  { key: "cost_per_page_mono", label: "Cost per mono page ($)", step: "0.01" },
-  { key: "cost_per_page_color", label: "Cost per color page ($)", step: "0.01" },
+  { key: "cost_per_page_mono", label: "Fallback cost per mono page ($)", step: "0.01" },
+  { key: "cost_per_page_color", label: "Fallback cost per color page ($)", step: "0.01" },
+  { key: "cost_per_sheet_paper", label: "Cost per sheet of paper ($)", step: "0.001" },
   { key: "sheets_per_tree", label: "Sheets per tree", step: "1" },
   { key: "co2_grams_per_sheet", label: "CO₂ grams per sheet", step: "0.1" },
 ];
