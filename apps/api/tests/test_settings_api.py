@@ -140,7 +140,7 @@ def test_get_classguard_settings_creates_default_row(client, auth_headers):
     body = response.json()
     assert body["enabled"] is False
     assert body["has_access_token"] is False
-    assert body["base_url"] == "https://classguard.brookfieldr3.org"
+    assert body["base_url"] == ""
 
 
 def test_update_classguard_settings_hides_token(client, auth_headers):
@@ -166,7 +166,7 @@ def test_classguard_test_connection_hit(client, auth_headers, monkeypatch):
     response = client.post(
         "/api/v1/settings/classguard/test",
         headers=auth_headers,
-        json={"base_url": "https://classguard.brookfieldr3.org", "access_token": "tok", "test_ip": "10.0.0.42"},
+        json={"base_url": "https://classguard.example.org", "access_token": "tok", "test_ip": "10.0.0.42"},
     )
     assert response.status_code == 200
     body = response.json()
@@ -183,7 +183,7 @@ def test_classguard_test_connection_no_lease_still_ok(client, auth_headers, monk
     response = client.post(
         "/api/v1/settings/classguard/test",
         headers=auth_headers,
-        json={"base_url": "https://classguard.brookfieldr3.org", "access_token": "tok", "test_ip": "10.0.0.42"},
+        json={"base_url": "https://classguard.example.org", "access_token": "tok", "test_ip": "10.0.0.42"},
     )
     assert response.status_code == 200
     body = response.json()
