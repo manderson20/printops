@@ -12,6 +12,10 @@ class JobCreate(BaseModel):
     # Client IP (job-originating-host-name), used for MDM-based attribution
     # (app/attribution/resolve.py) — see infra/cups/backends/printops.
     source_host: str | None = None
+    # Already available from CUPS argv before delivery even starts — see
+    # infra/cups/backends/printops.
+    document_name: str | None = None
+    copy_count: int | None = None
 
 
 class JobUpdate(BaseModel):
@@ -20,6 +24,13 @@ class JobUpdate(BaseModel):
     # Physical sheets printed (CUPS job-media-sheets-completed), reported
     # best-effort by the CUPS backend script — see infra/cups/backends/printops.
     page_count: int | None = None
+    # Best-effort, only knowable once the job completes — see
+    # infra/cups/backends/printops:get_job_completion_attributes and
+    # Job.color_mode's docstring (app/models/job.py) for why color_mode is a
+    # per-job flag, not a per-page split.
+    color_mode: str | None = None
+    duplex: bool | None = None
+    paper_size: str | None = None
 
 
 class JobOut(BaseModel):
@@ -32,6 +43,13 @@ class JobOut(BaseModel):
     status: str
     error_message: str | None
     page_count: int | None
+    document_name: str | None
+    copy_count: int | None
+    color_mode: str | None
+    duplex: bool | None
+    paper_size: str | None
+    source: str
+    completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
 

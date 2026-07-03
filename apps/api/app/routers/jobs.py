@@ -1,3 +1,5 @@
+import asyncio
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -10,6 +12,8 @@ from app.deps import get_current_user, require_role, verify_backend_token
 from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.job import Job
 from app.models.printer import Printer
+from app.printers.job_control import JobControlError, cancel_cups_job
+from app.schemas.auth import UserOut
 from app.schemas.job import JobCreate, JobListOut, JobOut, JobUpdate, UserUsageOut
 
 router = APIRouter(dependencies=[Depends(verify_backend_token)])
@@ -54,6 +58,8 @@ async def create_job(payload: JobCreate, db: AsyncSession = Depends(get_db)):
         attribution_method=attribution_method,
         mac_address=mac_address,
         file_size_bytes=payload.file_size_bytes,
+        document_name=payload.document_name,
+        copy_count=payload.copy_count,
         status="forwarding",
     )
     db.add(job)
@@ -71,6 +77,52 @@ async def update_job(job_id: UUID, payload: JobUpdate, db: AsyncSession = Depend
     job.status = payload.status
     job.error_message = payload.error_message
     job.page_count = payload.page_count
+    job.color_mode = payload.color_mode
+    job.duplex = payload.duplex
+    job.paper_size = payload.paper_size
+    # "forwarded"/"failed" are the only statuses this endpoint ever sets —
+    # both terminal (see Job.status's docstring), so this call always marks
+    # completion.
+    job.completed_at = datetime.now(UTC)
+    await db.commit()
+    await db.refresh(job)
+    return job
+
+
+@user_router.post(
+    "/{job_id}/cancel", response_model=JobOut, dependencies=[Depends(require_role("admin"))]
+)
+async def cancel_job(
+    job_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+):
+    """Cancels a single in-flight job — only valid while it's still
+    "forwarding" (see Job.status): forwarded/failed/cancelled are already
+    terminal, and cancelling something that never started makes no sense.
+    For a printer backed up with jobs PrintOps can't individually see yet,
+    see POST /printers/{id}/purge-jobs instead."""
+    job = await db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if job.status != "forwarding":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Job is already {job.status} — only in-flight jobs can be cancelled.",
+        )
+    if job.cups_job_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Job has no CUPS job id on record — nothing to cancel.",
+        )
+    try:
+        await asyncio.to_thread(cancel_cups_job, job.cups_job_id)
+    except JobControlError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    job.status = "cancelled"
+    job.error_message = f"Cancelled by {current_user.username}"
+    job.completed_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(job)
     return job

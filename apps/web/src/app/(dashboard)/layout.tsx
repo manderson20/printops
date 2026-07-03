@@ -12,6 +12,7 @@ import { useCurrentUser } from "@/lib/useCurrentUser";
 const NAV_LINKS = [
   { href: "/printers", label: "Printers" },
   { href: "/jobs", label: "Jobs" },
+  { href: "/insights", label: "Insights" },
   { href: "/integrations", label: "Integrations" },
 ] as const;
 

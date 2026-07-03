@@ -15,6 +15,8 @@ from app.integrations.mosyle import MosyleError
 from app.integrations.mosyle import run_sync as run_mosyle_sync
 from app.models.google_workspace import GoogleWorkspaceSettings
 from app.models.mosyle import MosyleSettings
+from app.models.printer import Printer
+from app.printers.status import refresh_printer_status
 from app.routers import (
     auth,
     device_overrides,
@@ -22,6 +24,7 @@ from app.routers import (
     internal,
     jobs,
     printers,
+    reports,
     settings as settings_router,
     updates,
     users,
@@ -56,6 +59,31 @@ def _make_device_sync_loop(name: str, settings_model, run_sync_fn, error_cls: ty
     return _loop
 
 
+PRINTER_STATUS_POLL_INTERVAL_SECONDS = 60
+
+
+async def _printer_status_poll_loop() -> None:
+    """Refreshes every printer's online/error/offline status (see
+    app/printers/status.py) once a minute — frequent enough to catch a jam
+    or an offline printer quickly without hammering the fleet. Each printer
+    is probed independently (asyncio.gather + return_exceptions) so one
+    unreachable printer can't stall/skip the rest of the cycle; a cycle-level
+    failure (e.g. DB down) just logs and retries next interval."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                printers = (await db.execute(select(Printer))).scalars().all()
+
+                async def _refresh_one(printer: Printer) -> None:
+                    await refresh_printer_status(printer)
+
+                await asyncio.gather(*(_refresh_one(p) for p in printers), return_exceptions=True)
+                await db.commit()
+        except Exception:
+            logger.exception("Unexpected error in printer status poll loop")
+        await asyncio.sleep(PRINTER_STATUS_POLL_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tasks = [
@@ -65,6 +93,7 @@ async def lifespan(app: FastAPI):
                 "Google Workspace", GoogleWorkspaceSettings, run_google_workspace_sync, GoogleWorkspaceError
             )()
         ),
+        asyncio.create_task(_printer_status_poll_loop()),
     ]
     yield
     for task in tasks:
@@ -101,3 +130,4 @@ app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["set
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(device_overrides.router, prefix="/api/v1/devices", tags=["devices"])
 app.include_router(updates.router, prefix="/api/v1/updates", tags=["updates"])
+app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])

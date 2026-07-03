@@ -5,6 +5,7 @@ const JOB_STATUS: Record<JobStatus, { label: string; tone: "neutral" | "info" | 
   forwarding: { label: "Forwarding", tone: "info" },
   forwarded: { label: "Forwarded", tone: "success" },
   failed: { label: "Failed", tone: "danger" },
+  cancelled: { label: "Cancelled", tone: "neutral" },
 };
 
 export function jobStatusInfo(status: JobStatus) {

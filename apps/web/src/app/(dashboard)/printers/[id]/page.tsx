@@ -5,10 +5,12 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   ApiError,
+  checkPrinterStatus,
   deletePrinter,
   getMdmConnection,
   getPrinter,
   listJobs,
+  purgePrinterJobs,
   rediscoverPrinter,
   resyncQueue,
   updatePrinter,
@@ -17,8 +19,9 @@ import {
   type Printer,
 } from "@/lib/api";
 import { capabilityBadges } from "@/lib/capabilities";
-import { formatBytes } from "@/lib/format";
+import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { attributionMethodInfo, jobStatusInfo } from "@/lib/jobStatus";
+import { printerStatusInfo } from "@/lib/printerStatus";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -55,6 +58,9 @@ export default function PrinterDetailPage() {
   const [saving, setSaving] = useState(false);
   const [rediscovering, setRediscovering] = useState(false);
   const [resyncing, setResyncing] = useState(false);
+  const [checkingStatus, setCheckingStatus] = useState(false);
+  const [purging, setPurging] = useState(false);
+  const [purgeResult, setPurgeResult] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [connection, setConnection] = useState<MdmConnectionInfo | null>(null);
@@ -136,6 +142,40 @@ export default function PrinterDetailPage() {
     router.push("/printers");
   }
 
+  async function handleCheckStatus() {
+    setCheckingStatus(true);
+    setActionError(null);
+    try {
+      const printer = await checkPrinterStatus(params.id);
+      setState({ phase: "ok", printer });
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Status check failed");
+    } finally {
+      setCheckingStatus(false);
+    }
+  }
+
+  async function handlePurgeQueue() {
+    if (!confirm("Cancel every job queued on this printer? This can't be undone.")) return;
+    setPurging(true);
+    setActionError(null);
+    setPurgeResult(null);
+    try {
+      const result = await purgePrinterJobs(params.id);
+      setPurgeResult(
+        result.cancelled_count === 0
+          ? "No PrintOps-tracked jobs were pending — the CUPS queue has been cleared."
+          : `Cancelled ${result.cancelled_count} pending job${result.cancelled_count === 1 ? "" : "s"}.`,
+      );
+      const refreshed = await listJobs({ printer_id: params.id, limit: 5 }).catch(() => null);
+      if (refreshed) setJobs(refreshed);
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Queue purge failed");
+    } finally {
+      setPurging(false);
+    }
+  }
+
   if (state.phase === "loading") {
     return <Spinner label="Loading printer…" />;
   }
@@ -156,6 +196,40 @@ export default function PrinterDetailPage() {
           </Button>
         )}
       </div>
+
+      <Card>
+        <div className="mb-4 flex items-center justify-between">
+          <CardTitle>Status</CardTitle>
+          <Button variant="secondary" onClick={handleCheckStatus} disabled={checkingStatus}>
+            {checkingStatus ? "Checking…" : "Check Now"}
+          </Button>
+        </div>
+        {(() => {
+          const info = printerStatusInfo(printer.status);
+          return (
+            <div className="flex flex-col gap-2 text-sm">
+              <div className="flex items-center gap-2">
+                <Badge tone={info.tone}>{info.label}</Badge>
+                <span className="text-xs text-zinc-400">
+                  Checked {formatRelativeTime(printer.status_checked_at)}
+                </span>
+              </div>
+              {printer.status_message && (
+                <p className="text-zinc-600 dark:text-zinc-400">{printer.status_message}</p>
+              )}
+              {printer.status_reasons && printer.status_reasons.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {printer.status_reasons.map((reason) => (
+                    <Badge key={reason} tone="danger">
+                      {reason}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </Card>
 
       <Card>
         <CardTitle className="mb-4">Details</CardTitle>
@@ -310,13 +384,29 @@ export default function PrinterDetailPage() {
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <CardTitle>Recent Jobs</CardTitle>
-          <Link
-            href={`/jobs?printer_id=${printer.id}`}
-            className="text-xs font-medium text-accent hover:underline"
-          >
-            View all
-          </Link>
+          <div className="flex items-center gap-3">
+            {isAdmin && (
+              <Button
+                variant="danger"
+                className="!px-3 !py-1 text-xs"
+                onClick={handlePurgeQueue}
+                disabled={purging}
+              >
+                {purging ? "Purging…" : "Purge Queue"}
+              </Button>
+            )}
+            <Link
+              href={`/jobs?printer_id=${printer.id}`}
+              className="text-xs font-medium text-accent hover:underline"
+            >
+              View all
+            </Link>
+          </div>
         </div>
+
+        {purgeResult && (
+          <p className="mb-3 text-xs text-emerald-700 dark:text-emerald-400">{purgeResult}</p>
+        )}
 
         {jobs === null && <Spinner label="Loading jobs…" />}
         {jobs !== null && jobs.length === 0 && (

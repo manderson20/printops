@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ApiError, listPrinters, testPrintPrinter, type Printer } from "@/lib/api";
 import { capabilityBadges } from "@/lib/capabilities";
+import { formatRelativeTime } from "@/lib/format";
+import { printerStatusInfo } from "@/lib/printerStatus";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -18,10 +20,17 @@ type LoadState =
 
 type TestPrintState = { phase: "sending" } | { phase: "ok" } | { phase: "error"; message: string };
 
+// Multifunction copiers can report a dozen+ finishing options (staple,
+// punch-top-left, punch-dual-right, ...) — showing all of them inline blows
+// up the row height once several printers are added. Collapse to this many
+// and let the admin expand per-row if they actually need the full list.
+const VISIBLE_CAPABILITY_COUNT = 4;
+
 export default function PrintersPage() {
   const isAdmin = useCurrentUser()?.role === "admin";
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [testPrints, setTestPrints] = useState<Record<string, TestPrintState>>({});
+  const [expandedCapabilities, setExpandedCapabilities] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     listPrinters()
@@ -32,6 +41,17 @@ export default function PrintersPage() {
           message: error instanceof Error ? error.message : "Failed to load printers",
         }),
       );
+
+    // The API polls each printer's status every 60s in the background
+    // (app/main.py); re-fetch periodically here so the list reflects that
+    // without a manual reload. Silent — doesn't reset to the loading phase,
+    // so it never interrupts whatever the admin is doing on this page.
+    const interval = setInterval(() => {
+      listPrinters()
+        .then((printers) => setState({ phase: "ok", printers }))
+        .catch(() => {});
+    }, 30_000);
+    return () => clearInterval(interval);
   }, []);
 
   async function handleTestPrint(printerId: string) {
@@ -72,6 +92,7 @@ export default function PrintersPage() {
             <thead className="bg-black/[.03] text-zinc-600 dark:bg-white/[.05] dark:text-zinc-400">
               <tr>
                 <th className="px-4 py-3 font-medium">Name</th>
+                <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Model</th>
                 <th className="px-4 py-3 font-medium">IP Address</th>
                 <th className="px-4 py-3 font-medium">Location</th>
@@ -96,6 +117,27 @@ export default function PrintersPage() {
                     >
                       {printer.name}
                     </Link>
+                  </td>
+                  <td className="px-4 py-3">
+                    {(() => {
+                      const info = printerStatusInfo(printer.status);
+                      const title = [
+                        printer.status_message,
+                        ...(printer.status_reasons ?? []),
+                      ]
+                        .filter(Boolean)
+                        .join(", ");
+                      return (
+                        <div className="flex flex-col gap-0.5">
+                          <Badge tone={info.tone} title={title || undefined}>
+                            {info.label}
+                          </Badge>
+                          <span className="text-xs text-zinc-400">
+                            {formatRelativeTime(printer.status_checked_at)}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                     {printer.manufacturer ?? ""} {printer.model ?? "—"}
@@ -130,16 +172,37 @@ export default function PrintersPage() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {capabilityBadges(printer.capabilities).map((badge) => (
-                        <Badge key={badge} tone="info">
-                          {badge}
-                        </Badge>
-                      ))}
-                      {capabilityBadges(printer.capabilities).length === 0 && (
-                        <span className="text-xs text-zinc-400">—</span>
-                      )}
-                    </div>
+                    {(() => {
+                      const badges = capabilityBadges(printer.capabilities);
+                      if (badges.length === 0) {
+                        return <span className="text-xs text-zinc-400">—</span>;
+                      }
+                      const expanded = expandedCapabilities[printer.id] ?? false;
+                      const visible = expanded ? badges : badges.slice(0, VISIBLE_CAPABILITY_COUNT);
+                      const hiddenCount = badges.length - visible.length;
+                      return (
+                        <div className="flex max-w-xs flex-wrap items-center gap-1">
+                          {visible.map((badge) => (
+                            <Badge key={badge} tone="info">
+                              {badge}
+                            </Badge>
+                          ))}
+                          {(hiddenCount > 0 || expanded) && badges.length > VISIBLE_CAPABILITY_COUNT && (
+                            <button
+                              onClick={() =>
+                                setExpandedCapabilities((prev) => ({
+                                  ...prev,
+                                  [printer.id]: !expanded,
+                                }))
+                              }
+                              className="text-xs font-medium text-accent hover:underline"
+                            >
+                              {expanded ? "Show less" : `+${hiddenCount} more`}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-col items-start gap-1">

@@ -12,7 +12,7 @@ from pyipp import IPP
 from pyipp.enums import ATTRIBUTE_ENUM_MAP, IppOperation
 from pyipp.exceptions import IPPError
 
-from app.printers.capabilities import REQUESTED_ATTRIBUTES
+from app.printers.capabilities import REQUESTED_ATTRIBUTES, _as_list, _scalar
 
 # pyipp maps several IPP attribute values to its own narrow IntEnums
 # (finishings, orientation-requested, print-quality, printer-state,
@@ -61,18 +61,18 @@ class ProbeResult:
     resolved_path: str
 
 
-async def probe_printer(
+async def _get_printer_attributes(
     ip_address: str,
-    port: int = DEFAULT_PORT,
-    tls: bool = False,
-    timeout: int = DEFAULT_TIMEOUT_SECONDS,
-    ipp_path: str | None = None,
+    port: int,
+    tls: bool,
+    timeout: int,
+    ipp_path: str | None,
+    requested_attributes: list[str],
 ) -> ProbeResult:
-    """Queries a printer's IPP endpoint for its full attribute set.
-
-    Tries `ipp_path` if given, otherwise falls through `DEFAULT_CANDIDATE_PATHS`
-    and returns the first one that responds.
-    """
+    """Shared candidate-path IPP Get-Printer-Attributes call, used by both the
+    full capability probe and the lightweight state probe below. Tries
+    `ipp_path` if given, otherwise falls through `DEFAULT_CANDIDATE_PATHS` and
+    returns the first one that responds."""
     candidate_paths = [ipp_path] if ipp_path else DEFAULT_CANDIDATE_PATHS
     last_error: Exception | None = None
 
@@ -81,7 +81,7 @@ async def probe_printer(
         try:
             response = await ipp.execute(
                 IppOperation.GET_PRINTER_ATTRIBUTES,
-                {"operation-attributes-tag": {"requested-attributes": REQUESTED_ATTRIBUTES}},
+                {"operation-attributes-tag": {"requested-attributes": requested_attributes}},
             )
             printers = response.get("printers") or []
             if not printers:
@@ -97,4 +97,59 @@ async def probe_printer(
     raise PrinterProbeError(
         f"Could not reach an IPP printer at {ip_address}:{port} "
         f"(tried {candidate_paths}): {last_error}"
+    )
+
+
+async def probe_printer(
+    ip_address: str,
+    port: int = DEFAULT_PORT,
+    tls: bool = False,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    ipp_path: str | None = None,
+) -> ProbeResult:
+    """Queries a printer's IPP endpoint for its full attribute set."""
+    return await _get_printer_attributes(
+        ip_address, port, tls, timeout, ipp_path, REQUESTED_ATTRIBUTES
+    )
+
+
+# Attributes for the lightweight status poll (app/printers/status.py) — kept
+# separate from capabilities.REQUESTED_ATTRIBUTES since this runs on a 60s
+# background loop against every printer and has no use for the (much larger,
+# rarely-changing) capability set.
+STATE_ATTRIBUTES: list[str] = [
+    "printer-state",
+    "printer-state-reasons",
+    "printer-state-message",
+]
+
+STATE_TIMEOUT_SECONDS = 5
+
+
+@dataclass
+class PrinterStateResult:
+    printer_state: int | None
+    state_reasons: list[str]
+    state_message: str | None
+
+
+async def probe_printer_state(
+    ip_address: str,
+    port: int = DEFAULT_PORT,
+    tls: bool = False,
+    ipp_path: str | None = None,
+    timeout: int = STATE_TIMEOUT_SECONDS,
+) -> PrinterStateResult:
+    """Lightweight counterpart to probe_printer(), fetching just the
+    printer-state* attributes — see app/printers/status.py:derive_status for
+    how these map to PrintOps's online/error/offline status."""
+    result = await _get_printer_attributes(
+        ip_address, port, tls, timeout, ipp_path, STATE_ATTRIBUTES
+    )
+    raw = result.raw_attributes
+    reasons = [str(_scalar(v)) for v in _as_list(raw.get("printer-state-reasons"))]
+    return PrinterStateResult(
+        printer_state=_scalar(raw.get("printer-state")),
+        state_reasons=reasons,
+        state_message=raw.get("printer-state-message") or None,
     )
