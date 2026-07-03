@@ -5,6 +5,24 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.4.0] - 2026-07-03
+
+- **SNMP page/copy/print counter polling.** Printers are now polled over
+  SNMP for their real lifetime page counts, independent of anything
+  PrintOps sees as a digital print job — the standard total works on
+  every vendor, with a verified copy-vs-print breakdown for Canon and a
+  best-effort breakdown for Konica Minolta (other vendors show total
+  only until confirmed against real hardware). Configurable per-printer
+  or globally (community string, version, port), off by default until an
+  admin opts in.
+- **Per-printer usage history chart.** A new "Usage Over Time" card on
+  each printer's detail page graphs daily page/copy/print deltas
+  computed from the SNMP counter history, with a 7/30/90/180-day range
+  selector — kept per-printer rather than added to the shared Insights
+  dashboard, which isn't built to scale across a large fleet with
+  separate per-printer values. History is retained for a configurable
+  window (default 180 days) and pruned automatically.
+
 ## [0.3.0] - 2026-07-03
 
 - **Print-and-release kiosk.** Printers can now be marked "release
