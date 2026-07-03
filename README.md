@@ -65,6 +65,14 @@ Each app documents its own env vars in a `.env.example` (or `.env.local.example`
 - `apps/api/.env.example` — `PRINTOPS_*` settings (JWT secret, CORS origins, dev user credentials)
 - `apps/web/.env.local.example` — `NEXT_PUBLIC_API_URL`
 
+## Google Sign-In (SSO)
+
+Staff can log in with Google Workspace instead of the local admin/password
+fallback, with admin/viewer roles enforced across the API. Entirely
+configured in-app (Settings → Integrations → Google Sign-In), no env vars
+needed — see [`docs/google-sso-setup.md`](docs/google-sso-setup.md) for the
+one-time Google Cloud Console setup and common pitfalls.
+
 ## Tests & linting
 
 ```bash
