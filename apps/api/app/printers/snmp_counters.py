@@ -45,7 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt, encrypt
 from app.models.printer import Printer
-from app.models.snmp import SnmpDefaultsSettings
+from app.models.snmp import PrinterCounterReading, SnmpDefaultsSettings
 
 logger = logging.getLogger(__name__)
 
@@ -337,10 +337,15 @@ VENDOR_BREAKDOWN_FNS = {
 }
 
 
-def _poll_counters_sync(printer: Printer, defaults: SnmpDefaultsSettings) -> None:
+def _poll_counters_sync(printer: Printer, defaults: SnmpDefaultsSettings) -> bool:
     """Blocking SNMP calls — run via asyncio.to_thread by the async
     entrypoint below, same split as app/printers/release.py's
-    submit_released_job (sync helper, async caller wraps it)."""
+    submit_released_job (sync helper, async caller wraps it). Returns
+    True only when this call performed a fresh successful read — callers
+    use that (not just "page_count_error is None", which can't
+    distinguish a fresh success from an old success whose error field was
+    never touched this cycle) to decide whether to record a
+    PrinterCounterReading (app/printers/counter_history.py)."""
     config = resolve_snmp_config(printer, defaults)
     now = datetime.now(UTC)
     try:
@@ -349,7 +354,7 @@ def _poll_counters_sync(printer: Printer, defaults: SnmpDefaultsSettings) -> Non
     except SnmpProbeError as exc:
         printer.page_count_error = str(exc)
         printer.page_count_checked_at = now
-        return  # leave last-known copy/print/total in place
+        return False  # leave last-known copy/print/total in place
 
     # Refine vendor_profile via a live sysDescr fetch — more reliable than
     # the DB-field heuristic in practice (see get_sys_descr_vendor_profile's
@@ -370,16 +375,36 @@ def _poll_counters_sync(printer: Printer, defaults: SnmpDefaultsSettings) -> Non
     printer.page_count_confidence = breakdown.confidence
     printer.page_count_vendor_profile_used = config.vendor_profile
     printer.page_count_checked_at = now
+    return True
 
 
-async def refresh_printer_counters(printer: Printer, defaults: SnmpDefaultsSettings) -> None:
+async def refresh_printer_counters(printer: Printer, defaults: SnmpDefaultsSettings) -> bool:
     """Probes `printer` over SNMP and updates its page_count_* fields in
     place. Does not commit — caller owns the transaction (matches
     app/printers/status.py's refresh_printer_status convention). No-ops
-    entirely if printer.snmp_enabled is False."""
+    entirely if printer.snmp_enabled is False. Returns True only when a
+    fresh successful read happened this call — see _poll_counters_sync's
+    docstring for why callers need this rather than inferring success from
+    field state."""
     if not printer.snmp_enabled:
-        return
-    await asyncio.to_thread(_poll_counters_sync, printer, defaults)
+        return False
+    return await asyncio.to_thread(_poll_counters_sync, printer, defaults)
+
+
+def record_reading(printer: Printer) -> PrinterCounterReading:
+    """Builds a PrinterCounterReading snapshot from printer's current
+    page_count_* fields — call only after refresh_printer_counters
+    returns True (a fresh successful read). Pure construction; caller
+    still owns db.add/commit, matching this module's existing
+    caller-owns-the-transaction convention."""
+    return PrinterCounterReading(
+        printer_id=printer.id,
+        recorded_at=printer.page_count_checked_at,
+        page_count_total=printer.page_count_total,
+        page_count_copy=printer.page_count_copy,
+        page_count_print=printer.page_count_print,
+        page_count_confidence=printer.page_count_confidence,
+    )
 
 
 async def get_or_create_snmp_defaults(db: AsyncSession) -> SnmpDefaultsSettings:

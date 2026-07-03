@@ -217,8 +217,9 @@ class TestGracefulDegradation:
         ), patch(
             "app.printers.snmp_counters.get_sys_descr_vendor_profile", return_value=None
         ):
-            _poll_counters_sync(printer, defaults)
+            succeeded = _poll_counters_sync(printer, defaults)
 
+        assert succeeded is True
         assert printer.page_count_total == 10291
         assert printer.page_count_copy is None
         assert printer.page_count_print is None
@@ -243,8 +244,9 @@ class TestGracefulDegradation:
             "app.printers.snmp_counters.get_standard_total",
             side_effect=SnmpProbeError("No response from device."),
         ):
-            _poll_counters_sync(printer, defaults)
+            succeeded = _poll_counters_sync(printer, defaults)
 
+        assert succeeded is False
         assert printer.page_count_total == 999  # untouched
         assert printer.page_count_copy == 111  # untouched
         assert printer.page_count_error == "No response from device."
@@ -262,8 +264,23 @@ class TestGracefulDegradation:
         with patch("app.printers.snmp_counters._poll_counters_sync") as mock_poll:
             from app.printers.snmp_counters import refresh_printer_counters
 
-            asyncio.run(refresh_printer_counters(printer, defaults))
+            succeeded = asyncio.run(refresh_printer_counters(printer, defaults))
         mock_poll.assert_not_called()
+        assert succeeded is False
+
+    def test_refresh_printer_counters_returns_true_on_success(self):
+        import asyncio
+
+        printer = Printer(name="t", ip_address="10.0.0.1", snmp_enabled=True)
+        defaults = SnmpDefaultsSettings(
+            community_encrypted=encrypt("public"), version="v2c", port=161
+        )
+
+        with patch("app.printers.snmp_counters._poll_counters_sync", return_value=True):
+            from app.printers.snmp_counters import refresh_printer_counters
+
+            succeeded = asyncio.run(refresh_printer_counters(printer, defaults))
+        assert succeeded is True
 
 
 class TestResolveSnmpConfig:
@@ -297,3 +314,33 @@ class TestResolveSnmpConfig:
         assert config.version == "v2c"
         assert config.community == "public"
         assert config.vendor_profile == "generic"
+
+
+class TestRecordReading:
+    def test_builds_reading_from_current_printer_state(self):
+        import uuid
+        from datetime import UTC, datetime
+
+        from app.printers.snmp_counters import record_reading
+
+        printer_id = uuid.uuid4()
+        checked_at = datetime.now(UTC)
+        printer = Printer(
+            id=printer_id,
+            name="t",
+            ip_address="10.0.0.1",
+            page_count_total=9026,
+            page_count_copy=354,
+            page_count_print=8672,
+            page_count_confidence="verified",
+            page_count_checked_at=checked_at,
+        )
+
+        reading = record_reading(printer)
+
+        assert reading.printer_id == printer_id
+        assert reading.recorded_at == checked_at
+        assert reading.page_count_total == 9026
+        assert reading.page_count_copy == 354
+        assert reading.page_count_print == 8672
+        assert reading.page_count_confidence == "verified"

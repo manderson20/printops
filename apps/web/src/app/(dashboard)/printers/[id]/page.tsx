@@ -32,6 +32,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { PrintReleaseCard } from "./PrintRelease";
 import { SnmpCountersCard } from "./SnmpCounters";
 import { TonerCartridgesCard } from "./TonerCartridges";
+import { UsageHistoryCard } from "./UsageHistory";
 
 type LoadState =
   | { phase: "loading" }
@@ -395,6 +396,8 @@ export default function PrinterDetailPage() {
         printer={printer}
         onUpdate={(updated) => setState({ phase: "ok", printer: updated })}
       />
+
+      <UsageHistoryCard printerId={printer.id} confidence={printer.page_count_confidence} />
 
       <Card>
         <div className="mb-4 flex items-center justify-between">

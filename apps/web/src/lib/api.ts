@@ -207,6 +207,23 @@ export async function checkPrinterCounters(id: string): Promise<Printer> {
   return response.json();
 }
 
+export type DailyCounterDelta = {
+  bucket_start: string;
+  total_delta: number | null;
+  copy_delta: number | null;
+  print_delta: number | null;
+};
+
+export async function getPrinterCounterHistory(
+  id: string,
+  days: number,
+): Promise<DailyCounterDelta[]> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${id}/counter-history?days=${days}`,
+  );
+  return response.json();
+}
+
 export async function purgePrinterJobs(id: string): Promise<{ cancelled_count: number }> {
   const response = await authorizedFetch(`/api/v1/printers/${id}/purge-jobs`, { method: "POST" });
   return response.json();
@@ -898,6 +915,7 @@ export type SnmpDefaults = {
   port: number;
   has_community: boolean;
   enabled: boolean;
+  retention_days: number;
 };
 
 export type SnmpDefaultsInput = {
@@ -905,6 +923,7 @@ export type SnmpDefaultsInput = {
   port?: number;
   community?: string;
   enabled?: boolean;
+  retention_days?: number;
 };
 
 export async function getSnmpDefaults(): Promise<SnmpDefaults> {
