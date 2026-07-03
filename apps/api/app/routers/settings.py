@@ -16,6 +16,7 @@ from app.models.classguard import ClassGuardSettings
 from app.models.google_sso import GoogleSsoSettings
 from app.models.google_workspace import GoogleWorkspaceSettings, GoogleWorkspaceUser
 from app.models.mosyle import MosyleSettings
+from app.models.report import ReportFormulaSettings
 from app.schemas.classguard import ClassGuardSettingsOut, ClassGuardSettingsUpdate, ClassGuardTestRequest, ClassGuardTestResult
 from app.schemas.google_sso import GoogleSsoSettingsOut, GoogleSsoSettingsUpdate
 from app.schemas.google_workspace import (
@@ -25,6 +26,7 @@ from app.schemas.google_workspace import (
     GoogleWorkspaceUserOut,
 )
 from app.schemas.mosyle import MosyleSettingsOut, MosyleSettingsUpdate, MosyleTestResult
+from app.schemas.report import ReportFormulaSettingsOut, ReportFormulaSettingsUpdate
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -411,3 +413,55 @@ async def update_google_sso_settings(payload: GoogleSsoSettingsUpdate, db: Async
     await db.commit()
     await db.refresh(settings)
     return _google_sso_to_out(settings)
+
+
+async def _get_or_create_report_formula_settings(db: AsyncSession) -> ReportFormulaSettings:
+    result = await db.execute(select(ReportFormulaSettings).limit(1))
+    settings = result.scalar_one_or_none()
+    if settings is None:
+        settings = ReportFormulaSettings()
+        db.add(settings)
+        await db.commit()
+        await db.refresh(settings)
+    return settings
+
+
+@router.get("/report-formulas", response_model=ReportFormulaSettingsOut)
+async def get_report_formula_settings(db: AsyncSession = Depends(get_db)):
+    settings = await _get_or_create_report_formula_settings(db)
+    return ReportFormulaSettingsOut(
+        cost_per_page_mono=settings.cost_per_page_mono,
+        cost_per_page_color=settings.cost_per_page_color,
+        sheets_per_tree=settings.sheets_per_tree,
+        co2_grams_per_sheet=settings.co2_grams_per_sheet,
+    )
+
+
+@router.put(
+    "/report-formulas",
+    response_model=ReportFormulaSettingsOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def update_report_formula_settings(
+    payload: ReportFormulaSettingsUpdate, db: AsyncSession = Depends(get_db)
+):
+    settings = await _get_or_create_report_formula_settings(db)
+    updates = payload.model_dump(exclude_unset=True)
+    formula_fields = (
+        "cost_per_page_mono",
+        "cost_per_page_color",
+        "sheets_per_tree",
+        "co2_grams_per_sheet",
+    )
+    for field in formula_fields:
+        if updates.get(field) is not None:
+            setattr(settings, field, updates[field])
+
+    await db.commit()
+    await db.refresh(settings)
+    return ReportFormulaSettingsOut(
+        cost_per_page_mono=settings.cost_per_page_mono,
+        cost_per_page_color=settings.cost_per_page_color,
+        sheets_per_tree=settings.sheets_per_tree,
+        co2_grams_per_sheet=settings.co2_grams_per_sheet,
+    )

@@ -113,6 +113,11 @@ class PrinterOut(BaseModel):
     capabilities_error: str | None
     queue_sync_error: str | None
 
+    status: str
+    status_reasons: list[str] | None
+    status_message: str | None
+    status_checked_at: datetime | None
+
     created_at: datetime
     updated_at: datetime
 

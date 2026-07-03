@@ -53,3 +53,18 @@ class Printer(Base, TimestampMixin):
     # printer's CUPS queue (e.g. printer unreachable during the -m everywhere
     # probe). None means the queue is in sync as of the last create/update.
     queue_sync_error: Mapped[str | None] = mapped_column(default=None)
+
+    # Reachability/error state, refreshed by app/printers/status.py — either
+    # on the 60s background poll (app/main.py) or a manual "Check Now" call
+    # (POST /printers/{id}/check-status). "unknown" until the first check.
+    # See app/printers/status.py:derive_status for how state maps to these.
+    status: Mapped[str] = mapped_column(default="unknown", server_default="unknown")
+    # Raw IPP printer-state-reasons (e.g. ["media-jam-error"]), excluding the
+    # no-op "none" value. Empty/None when status isn't "error".
+    status_reasons: Mapped[list[str] | None] = mapped_column(JSON, default=None)
+    # Human-readable detail: the printer's own printer-state-message, or the
+    # probe failure reason when status is "offline".
+    status_message: Mapped[str | None] = mapped_column(default=None)
+    status_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )

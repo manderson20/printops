@@ -87,9 +87,15 @@ export type Printer = {
   capabilities_detected_at: string | null;
   capabilities_error: string | null;
   queue_sync_error: string | null;
+  status: PrinterStatus;
+  status_reasons: string[] | null;
+  status_message: string | null;
+  status_checked_at: string | null;
   created_at: string;
   updated_at: string;
 };
+
+export type PrinterStatus = "online" | "error" | "offline" | "unknown";
 
 export type PrinterCreateInput = {
   name: string;
@@ -155,6 +161,16 @@ export async function testPrintPrinter(id: string): Promise<{ message: string }>
   return response.json();
 }
 
+export async function checkPrinterStatus(id: string): Promise<Printer> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/check-status`, { method: "POST" });
+  return response.json();
+}
+
+export async function purgePrinterJobs(id: string): Promise<{ cancelled_count: number }> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/purge-jobs`, { method: "POST" });
+  return response.json();
+}
+
 export type MdmConnectionInfo = {
   queue_name: string;
   host: string;
@@ -169,7 +185,7 @@ export async function getMdmConnection(id: string): Promise<MdmConnectionInfo> {
   return response.json();
 }
 
-export type JobStatus = "received" | "forwarding" | "forwarded" | "failed";
+export type JobStatus = "received" | "forwarding" | "forwarded" | "failed" | "cancelled";
 export type AttributionMethod = "cups" | "mosyle" | "google_workspace" | "unresolved";
 
 export type Job = {
@@ -183,6 +199,13 @@ export type Job = {
   page_count: number | null;
   status: JobStatus;
   error_message: string | null;
+  document_name: string | null;
+  copy_count: number | null;
+  color_mode: "color" | "monochrome" | null;
+  duplex: boolean | null;
+  paper_size: string | null;
+  source: string;
+  completed_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -207,6 +230,11 @@ export type UserUsage = {
 
 export async function getJobUsage(): Promise<UserUsage[]> {
   const response = await authorizedFetch("/api/v1/jobs/usage");
+  return response.json();
+}
+
+export async function cancelJob(id: string): Promise<Job> {
+  const response = await authorizedFetch(`/api/v1/jobs/${id}/cancel`, { method: "POST" });
   return response.json();
 }
 
@@ -526,6 +554,213 @@ export async function updateGoogleSsoSettings(
   input: GoogleSsoSettingsInput,
 ): Promise<GoogleSsoSettings> {
   const response = await authorizedFetch("/api/v1/settings/google-sso", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+// --- Print Insights ---
+
+export type ReportFilters = {
+  start?: string;
+  end?: string;
+  building?: string;
+  department?: string;
+  printer_id?: string;
+  submitted_by?: string;
+  status?: string;
+  color_mode?: string;
+  duplex?: boolean;
+};
+
+function buildReportQuery(filters?: ReportFilters, extra?: Record<string, string>): string {
+  const query = new URLSearchParams();
+  if (filters?.start) query.set("start", filters.start);
+  if (filters?.end) query.set("end", filters.end);
+  if (filters?.building) query.set("building", filters.building);
+  if (filters?.department) query.set("department", filters.department);
+  if (filters?.printer_id) query.set("printer_id", filters.printer_id);
+  if (filters?.submitted_by) query.set("submitted_by", filters.submitted_by);
+  if (filters?.status) query.set("status", filters.status);
+  if (filters?.color_mode) query.set("color_mode", filters.color_mode);
+  if (filters?.duplex !== undefined) query.set("duplex", String(filters.duplex));
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) query.set(key, value);
+  }
+  return query.toString();
+}
+
+export type ReportSummary = {
+  total_jobs: number;
+  forwarded_jobs: number;
+  failed_jobs: number;
+  cancelled_jobs: number;
+  total_pages: number;
+  color_pages: number;
+  mono_pages: number;
+  unknown_color_mode_pages: number;
+  duplex_pages: number;
+  simplex_pages: number;
+  unknown_duplex_pages: number;
+  estimated_cost_mono: number;
+  estimated_cost_color: number;
+  estimated_cost_total: number;
+  sheets_of_paper: number;
+  duplex_sheets_saved: number;
+  trees_used: number;
+  co2_grams: number;
+};
+
+export async function getReportSummary(filters?: ReportFilters): Promise<ReportSummary> {
+  const qs = buildReportQuery(filters);
+  const response = await authorizedFetch(`/api/v1/reports/summary${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export type ReportGranularity = "day" | "week" | "month";
+
+export type TimelineBucket = {
+  bucket_start: string;
+  total_pages: number;
+  color_pages: number;
+  mono_pages: number;
+  duplex_pages: number;
+  simplex_pages: number;
+  job_count: number;
+};
+
+export async function getReportTimeline(
+  granularity: ReportGranularity,
+  filters?: ReportFilters,
+): Promise<TimelineBucket[]> {
+  const qs = buildReportQuery(filters, { granularity });
+  const response = await authorizedFetch(`/api/v1/reports/timeline${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export type LeaderboardEntry = {
+  key: string;
+  label: string;
+  job_count: number;
+  total_pages: number;
+};
+
+export async function getReportLeaderboard(
+  type: "printer" | "user",
+  filters?: ReportFilters,
+  limit = 10,
+): Promise<LeaderboardEntry[]> {
+  const qs = buildReportQuery(filters, { type, limit: String(limit) });
+  const response = await authorizedFetch(`/api/v1/reports/leaderboard${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export type PeakTimes = {
+  by_day_of_week: Record<string, number>;
+  by_hour: Record<string, number>;
+};
+
+export async function getReportPeakTimes(filters?: ReportFilters): Promise<PeakTimes> {
+  const qs = buildReportQuery(filters);
+  const response = await authorizedFetch(`/api/v1/reports/peak-times${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export async function getReportFunFacts(
+  periodLabel: string,
+  filters?: ReportFilters,
+): Promise<string[]> {
+  const qs = buildReportQuery(filters, { period_label: periodLabel });
+  const response = await authorizedFetch(`/api/v1/reports/fun-facts${qs ? `?${qs}` : ""}`);
+  const body: { facts: string[] } = await response.json();
+  return body.facts;
+}
+
+/** Downloads the filtered job export as a CSV file — routed through
+ * authorizedFetch (unlike a plain <a href>) so the JWT bearer token
+ * actually reaches the API; browsers don't attach custom headers to a
+ * navigation click. */
+export async function downloadReportCsv(filters?: ReportFilters): Promise<void> {
+  const qs = buildReportQuery(filters);
+  const response = await authorizedFetch(`/api/v1/reports/export.csv${qs ? `?${qs}` : ""}`);
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "print-insights-export.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export type ReportSnapshotFilters = {
+  building?: string | null;
+  department?: string | null;
+  printer_id?: string | null;
+  submitted_by?: string | null;
+  status?: string | null;
+  color_mode?: string | null;
+  duplex?: boolean | null;
+};
+
+export type ReportSnapshot = {
+  id: string;
+  name: string;
+  range_start: string;
+  range_end: string;
+  filters: ReportSnapshotFilters;
+  totals: ReportSummary;
+  fun_facts: string[];
+  created_by: string;
+  created_at: string;
+};
+
+export async function listReportSnapshots(): Promise<ReportSnapshot[]> {
+  const response = await authorizedFetch("/api/v1/reports/snapshots");
+  return response.json();
+}
+
+export async function createReportSnapshot(input: {
+  name: string;
+  range_start: string;
+  range_end: string;
+  filters?: ReportSnapshotFilters;
+  period_label?: string;
+}): Promise<ReportSnapshot> {
+  const response = await authorizedFetch("/api/v1/reports/snapshots", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function getReportSnapshot(id: string): Promise<ReportSnapshot> {
+  const response = await authorizedFetch(`/api/v1/reports/snapshots/${id}`);
+  return response.json();
+}
+
+export async function deleteReportSnapshot(id: string): Promise<void> {
+  await authorizedFetch(`/api/v1/reports/snapshots/${id}`, { method: "DELETE" });
+}
+
+export type ReportFormulaSettings = {
+  cost_per_page_mono: number;
+  cost_per_page_color: number;
+  sheets_per_tree: number;
+  co2_grams_per_sheet: number;
+};
+
+export type ReportFormulaSettingsInput = Partial<ReportFormulaSettings>;
+
+export async function getReportFormulaSettings(): Promise<ReportFormulaSettings> {
+  const response = await authorizedFetch("/api/v1/settings/report-formulas");
+  return response.json();
+}
+
+export async function updateReportFormulaSettings(
+  input: ReportFormulaSettingsInput,
+): Promise<ReportFormulaSettings> {
+  const response = await authorizedFetch("/api/v1/settings/report-formulas", {
     method: "PUT",
     body: JSON.stringify(input),
   });

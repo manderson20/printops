@@ -28,13 +28,18 @@ const SOURCE_LABEL: Record<KnownDevice["source"], string> = {
   google_workspace: "Google Workspace",
 };
 
+// Shared across every row rather than one per row — the roster can be
+// thousands of entries (this org's Google Workspace sync has 3500+), and
+// with 2000+ devices a per-row copy meant rendering roster_size * device_count
+// <option> elements (tens of millions of DOM nodes), which froze the tab
+// solid. A single shared datalist still lets every row's input reference it.
+const ROSTER_DATALIST_ID = "google-workspace-roster";
+
 function DeviceRow({
   device,
-  roster,
   onSaved,
 }: {
   device: KnownDevice;
-  roster: GoogleWorkspaceUserEntry[];
   onSaved: () => void;
 }) {
   const [email, setEmail] = useState(device.override_email ?? "");
@@ -81,8 +86,6 @@ function DeviceRow({
     }
   }
 
-  const datalistId = `roster-${device.mac_address.replace(/:/g, "")}`;
-
   return (
     <tr className="border-b border-black/[.08] last:border-0 align-top dark:border-white/[.145]">
       <td className="px-4 py-3 font-mono text-xs text-zinc-600 dark:text-zinc-400">{device.mac_address}</td>
@@ -99,19 +102,12 @@ function DeviceRow({
       <td className="px-4 py-3">
         <div className="flex flex-col gap-2">
           <input
-            list={datalistId}
+            list={ROSTER_DATALIST_ID}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="correct-user@domain.com"
             className="rounded border border-black/[.15] bg-transparent px-2 py-1 text-sm text-black dark:border-white/[.2] dark:text-zinc-50"
           />
-          <datalist id={datalistId}>
-            {roster.map((u) => (
-              <option key={u.email} value={u.email}>
-                {u.name ?? u.email}
-              </option>
-            ))}
-          </datalist>
           <Input
             value={note}
             onChange={(e) => setNote(e.target.value)}
@@ -207,13 +203,21 @@ export default function DevicesPage() {
               </thead>
               <tbody>
                 {state.devices.map((device) => (
-                  <DeviceRow key={device.mac_address} device={device} roster={roster} onSaved={load} />
+                  <DeviceRow key={device.mac_address} device={device} onSaved={load} />
                 ))}
               </tbody>
             </table>
           )}
         </Card>
       )}
+
+      <datalist id={ROSTER_DATALIST_ID}>
+        {roster.map((u) => (
+          <option key={u.email} value={u.email}>
+            {u.name ?? u.email}
+          </option>
+        ))}
+      </datalist>
     </div>
   );
 }

@@ -46,15 +46,31 @@ def parse_source_host(job_options: str) -> str | None:
     return None
 
 
-def get_page_count(queue_name: str, job_id: str) -> int | None:
-    """Reads job-media-sheets-completed off our own local CUPS job record via
-    ipptool, once the real `ipp` backend (below) has already finished
-    forwarding — by then cupsd's local job has already been updated with
-    whatever the physical printer reported back over the IPP back-channel
-    (the same back-channel fd close_fds=False below exists to preserve).
-    Best-effort only: attribute support varies by printer/CUPS version, so
-    any failure here must never affect delivery, only page-count telemetry.
+JOB_COMPLETION_ATTRIBUTES = [
+    "job-media-sheets-completed",
+    "sides",
+    "output-mode",
+    "print-color-mode",
+    "media",
+]
+
+
+def get_job_completion_attributes(queue_name: str, job_id: str) -> dict:
+    """Reads best-effort post-completion attributes off our own local CUPS
+    job record via ipptool, once the real `ipp` backend (below) has already
+    finished forwarding — by then cupsd's local job has already been updated
+    with whatever the physical printer reported back over the IPP
+    back-channel (the same back-channel fd close_fds=False below exists to
+    preserve). Feeds Print Insights (app/reports/) — never affects delivery.
+
+    Best-effort per attribute, not just per call: printer/CUPS support
+    varies (this is the same caveat page-count capture already had), so any
+    attribute the response doesn't include comes back None rather than
+    failing the whole job record. Note this is a per-job color mode, not a
+    per-page split — see Job.color_mode's docstring (app/models/job.py) for
+    why that's what's actually achievable here.
     """
+    empty = {"page_count": None, "color_mode": None, "duplex": None, "paper_size": None}
     test_definition = (
         "{\n"
         "    OPERATION Get-Job-Attributes\n"
@@ -63,25 +79,57 @@ def get_page_count(queue_name: str, job_id: str) -> int | None:
         "    ATTR language attributes-natural-language en\n"
         f"    ATTR uri printer-uri ipp://localhost/printers/{queue_name}\n"
         f"    ATTR integer job-id {job_id}\n"
-        "    ATTR keyword requested-attributes job-media-sheets-completed\n"
+        f"    ATTR keyword requested-attributes {','.join(JOB_COMPLETION_ATTRIBUTES)}\n"
         "}\n"
     )
     try:
+        # This CUPS/ipptool build (v2.4.16) doesn't treat "-" as a stdin
+        # placeholder for the testfile argument — it requires an actual
+        # path, so /dev/stdin is used instead (confirmed via manual
+        # ipptool invocation; "-" silently fails with a usage error,
+        # which is why page-count capture never actually worked before
+        # this fix despite looking correct).
         result = subprocess.run(
-            ["ipptool", "-X", f"ipp://localhost/printers/{queue_name}", "-"],
+            ["ipptool", "-X", f"ipp://localhost/printers/{queue_name}", "/dev/stdin"],
             input=test_definition,
             capture_output=True,
             text=True,
             timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return None
+        return empty
 
-    match = re.search(
-        r"<key>job-media-sheets-completed</key>\s*<array>\s*<integer>(\d+)</integer>",
-        result.stdout,
-    )
-    return int(match.group(1)) if match else None
+    output = result.stdout
+
+    def extract(key: str) -> str | None:
+        # ipptool's plist output wraps multi-valued attributes in <array>
+        # but emits single-valued ones bare (same "value often comes back
+        # bare, not in a list" quirk app/printers/capabilities.py's
+        # _as_list() already works around on the pyipp side) — the
+        # <array> wrapper is therefore optional here, not guaranteed.
+        match = re.search(
+            rf"<key>{re.escape(key)}</key>\s*(?:<array>\s*)?<(integer|string)>(.*?)</\1>",
+            output,
+        )
+        return match.group(2) if match else None
+
+    page_count_raw = extract("job-media-sheets-completed")
+    sides = extract("sides")
+    # Different CUPS/printer combos surface the color decision under
+    # different keywords — prefer CUPS's own internal one, fall back to the
+    # IPP-standard job attribute.
+    color_mode_raw = extract("output-mode") or extract("print-color-mode")
+
+    return {
+        "page_count": int(page_count_raw) if page_count_raw and page_count_raw.isdigit() else None,
+        "color_mode": (
+            None
+            if color_mode_raw is None
+            else ("monochrome" if "monochrome" in color_mode_raw else "color")
+        ),
+        "duplex": None if sides is None else sides.startswith("two-sided"),
+        "paper_size": extract("media"),
+    }
 
 
 def api_request(token: str, method: str, path: str, body: dict | None = None) -> dict:
@@ -132,6 +180,8 @@ def main() -> int:
         except OSError:
             file_size = None
 
+    copy_count = int(job_copies) if job_copies.isdigit() else None
+
     try:
         job = api_request(
             token,
@@ -143,6 +193,8 @@ def main() -> int:
                 "submitted_by": job_user,
                 "file_size_bytes": file_size,
                 "source_host": parse_source_host(job_options),
+                "document_name": job_title or None,
+                "copy_count": copy_count,
             },
         )
     except (urllib.error.URLError, urllib.error.HTTPError) as exc:
@@ -174,10 +226,10 @@ def main() -> int:
     )
     exit_code = result.returncode
 
-    page_count = None
+    completion_attrs = {"page_count": None, "color_mode": None, "duplex": None, "paper_size": None}
     if exit_code == 0:
         queue_name = os.environ.get("PRINTER") or f"printops-{printer_id}"
-        page_count = get_page_count(queue_name, job_id)
+        completion_attrs = get_job_completion_attributes(queue_name, job_id)
 
     try:
         api_request(
@@ -187,7 +239,7 @@ def main() -> int:
             {
                 "status": "forwarded" if exit_code == 0 else "failed",
                 "error_message": None if exit_code == 0 else f"ipp backend exited {exit_code}",
-                "page_count": page_count,
+                **completion_attrs,
             },
         )
     except (urllib.error.URLError, urllib.error.HTTPError):

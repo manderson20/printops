@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, Uuid
+from sqlalchemy import DateTime, ForeignKey, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -43,7 +44,10 @@ class Job(Base, TimestampMixin):
 
     file_size_bytes: Mapped[int | None] = mapped_column(default=None)
 
-    # received -> forwarding -> forwarded | failed
+    # received -> forwarding -> forwarded | failed | cancelled
+    # "cancelled" is set by an admin action (app/routers/jobs.py:cancel_job or
+    # app/routers/printers.py:purge_jobs) — only reachable from "forwarding",
+    # since forwarded/failed jobs are already terminal.
     status: Mapped[str] = mapped_column(default="received", server_default="received")
     error_message: Mapped[str | None] = mapped_column(default=None)
 
@@ -52,3 +56,30 @@ class Job(Base, TimestampMixin):
     # duplex/copies). Reported best-effort by the CUPS backend script
     # (infra/cups/backends/printops); null if unavailable.
     page_count: Mapped[int | None] = mapped_column(default=None)
+
+    # --- Print Insights fields (app/reports/) ---
+    # job-title/job-copies are already handed to the CUPS backend script as
+    # argv before delivery even starts — captured at create_job time.
+    document_name: Mapped[str | None] = mapped_column(default=None)
+    copy_count: Mapped[int | None] = mapped_column(default=None)
+
+    # The rest are only knowable from the completed job's IPP attributes
+    # (like page_count above) — captured at update_job time, best-effort,
+    # None if the printer/CUPS didn't report it. Note: this is a per-job
+    # color mode, not a per-page split — consumer/office copier IPP
+    # interfaces don't expose a color/mono breakdown within one job (see
+    # app/reports/aggregation.py, which derives "color pages"/"mono pages"
+    # rollups from this flag + page_count rather than storing them
+    # separately).
+    color_mode: Mapped[str | None] = mapped_column(default=None)
+    duplex: Mapped[bool | None] = mapped_column(default=None)
+    paper_size: Mapped[str | None] = mapped_column(default=None)
+
+    # Where this job record came from — always "cups" today; reserved for a
+    # future manual/copier-log import path (see app/reports/ CSV export for
+    # the mirror-image "export", not an import).
+    source: Mapped[str] = mapped_column(default="cups", server_default="cups")
+
+    # Set when status becomes terminal (forwarded/failed/cancelled) —
+    # created_at already serves as "submitted_at" for reporting purposes.
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

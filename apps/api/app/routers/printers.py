@@ -3,16 +3,19 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.db import get_db
 from app.deps import get_current_user, require_role
+from app.models.job import Job
 from app.models.printer import Printer
 from app.printers.capabilities import parse_capabilities, sanitize_raw_attributes
 from app.printers.ipp_client import PrinterProbeError, probe_printer
+from app.printers.job_control import JobControlError, purge_cups_queue
 from app.printers.queue_sync import QueueSyncError, remove_queue, sync_queue
+from app.printers.status import refresh_printer_status
 from app.printers.test_print import TestPrintError, submit_test_print
 from app.schemas.auth import UserOut
 from app.schemas.printer import PrinterCreate, PrinterMdmConnectionOut, PrinterOut, PrinterUpdate
@@ -155,6 +158,50 @@ async def resync_queue(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     printer = await _get_printer_or_404(printer_id, db)
     await _apply_queue_sync(printer, db)
     return printer
+
+
+@router.post("/{printer_id}/check-status", response_model=PrinterOut)
+async def check_status(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Manually refreshes a printer's online/error/offline status on demand
+    — same underlying probe as the 60s background loop (app/main.py), just
+    triggered immediately instead of waiting for the next cycle. Read-only
+    telemetry, so open to any logged-in user (not admin-gated) like GET."""
+    printer = await _get_printer_or_404(printer_id, db)
+    await refresh_printer_status(printer)
+    await db.commit()
+    await db.refresh(printer)
+    return printer
+
+
+@router.post(
+    "/{printer_id}/purge-jobs",
+    dependencies=[Depends(require_role("admin"))],
+)
+async def purge_jobs(
+    printer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+):
+    """Cancels this printer's entire CUPS queue — not just the jobs PrintOps
+    can see, but anything backed up behind them too, since a job only gets a
+    Job row once CUPS actually starts running our backend for it (see
+    infra/cups/backends/printops). For when a jam/error has backed up
+    several jobs and an admin just wants the queue cleared, not to hunt down
+    each one individually."""
+    printer = await _get_printer_or_404(printer_id, db)
+    try:
+        await asyncio.to_thread(purge_cups_queue, str(printer.id))
+    except JobControlError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    cancel_note = f"Cancelled via queue purge by {current_user.username}"
+    result = await db.execute(
+        update(Job)
+        .where(Job.printer_id == printer_id, Job.status == "forwarding")
+        .values(status="cancelled", error_message=cancel_note, completed_at=datetime.now(UTC))
+    )
+    await db.commit()
+    return {"cancelled_count": result.rowcount}
 
 
 @router.get("/{printer_id}/mdm-connection", response_model=PrinterMdmConnectionOut)
