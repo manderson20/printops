@@ -342,6 +342,7 @@ export type GoogleWorkspaceSettings = {
   last_synced_at: string | null;
   last_sync_error: string | null;
   device_count: number;
+  staff_org_unit_path: string | null;
 };
 
 export type GoogleWorkspaceSettingsInput = {
@@ -349,6 +350,7 @@ export type GoogleWorkspaceSettingsInput = {
   admin_email?: string;
   customer_id?: string;
   enabled?: boolean;
+  staff_org_unit_path?: string;
 };
 
 export type GoogleWorkspaceTestResult = {

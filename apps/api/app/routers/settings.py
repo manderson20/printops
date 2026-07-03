@@ -10,7 +10,11 @@ from app.core.crypto import decrypt, encrypt
 from app.db import get_db
 from app.deps import get_current_user, require_role
 from app.integrations.classguard import ClassGuardClient, ClassGuardError
-from app.integrations.google_workspace import GoogleWorkspaceClient, GoogleWorkspaceError
+from app.integrations.google_workspace import (
+    GoogleWorkspaceClient,
+    GoogleWorkspaceError,
+    org_unit_matches,
+)
 from app.integrations.google_workspace import run_sync as run_google_workspace_sync
 from app.integrations.mosyle import MosyleClient, MosyleError
 from app.integrations.mosyle import run_sync as run_mosyle_sync
@@ -232,6 +236,7 @@ def _google_workspace_to_out(settings: GoogleWorkspaceSettings) -> GoogleWorkspa
         last_synced_at=settings.last_synced_at,
         last_sync_error=settings.last_sync_error,
         device_count=settings.device_count,
+        staff_org_unit_path=settings.staff_org_unit_path,
     )
 
 
@@ -256,6 +261,10 @@ async def update_google_workspace_settings(
         settings.enabled = updates["enabled"]
     if updates.get("service_account_json"):
         settings.service_account_json_encrypted = encrypt(updates["service_account_json"])
+    if "staff_org_unit_path" in updates:
+        # Blank clears the filter (falls back to "include everyone with an
+        # Employee ID") rather than being rejected as invalid input.
+        settings.staff_org_unit_path = updates["staff_org_unit_path"] or None
 
     await db.commit()
     await db.refresh(settings)
@@ -341,16 +350,29 @@ async def export_copier_pin_roster(db: AsyncSession = Depends(get_db)):
     confirmed match for any specific bizhub firmware's bulk-import
     template — the local "User Registration" import format varies by
     device/firmware, so check it against a real device's admin panel and
-    adjust the columns here if needed."""
+    adjust the columns here if needed.
+
+    Also filtered to GoogleWorkspaceSettings.staff_org_unit_path (and
+    anything nested under it) when configured — without it, this roster
+    would include anyone with an Employee ID set, which in practice can
+    include students, not just staff (every org's OU naming is different,
+    so this is never guessed/hardcoded)."""
+    settings = await _get_or_create_google_workspace_settings(db)
     result = await db.execute(
         select(GoogleWorkspaceUser)
         .where(GoogleWorkspaceUser.employee_id.is_not(None))
         .order_by(GoogleWorkspaceUser.email)
     )
+    users = result.scalars().all()
+    if settings.staff_org_unit_path:
+        users = [
+            u for u in users if org_unit_matches(u.org_unit_path, settings.staff_org_unit_path)
+        ]
+
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(["Name", "Email", "PIN"])
-    for user in result.scalars().all():
+    for user in users:
         writer.writerow([user.name or "", user.email, user.employee_id])
     return Response(
         content=buffer.getvalue(),

@@ -8,6 +8,7 @@ class GoogleWorkspaceSettingsUpdate(BaseModel):
     admin_email: str | None = None
     customer_id: str | None = None
     enabled: bool | None = None
+    staff_org_unit_path: str | None = None
 
 
 class GoogleWorkspaceSettingsOut(BaseModel):
@@ -21,6 +22,7 @@ class GoogleWorkspaceSettingsOut(BaseModel):
     last_synced_at: datetime | None
     last_sync_error: str | None
     device_count: int
+    staff_org_unit_path: str | None
 
 
 class GoogleWorkspaceTestResult(BaseModel):
