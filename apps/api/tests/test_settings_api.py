@@ -140,7 +140,7 @@ def test_get_classguard_settings_creates_default_row(client, auth_headers):
     body = response.json()
     assert body["enabled"] is False
     assert body["has_access_token"] is False
-    assert body["base_url"] == "https://classguard.example.org"
+    assert body["base_url"] == ""
 
 
 def test_update_classguard_settings_hides_token(client, auth_headers):
