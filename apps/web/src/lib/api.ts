@@ -93,11 +93,27 @@ export type Printer = {
   status_checked_at: string | null;
   release_required: boolean;
   release_token: string | null;
+  snmp_enabled: boolean;
+  snmp_port: number | null;
+  snmp_version: SnmpVersion | null;
+  has_snmp_community: boolean;
+  snmp_vendor_profile: VendorProfile | null;
+  page_count_total: number | null;
+  page_count_copy: number | null;
+  page_count_print: number | null;
+  page_count_confidence: PageCountConfidence | null;
+  page_count_vendor_profile_used: string | null;
+  page_count_checked_at: string | null;
+  page_count_error: string | null;
   created_at: string;
   updated_at: string;
 };
 
 export type PrinterStatus = "online" | "error" | "offline" | "unknown";
+
+export type SnmpVersion = "v1" | "v2c";
+export type VendorProfile = "canon" | "konica_minolta" | "hp" | "lexmark" | "kyocera" | "generic";
+export type PageCountConfidence = "verified" | "best_effort" | "unsupported";
 
 export type PrinterCreateInput = {
   name: string;
@@ -118,6 +134,13 @@ export type PrinterCreateInput = {
 
 export type PrinterUpdateInput = Partial<PrinterCreateInput> & {
   release_required?: boolean;
+  snmp_enabled?: boolean;
+  snmp_port?: number | null;
+  // "" clears the override back to the global default (see
+  // app/routers/printers.py:update_printer) — not just null/omitted.
+  snmp_version?: SnmpVersion | "" | null;
+  snmp_community?: string | null;
+  snmp_vendor_profile?: VendorProfile | "" | null;
 };
 
 export async function listPrinters(): Promise<Printer[]> {
@@ -174,6 +197,13 @@ export async function testPrintPrinter(id: string): Promise<{ message: string }>
 
 export async function checkPrinterStatus(id: string): Promise<Printer> {
   const response = await authorizedFetch(`/api/v1/printers/${id}/check-status`, { method: "POST" });
+  return response.json();
+}
+
+export async function checkPrinterCounters(id: string): Promise<Printer> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/check-counters`, {
+    method: "POST",
+  });
   return response.json();
 }
 
@@ -857,6 +887,33 @@ export async function updatePrintReleaseSettings(
   input: PrintReleaseSettingsInput,
 ): Promise<PrintReleaseSettings> {
   const response = await authorizedFetch("/api/v1/settings/print-release", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export type SnmpDefaults = {
+  version: SnmpVersion;
+  port: number;
+  has_community: boolean;
+  enabled: boolean;
+};
+
+export type SnmpDefaultsInput = {
+  version?: SnmpVersion;
+  port?: number;
+  community?: string;
+  enabled?: boolean;
+};
+
+export async function getSnmpDefaults(): Promise<SnmpDefaults> {
+  const response = await authorizedFetch("/api/v1/settings/snmp");
+  return response.json();
+}
+
+export async function updateSnmpDefaults(input: SnmpDefaultsInput): Promise<SnmpDefaults> {
+  const response = await authorizedFetch("/api/v1/settings/snmp", {
     method: "PUT",
     body: JSON.stringify(input),
   });

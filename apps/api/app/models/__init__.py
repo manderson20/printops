@@ -8,6 +8,7 @@ from app.models.mosyle import MosyleDevice, MosyleSettings
 from app.models.printer import Printer
 from app.models.release import PrintReleaseSettings
 from app.models.report import PrinterTonerCartridge, ReportFormulaSettings, ReportSnapshot
+from app.models.snmp import SnmpDefaultsSettings
 from app.models.update_schedule import UpdateSchedule
 from app.models.user import User
 
@@ -27,6 +28,7 @@ __all__ = [
     "PrintReleaseSettings",
     "ReportFormulaSettings",
     "ReportSnapshot",
+    "SnmpDefaultsSettings",
     "UpdateSchedule",
     "User",
 ]

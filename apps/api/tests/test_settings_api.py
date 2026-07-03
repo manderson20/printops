@@ -393,3 +393,40 @@ def test_staff_org_unit_path_can_be_cleared(client, auth_headers):
         json={"staff_org_unit_path": ""},
     )
     assert cleared.json()["staff_org_unit_path"] is None
+
+
+def test_get_snmp_defaults_creates_default_row(client, auth_headers):
+    response = client.get("/api/v1/settings/snmp", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    # Seeded with "public" (this district's confirmed-working default) but
+    # left disabled until an admin explicitly opts in.
+    assert body["has_community"] is True
+    assert body["enabled"] is False
+    assert body["version"] == "v2c"
+    assert body["port"] == 161
+
+
+def test_update_snmp_defaults_hides_community(client, auth_headers):
+    response = client.put(
+        "/api/v1/settings/snmp",
+        headers=auth_headers,
+        json={
+            "community": "super-secret-community",
+            "enabled": True,
+            "version": "v1",
+            "port": 1610,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["has_community"] is True
+    assert body["enabled"] is True
+    assert body["version"] == "v1"
+    assert body["port"] == 1610
+    assert "super-secret-community" not in response.text
+
+
+def test_update_snmp_defaults_requires_admin(client):
+    response = client.put("/api/v1/settings/snmp", json={"enabled": True})
+    assert response.status_code == 401

@@ -93,6 +93,7 @@ export default function PrintersPage() {
               <tr>
                 <th className="px-4 py-3 font-medium">Name</th>
                 <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Pages</th>
                 <th className="px-4 py-3 font-medium">Model</th>
                 <th className="px-4 py-3 font-medium">IP Address</th>
                 <th className="px-4 py-3 font-medium">Location</th>
@@ -138,6 +139,9 @@ export default function PrintersPage() {
                         </div>
                       );
                     })()}
+                  </td>
+                  <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
+                    {printer.page_count_total ?? "—"}
                   </td>
                   <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                     {printer.manufacturer ?? ""} {printer.model ?? "—"}

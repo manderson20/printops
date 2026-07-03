@@ -22,6 +22,14 @@ backend (`backends/printops` in this directory, installed to
 
 See `scripts/sync_cups_queue.sh` for creating a queue for a given printer.
 
+## SNMP page/copy counter polling
+
+`app/printers/snmp_counters.py` polls each printer's page/copy/print counters
+over SNMP (see its module docstring for the per-vendor OID details) — this
+requires the net-snmp CLI tools (`snmpget`/`snmpwalk`), installed the same
+way as CUPS itself: `apt install snmp`. Not installed by default; only
+`libsnmp-base` (the MIB/library package) tends to be present otherwise.
+
 ## Status
 
 Phase 1 only: one manually-created queue for a single real printer, proving the

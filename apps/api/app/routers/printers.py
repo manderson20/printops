@@ -8,6 +8,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+from app.core.crypto import encrypt
 from app.db import get_db
 from app.deps import get_current_user, require_role
 from app.models.job import Job
@@ -17,6 +18,7 @@ from app.printers.capabilities import parse_capabilities, sanitize_raw_attribute
 from app.printers.ipp_client import PrinterProbeError, probe_printer
 from app.printers.job_control import JobControlError, purge_cups_queue
 from app.printers.queue_sync import QueueSyncError, remove_queue, sync_queue
+from app.printers.snmp_counters import get_or_create_snmp_defaults, refresh_printer_counters
 from app.printers.status import refresh_printer_status
 from app.printers.test_print import TestPrintError, submit_test_print
 from app.schemas.auth import UserOut
@@ -103,6 +105,13 @@ async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_
         room=payload.room,
         department=payload.department,
         notes=payload.notes,
+        snmp_enabled=payload.snmp_enabled,
+        snmp_port=payload.snmp_port,
+        snmp_version=payload.snmp_version,
+        snmp_vendor_profile=payload.snmp_vendor_profile,
+        snmp_community_encrypted=(
+            encrypt(payload.snmp_community) if payload.snmp_community else None
+        ),
     )
     await _apply_discovery(printer)
     db.add(printer)
@@ -131,8 +140,22 @@ async def update_printer(
     updates = payload.model_dump(exclude_unset=True)
     if "ip_address" in updates and updates["ip_address"] is not None:
         updates["ip_address"] = str(updates["ip_address"])
+    # A blank string clears one of these overrides back to "use the global
+    # SnmpDefaultsSettings" — same idiom already established for
+    # GoogleWorkspaceSettings.staff_org_unit_path in app/routers/settings.py.
+    for field in ("snmp_version", "snmp_port", "snmp_vendor_profile"):
+        if field in updates:
+            updates[field] = updates[field] or None
+    # Community is encrypted, so it can't go through the generic setattr
+    # loop below like the other overrides — only overwrite when a non-empty
+    # value is supplied (mirrors update_mosyle_settings' secret handling);
+    # a blank string clears it back to "use the global default" too.
+    _not_provided = object()
+    snmp_community = updates.pop("snmp_community", _not_provided)
     for field, value in updates.items():
         setattr(printer, field, value)
+    if snmp_community is not _not_provided:
+        printer.snmp_community_encrypted = encrypt(snmp_community) if snmp_community else None
     # First time release is turned on for this printer, it needs a token to
     # exist at all — generated here rather than requiring a separate manual
     # step before the toggle does anything useful. Regenerating an existing
@@ -201,6 +224,20 @@ async def check_status(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     telemetry, so open to any logged-in user (not admin-gated) like GET."""
     printer = await _get_printer_or_404(printer_id, db)
     await refresh_printer_status(printer)
+    await db.commit()
+    await db.refresh(printer)
+    return printer
+
+
+@router.post("/{printer_id}/check-counters", response_model=PrinterOut)
+async def check_counters(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Manually refreshes a printer's SNMP page/copy/print counters on
+    demand — same underlying probe as the 30-min background loop
+    (app/main.py), just triggered immediately. Read-only telemetry, so
+    open to any logged-in user (not admin-gated), matching check-status."""
+    printer = await _get_printer_or_404(printer_id, db)
+    defaults = await get_or_create_snmp_defaults(db)
+    await refresh_printer_counters(printer, defaults)
     await db.commit()
     await db.refresh(printer)
     return printer

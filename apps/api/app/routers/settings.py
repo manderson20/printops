@@ -24,6 +24,8 @@ from app.models.google_workspace import GoogleWorkspaceSettings, GoogleWorkspace
 from app.models.mosyle import MosyleSettings
 from app.models.release import PrintReleaseSettings
 from app.models.report import ReportFormulaSettings
+from app.models.snmp import SnmpDefaultsSettings
+from app.printers.snmp_counters import get_or_create_snmp_defaults
 from app.schemas.classguard import ClassGuardSettingsOut, ClassGuardSettingsUpdate, ClassGuardTestRequest, ClassGuardTestResult
 from app.schemas.google_sso import GoogleSsoSettingsOut, GoogleSsoSettingsUpdate
 from app.schemas.google_workspace import (
@@ -35,6 +37,7 @@ from app.schemas.google_workspace import (
 from app.schemas.mosyle import MosyleSettingsOut, MosyleSettingsUpdate, MosyleTestResult
 from app.schemas.release import PrintReleaseSettingsOut, PrintReleaseSettingsUpdate
 from app.schemas.report import ReportFormulaSettingsOut, ReportFormulaSettingsUpdate
+from app.schemas.snmp import SnmpDefaultsOut, SnmpDefaultsUpdate
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -216,6 +219,38 @@ async def test_classguard_connection(
     if mac:
         return ClassGuardTestResult(ok=True, mac_address=mac)
     return ClassGuardTestResult(ok=True, error=f"Connected, but no active lease found for {payload.test_ip}.")
+
+
+def _snmp_defaults_to_out(settings: SnmpDefaultsSettings) -> SnmpDefaultsOut:
+    return SnmpDefaultsOut(
+        version=settings.version,
+        port=settings.port,
+        has_community=bool(settings.community_encrypted),
+        enabled=settings.enabled,
+    )
+
+
+@router.get("/snmp", response_model=SnmpDefaultsOut)
+async def get_snmp_defaults(db: AsyncSession = Depends(get_db)):
+    return _snmp_defaults_to_out(await get_or_create_snmp_defaults(db))
+
+
+@router.put("/snmp", response_model=SnmpDefaultsOut, dependencies=[Depends(require_role("admin"))])
+async def update_snmp_defaults(payload: SnmpDefaultsUpdate, db: AsyncSession = Depends(get_db)):
+    settings = await get_or_create_snmp_defaults(db)
+    updates = payload.model_dump(exclude_unset=True)
+    if updates.get("version") is not None:
+        settings.version = updates["version"]
+    if updates.get("port") is not None:
+        settings.port = updates["port"]
+    if updates.get("enabled") is not None:
+        settings.enabled = updates["enabled"]
+    if updates.get("community"):
+        settings.community_encrypted = encrypt(updates["community"])
+
+    await db.commit()
+    await db.refresh(settings)
+    return _snmp_defaults_to_out(settings)
 
 
 async def _get_or_create_google_workspace_settings(db: AsyncSession) -> GoogleWorkspaceSettings:
