@@ -29,7 +29,15 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 # advertisement) — an update touching only these should trigger a re-sync.
 # Anything else (notes, department, building...) shouldn't cause CUPS/Avahi
 # churn.
-QUEUE_AFFECTING_FIELDS = {"name", "ip_address", "port", "use_tls", "ipp_path", "airprint_enabled"}
+QUEUE_AFFECTING_FIELDS = {
+    "name",
+    "ip_address",
+    "port",
+    "use_tls",
+    "ipp_path",
+    "airprint_enabled",
+    "release_required",
+}
 
 
 async def _get_printer_or_404(printer_id: UUID, db: AsyncSession) -> Printer:
