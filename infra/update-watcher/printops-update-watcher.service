@@ -6,8 +6,10 @@ After=network.target printops-api.service
 Type=oneshot
 User=itadmin
 Group=itadmin
-# systemd's default PATH doesn't include ~/.local/bin, where `uv` (used by
-# apply-update.sh to sync API dependencies) is installed — without this,
-# every scheduled update fails partway through with "uv: command not found".
-Environment="PATH=/home/itadmin/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# systemd's default PATH has neither ~/.local/bin (uv, used to sync API
+# dependencies) nor the nvm-managed node/pnpm install (used to build the
+# web app) — same nvm bin dir printops-web.service already points at.
+# Without both, apply-update.sh fails partway through with "command not
+# found" for whichever one it reaches first.
+Environment="PATH=/home/itadmin/.local/bin:/home/itadmin/.nvm/versions/node/v20.20.2/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart=/bin/bash /home/itadmin/printops/infra/update-watcher/update-watcher.sh
