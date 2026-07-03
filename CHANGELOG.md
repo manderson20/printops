@@ -5,6 +5,23 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.3.0] - 2026-07-03
+
+- **Print-and-release kiosk.** Printers can now be marked "release
+  required" — jobs sent to them are held (spooled, not printed) until
+  released at a per-printer kiosk URL (`/release/<token>`, works from any
+  iPad, Chromebook, or browser) by entering a Google Workspace Employee
+  ID, the same number staff already use at the copier panel. Prevents
+  accidental prints and mixed-up output at shared printers/copiers. Held
+  jobs auto-expire after an admin-configurable window (default 4 hours).
+  Printer detail page gained a Print Release admin card (toggle, kiosk
+  link with copy/regenerate).
+- **Copier PIN roster.** Google Workspace sync now pulls each staff
+  member's Employee ID, exportable as a copier PIN roster CSV, powering
+  the print-release kiosk PIN above. The staff org-unit filter used to
+  build the roster is admin-configurable rather than hardcoded, so it
+  adapts to any district's OU structure.
+
 ## [0.2.0] - 2026-07-03
 
 - **Printer status monitoring.** A background check now polls every
