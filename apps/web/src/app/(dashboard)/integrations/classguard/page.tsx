@@ -121,11 +121,63 @@ export default function ClassGuardSettingsPage() {
       <div>
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">ClassGuard Integration</h1>
         <p className="mt-1 text-sm text-zinc-500">
-          This org&apos;s own DHCP/DNS/web-filter platform. PrintOps uses its DHCP lease table to
-          resolve a print job&apos;s source IP to a MAC address, which is then matched against
-          Mosyle&apos;s cached devices for real user attribution (see the Jobs page).
+          A self-hosted DHCP/DNS/web-filter platform some deployments run. PrintOps uses its DHCP
+          lease table to resolve a print job&apos;s source IP to a MAC address, which is then
+          matched against Mosyle&apos;s cached devices for real user attribution (see the Jobs
+          page). Skip this integration entirely if you don&apos;t run ClassGuard.
         </p>
       </div>
+
+      <Card>
+        <details className="group" open={!settings.has_access_token}>
+          <summary className="cursor-pointer list-none">
+            <div className="flex items-center justify-between">
+              <CardTitle className="mb-0">Setup Guide — Start Here</CardTitle>
+              <span className="text-xs text-zinc-500 group-open:hidden">Show</span>
+              <span className="hidden text-xs text-zinc-500 group-open:inline">Hide</span>
+            </div>
+          </summary>
+          <div className="mt-4 flex flex-col gap-5 text-sm text-zinc-600 dark:text-zinc-400">
+            <p>
+              ClassGuard is a self-hosted tool, not a hosted product PrintOps can link you to — the
+              exact menu names in its admin panel depend on which version you run. Here&apos;s
+              exactly what PrintOps needs from it, so you know what to look for.
+            </p>
+            <div>
+              <p className="font-medium text-zinc-700 dark:text-zinc-300">Step 1 — Find your ClassGuard address</p>
+              <p className="mt-1">
+                This is the web address you use to reach your ClassGuard admin panel — e.g.{" "}
+                <code className="text-[11px]">https://classguard.example.org</code>. Enter it in
+                the <strong className="font-medium">Base URL</strong> field below, with no trailing
+                slash.
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-zinc-700 dark:text-zinc-300">Step 2 — Generate an API access token</p>
+              <p className="mt-1">
+                In your ClassGuard admin panel, look for a section related to{" "}
+                <strong className="font-medium">API access</strong>,{" "}
+                <strong className="font-medium">integrations</strong>, or{" "}
+                <strong className="font-medium">tokens</strong>. PrintOps sends whatever you
+                generate there as a header called{" "}
+                <code className="text-[11px]">X-ClassGuard-Token</code> on every request — if your
+                ClassGuard instance doesn&apos;t have a concept of API tokens, this integration
+                isn&apos;t usable against it and can safely stay disabled.
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-zinc-700 dark:text-zinc-300">Step 3 — Test with a real IP</p>
+              <p className="mt-1">
+                ClassGuard has no separate &quot;are you there&quot; health check — the only way to
+                test is to look up an IP address that&apos;s actually in use on your network right
+                now (e.g. the computer you&apos;re using), so its DHCP lease table has something to
+                find. A &quot;connected, but no lease found&quot; result still confirms the
+                connection itself works.
+              </p>
+            </div>
+          </div>
+        </details>
+      </Card>
 
       <Card>
         <CardTitle className="mb-4">Connection</CardTitle>

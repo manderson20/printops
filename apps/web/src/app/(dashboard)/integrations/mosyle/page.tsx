@@ -148,6 +148,69 @@ export default function MosyleSettingsPage() {
       </div>
 
       <Card>
+        <details className="group" open={!settings.has_access_token}>
+          <summary className="cursor-pointer list-none">
+            <div className="flex items-center justify-between">
+              <CardTitle className="mb-0">Setup Guide — Start Here</CardTitle>
+              <span className="text-xs text-zinc-500 group-open:hidden">Show</span>
+              <span className="hidden text-xs text-zinc-500 group-open:inline">Hide</span>
+            </div>
+          </summary>
+          <div className="mt-4 flex flex-col gap-5 text-sm text-zinc-600 dark:text-zinc-400">
+            <p>
+              PrintOps needs two things from Mosyle: an API token for your whole school, and one
+              staff member&apos;s own Mosyle login. Both are required by Mosyle itself — an API
+              token alone isn&apos;t enough to call their API.
+            </p>
+            <div>
+              <p className="font-medium text-zinc-700 dark:text-zinc-300">Step 1 — Get an API token</p>
+              <p className="mt-1">
+                Log into Mosyle Manager (your school&apos;s Mosyle admin site) as a School Owner or
+                admin. Look for a section named something like{" "}
+                <strong className="font-medium">Integrations</strong> or{" "}
+                <strong className="font-medium">API</strong> — usually under a settings/gear icon,
+                sometimes under &quot;My School&quot;. The exact wording has changed between Mosyle
+                versions, so if you don&apos;t see it immediately, try their in-app search or
+                support chat for &quot;API access token&quot;.
+              </p>
+              <p className="mt-2">
+                Activate/generate an access token there and copy it — paste it into the{" "}
+                <strong className="font-medium">Access Token</strong> field below.
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-zinc-700 dark:text-zinc-300">Step 2 — Add an admin login</p>
+              <p className="mt-1">
+                Mosyle also requires a real admin&apos;s own email and password on every API call —
+                this is Mosyle&apos;s own requirement, not something PrintOps chose. Consider
+                creating a dedicated admin account in Mosyle for this (rather than a specific
+                person&apos;s personal login), so the integration keeps working if that staff
+                member ever leaves.
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-zinc-700 dark:text-zinc-300">Step 3 — Test, then save</p>
+              <p className="mt-1">
+                Fill in all four fields below and click{" "}
+                <strong className="font-medium">Test Connection</strong> — it checks what&apos;s
+                currently typed (even before saving), so a mistake shows up here first instead of
+                silently failing later.
+              </p>
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+              <p className="font-medium">Test Connection fails?</p>
+              <p className="mt-1">
+                Double-check the access token was copied in full (they&apos;re long, easy to
+                truncate when copying), and that the admin email/password are for an account that
+                can currently log into Mosyle Manager directly at mosyle.com — if that login
+                doesn&apos;t work there, it won&apos;t work here either.
+              </p>
+            </div>
+          </div>
+        </details>
+      </Card>
+
+      <Card>
         <div className="mb-1 flex items-center gap-2">
           <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground">
             1
@@ -155,8 +218,7 @@ export default function MosyleSettingsPage() {
           <CardTitle className="mb-0">API Access Token</CardTitle>
         </div>
         <p className="mb-4 ml-7 text-xs text-zinc-500">
-          In Mosyle: <strong className="font-medium">My School → Integrations → API</strong> (wording
-          may vary slightly) → activate/add a new integration token, then paste it below.
+          From the setup guide above: paste the access token you generated in Mosyle.
         </p>
         <div className="ml-7 flex flex-col gap-4">
           <Field label="Base URL">
