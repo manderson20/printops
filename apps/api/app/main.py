@@ -8,13 +8,24 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.db import AsyncSessionLocal
+from app.integrations.git_update import get_current_version
 from app.integrations.google_workspace import GoogleWorkspaceError
 from app.integrations.google_workspace import run_sync as run_google_workspace_sync
 from app.integrations.mosyle import MosyleError
 from app.integrations.mosyle import run_sync as run_mosyle_sync
 from app.models.google_workspace import GoogleWorkspaceSettings
 from app.models.mosyle import MosyleSettings
-from app.routers import auth, device_overrides, health, internal, jobs, printers, settings as settings_router, users
+from app.routers import (
+    auth,
+    device_overrides,
+    health,
+    internal,
+    jobs,
+    printers,
+    settings as settings_router,
+    updates,
+    users,
+)
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -68,7 +79,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     description="PrintOps backend API — enterprise print management platform.",
-    version="0.1.0",
+    version=get_current_version(),
     lifespan=lifespan,
 )
 
@@ -89,3 +100,4 @@ app.include_router(internal.router, prefix="/api/v1/internal", tags=["internal"]
 app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["settings"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(device_overrides.router, prefix="/api/v1/devices", tags=["devices"])
+app.include_router(updates.router, prefix="/api/v1/updates", tags=["updates"])

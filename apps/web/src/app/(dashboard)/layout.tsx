@@ -3,7 +3,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { getVersion } from "@/lib/api";
 import { logout } from "@/lib/auth";
 import { useAuthGuard } from "@/lib/useAuthGuard";
 import { useCurrentUser } from "@/lib/useCurrentUser";
@@ -19,6 +20,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const [version, setVersion] = useState<string | null>(null);
   const navLinks =
     currentUser?.role === "admin"
       ? [
@@ -26,8 +28,16 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           { href: "/usage", label: "Usage" },
           { href: "/devices", label: "Devices" },
           { href: "/users", label: "Users" },
+          { href: "/updates", label: "Updates" },
         ]
       : NAV_LINKS;
+
+  useEffect(() => {
+    if (!currentUser) return;
+    getVersion()
+      .then(setVersion)
+      .catch(() => setVersion(null));
+  }, [currentUser]);
 
   function handleLogout() {
     logout();
@@ -67,6 +77,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         >
           Log out
         </button>
+        {version && (
+          <p className="mt-3 text-center text-xs text-zinc-400 dark:text-zinc-600">v{version}</p>
+        )}
       </aside>
 
       <main className="flex flex-1 flex-col overflow-y-auto p-8">{children}</main>

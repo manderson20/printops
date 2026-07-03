@@ -1,0 +1,9 @@
+[Unit]
+Description=PrintOps scheduled update watcher
+After=network.target printops-api.service
+
+[Service]
+Type=oneshot
+User=itadmin
+Group=itadmin
+ExecStart=/bin/bash /home/itadmin/printops/infra/update-watcher/update-watcher.sh
