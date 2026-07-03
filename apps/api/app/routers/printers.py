@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.db import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, require_role
 from app.models.printer import Printer
 from app.printers.capabilities import parse_capabilities, sanitize_raw_attributes
 from app.printers.ipp_client import PrinterProbeError, probe_printer
@@ -70,7 +70,9 @@ async def _apply_queue_sync(printer: Printer, db: AsyncSession) -> None:
     await db.refresh(printer)
 
 
-@router.post("", response_model=PrinterOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=PrinterOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_role("admin"))]
+)
 async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_db)):
     printer = Printer(
         name=payload.name,
@@ -107,7 +109,7 @@ async def get_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     return await _get_printer_or_404(printer_id, db)
 
 
-@router.patch("/{printer_id}", response_model=PrinterOut)
+@router.patch("/{printer_id}", response_model=PrinterOut, dependencies=[Depends(require_role("admin"))])
 async def update_printer(
     printer_id: UUID, payload: PrinterUpdate, db: AsyncSession = Depends(get_db)
 ):
@@ -124,7 +126,9 @@ async def update_printer(
     return printer
 
 
-@router.delete("/{printer_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{printer_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_role("admin"))]
+)
 async def delete_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     printer = await _get_printer_or_404(printer_id, db)
     try:
@@ -135,7 +139,7 @@ async def delete_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
 
-@router.post("/{printer_id}/discover", response_model=PrinterOut)
+@router.post("/{printer_id}/discover", response_model=PrinterOut, dependencies=[Depends(require_role("admin"))])
 async def discover_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     printer = await _get_printer_or_404(printer_id, db)
     await _apply_discovery(printer)
@@ -144,7 +148,7 @@ async def discover_printer(printer_id: UUID, db: AsyncSession = Depends(get_db))
     return printer
 
 
-@router.post("/{printer_id}/resync-queue", response_model=PrinterOut)
+@router.post("/{printer_id}/resync-queue", response_model=PrinterOut, dependencies=[Depends(require_role("admin"))])
 async def resync_queue(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     """Manually retries the CUPS queue sync — e.g. after fixing whatever
     caused queue_sync_error, without needing another printer edit."""
@@ -175,7 +179,7 @@ async def get_mdm_connection(
     )
 
 
-@router.post("/{printer_id}/test-print")
+@router.post("/{printer_id}/test-print", dependencies=[Depends(require_role("admin"))])
 async def test_print(
     printer_id: UUID,
     db: AsyncSession = Depends(get_db),

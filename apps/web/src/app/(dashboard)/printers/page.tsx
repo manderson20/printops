@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ApiError, listPrinters, testPrintPrinter, type Printer } from "@/lib/api";
 import { capabilityBadges } from "@/lib/capabilities";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -18,6 +19,7 @@ type LoadState =
 type TestPrintState = { phase: "sending" } | { phase: "ok" } | { phase: "error"; message: string };
 
 export default function PrintersPage() {
+  const isAdmin = useCurrentUser()?.role === "admin";
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [testPrints, setTestPrints] = useState<Record<string, TestPrintState>>({});
 
@@ -52,9 +54,11 @@ export default function PrintersPage() {
     <div className="flex w-full max-w-5xl flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Printers</h1>
-        <Link href="/printers/new">
-          <Button>Add Printer</Button>
-        </Link>
+        {isAdmin && (
+          <Link href="/printers/new">
+            <Button>Add Printer</Button>
+          </Link>
+        )}
       </div>
 
       {state.phase === "loading" && <Spinner label="Loading printers…" />}
@@ -139,14 +143,16 @@ export default function PrintersPage() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-col items-start gap-1">
-                      <Button
-                        variant="secondary"
-                        className="!px-3 !py-1 text-xs"
-                        disabled={testPrint?.phase === "sending"}
-                        onClick={() => handleTestPrint(printer.id)}
-                      >
-                        {testPrint?.phase === "sending" ? "Sending…" : "Test Print"}
-                      </Button>
+                      {isAdmin && (
+                        <Button
+                          variant="secondary"
+                          className="!px-3 !py-1 text-xs"
+                          disabled={testPrint?.phase === "sending"}
+                          onClick={() => handleTestPrint(printer.id)}
+                        >
+                          {testPrint?.phase === "sending" ? "Sending…" : "Test Print"}
+                        </Button>
+                      )}
                       {testPrint?.phase === "ok" && (
                         <span className="text-xs text-emerald-700 dark:text-emerald-400">
                           Sent — check Jobs

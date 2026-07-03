@@ -4,9 +4,11 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   getClassGuardSettings,
+  getGoogleSsoSettings,
   getGoogleWorkspaceSettings,
   getMosyleSettings,
   type ClassGuardSettings,
+  type GoogleSsoSettings,
   type GoogleWorkspaceSettings,
   type MosyleSettings,
 } from "@/lib/api";
@@ -50,6 +52,7 @@ export default function IntegrationsPage() {
   const [mosyle, setMosyle] = useState<MosyleSettings | null>(null);
   const [classguard, setClassGuard] = useState<ClassGuardSettings | null>(null);
   const [googleWorkspace, setGoogleWorkspace] = useState<GoogleWorkspaceSettings | null>(null);
+  const [googleSso, setGoogleSso] = useState<GoogleSsoSettings | null>(null);
 
   useEffect(() => {
     getMosyleSettings()
@@ -61,6 +64,9 @@ export default function IntegrationsPage() {
     getGoogleWorkspaceSettings()
       .then(setGoogleWorkspace)
       .catch(() => setGoogleWorkspace(null));
+    getGoogleSsoSettings()
+      .then(setGoogleSso)
+      .catch(() => setGoogleSso(null));
   }, []);
 
   return (
@@ -73,6 +79,12 @@ export default function IntegrationsPage() {
         </p>
       </div>
 
+      <IntegrationCard
+        href="/integrations/google-sso"
+        name="Google Sign-In"
+        description="Lets staff log into PrintOps with their Google Workspace account, with role-based access."
+        enabled={googleSso?.enabled ?? null}
+      />
       <IntegrationCard
         href="/integrations/mosyle"
         name="Mosyle"

@@ -14,7 +14,7 @@ from app.integrations.mosyle import MosyleError
 from app.integrations.mosyle import run_sync as run_mosyle_sync
 from app.models.google_workspace import GoogleWorkspaceSettings
 from app.models.mosyle import MosyleSettings
-from app.routers import auth, health, internal, jobs, printers, settings as settings_router
+from app.routers import auth, health, internal, jobs, printers, settings as settings_router, users
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -87,3 +87,4 @@ app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["jobs"])
 app.include_router(jobs.user_router, prefix="/api/v1/jobs", tags=["jobs"])
 app.include_router(internal.router, prefix="/api/v1/internal", tags=["internal"])
 app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["settings"])
+app.include_router(users.router, prefix="/api/v1/users", tags=["users"])

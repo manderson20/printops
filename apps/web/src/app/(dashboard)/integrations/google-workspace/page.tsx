@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ApiError,
   getGoogleWorkspaceSettings,
@@ -9,6 +10,7 @@ import {
   updateGoogleWorkspaceSettings,
   type GoogleWorkspaceSettings,
 } from "@/lib/api";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
@@ -22,6 +24,8 @@ type LoadState =
   | { phase: "error"; message: string };
 
 export default function GoogleWorkspaceSettingsPage() {
+  const router = useRouter();
+  const currentUser = useCurrentUser();
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [form, setForm] = useState({
     service_account_json: "",
@@ -53,6 +57,12 @@ export default function GoogleWorkspaceSettingsPage() {
         }),
       );
   }, []);
+
+  useEffect(() => {
+    if (currentUser && currentUser.role !== "admin") {
+      router.replace("/integrations");
+    }
+  }, [currentUser, router]);
 
   function update(field: "service_account_json" | "admin_email" | "customer_id", value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -112,7 +122,7 @@ export default function GoogleWorkspaceSettingsPage() {
     }
   }
 
-  if (state.phase === "loading") {
+  if (state.phase === "loading" || currentUser === undefined || currentUser?.role !== "admin") {
     return <Spinner label="Loading settings…" />;
   }
   if (state.phase === "error") {

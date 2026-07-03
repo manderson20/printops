@@ -16,24 +16,51 @@ def get_current_user(
     token: str = Depends(oauth2_scheme),
     settings: Settings = Depends(get_settings),
 ) -> UserOut:
-    """Decodes the bearer token issued by the auth stub.
-
-    TODO: replace with a real user store once local-account persistence exists.
-    """
+    """Builds the current user entirely from JWT claims — both the dev
+    break-glass login (app/routers/auth.py's /auth/login) and Google SSO
+    (/auth/google/callback) embed role (and, for SSO, email/name) directly
+    in the token at issuance time, so this never hits the DB. That means a
+    role changed via the Users admin page only takes effect the next time
+    the affected user logs in / their token expires, not immediately."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        username = decode_access_token(token, settings)
+        payload = decode_access_token(token, settings)
     except PyJWTError as exc:
         raise credentials_exception from exc
 
-    if username != settings.dev_username:
+    subject = payload.get("sub")
+    role = payload.get("role")
+    if not subject or role not in ("admin", "viewer"):
         raise credentials_exception
 
-    return UserOut(username=username)
+    if subject == settings.dev_username:
+        return UserOut(username=subject, role=role)
+
+    email = payload.get("email")
+    if not email:
+        raise credentials_exception
+    return UserOut(username=email, role=role, email=email, name=payload.get("name"))
+
+
+def require_role(*roles: str):
+    """FastAPI dependency factory — 403s unless the current user's role is
+    one of `roles`. The single, central place role checks happen, per
+    ARCHITECTURE.md §5 ("checked centrally via an API dependency, not ad
+    hoc per router"). Usage: Depends(require_role("admin"))."""
+
+    def _check(current_user: UserOut = Depends(get_current_user)) -> UserOut:
+        if current_user.role not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to perform this action.",
+            )
+        return current_user
+
+    return _check
 
 
 def verify_backend_token(
