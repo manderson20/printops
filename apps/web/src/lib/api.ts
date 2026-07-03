@@ -450,6 +450,55 @@ export async function listGoogleWorkspaceUsers(): Promise<GoogleWorkspaceUserEnt
   return response.json();
 }
 
+export async function getVersion(): Promise<string> {
+  const response = await authorizedFetch("/api/v1/updates/version");
+  const body: { version: string } = await response.json();
+  return body.version;
+}
+
+export type UpdateCheck = {
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+  changelog: string | null;
+};
+
+export async function checkForUpdate(): Promise<UpdateCheck> {
+  const response = await authorizedFetch("/api/v1/updates/check");
+  return response.json();
+}
+
+export type UpdateScheduleEntry = {
+  id: string;
+  target_version: string;
+  scheduled_at: string;
+  status: "pending" | "in_progress" | "completed" | "failed";
+  log: string | null;
+  requested_by: string | null;
+  completed_at: string | null;
+  created_at: string;
+};
+
+export async function listUpdateSchedule(): Promise<UpdateScheduleEntry[]> {
+  const response = await authorizedFetch("/api/v1/updates/schedule");
+  return response.json();
+}
+
+export async function scheduleUpdate(input: {
+  scheduled_at: string;
+  target_version: string;
+}): Promise<UpdateScheduleEntry> {
+  const response = await authorizedFetch("/api/v1/updates/schedule", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function cancelScheduledUpdate(id: string): Promise<void> {
+  await authorizedFetch(`/api/v1/updates/schedule/${id}`, { method: "DELETE" });
+}
+
 export type GoogleSsoSettings = {
   client_id: string | null;
   has_client_secret: boolean;

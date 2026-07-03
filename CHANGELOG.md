@@ -1,10 +1,11 @@
 # Changelog
 
-Notable changes to PrintOps, dated by when they shipped to production. Not
-every commit gets an entry — this tracks user- and admin-facing changes,
-not internal refactors.
+All notable changes to PrintOps are documented here. Each entry is keyed by
+the version in the root `VERSION` file — the in-app Updates page extracts a
+version's section from this file to show "what's new" before an admin
+schedules an update.
 
-## 2026-07-03
+## [0.1.0] - 2026-07-03
 
 - **Device attribution overrides.** Admins can now view every device seen
   via Mosyle or Google Workspace on a new `/devices` page and set/correct
@@ -26,3 +27,7 @@ not internal refactors.
   username against the roster (by email local part) before trusting
   Mosyle's raw value as a last resort. Ambiguous username matches are
   never guessed.
+- **Software version + update workflow.** The running version is now shown
+  in the UI, with an admin-only Updates page that checks GitHub for a newer
+  version and lets an admin schedule when to apply it (git pull, DB
+  migration, rebuild, service restart) instead of doing it by hand over SSH.
