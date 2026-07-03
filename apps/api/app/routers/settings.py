@@ -321,6 +321,19 @@ def _parse_admin_emails(raw: str | None) -> list[str]:
     return [email.strip() for email in raw.split(",") if email.strip()]
 
 
+def _normalize_redirect_base_url(value: str) -> str:
+    """Strips a trailing slash and, if someone pastes in the full
+    callback URL instead of just the origin, the /auth/google/callback
+    suffix too — app/routers/auth.py appends that itself when building
+    the redirect_uri, so a stored value that already includes it would
+    silently double it up."""
+    trimmed = value.strip().rstrip("/")
+    suffix = "/auth/google/callback"
+    if trimmed.endswith(suffix):
+        trimmed = trimmed[: -len(suffix)]
+    return trimmed
+
+
 def _google_sso_to_out(settings: GoogleSsoSettings) -> GoogleSsoSettingsOut:
     return GoogleSsoSettingsOut(
         client_id=settings.client_id,
@@ -346,7 +359,7 @@ async def update_google_sso_settings(payload: GoogleSsoSettingsUpdate, db: Async
     if updates.get("workspace_domain") is not None:
         settings.workspace_domain = updates["workspace_domain"]
     if updates.get("redirect_base_url") is not None:
-        settings.redirect_base_url = updates["redirect_base_url"]
+        settings.redirect_base_url = _normalize_redirect_base_url(updates["redirect_base_url"])
     if updates.get("initial_admin_emails") is not None:
         settings.initial_admin_emails = ",".join(updates["initial_admin_emails"])
     if updates.get("enabled") is not None:

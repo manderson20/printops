@@ -45,7 +45,7 @@ export default function GoogleSsoSettingsPage() {
           ...prev,
           client_id: settings.client_id ?? "",
           workspace_domain: settings.workspace_domain ?? "",
-          redirect_base_url: settings.redirect_base_url ?? "",
+          redirect_base_url: settings.redirect_base_url ?? window.location.origin,
           initial_admin_emails: settings.initial_admin_emails.join(", "),
         }));
         setEnabled(settings.enabled);
@@ -150,8 +150,10 @@ export default function GoogleSsoSettingsPage() {
               placeholder="https://print.brookfieldr3.org"
             />
             <span className="text-xs text-zinc-500">
-              Must exactly match what&apos;s registered in Google Cloud Console, including scheme —
-              PrintOps appends <code className="text-[11px]">/auth/google/callback</code> itself.
+              Prefilled from the address you&apos;re viewing this page at — only change it if
+              that&apos;s not the domain staff will actually sign in from. Must exactly match
+              what&apos;s registered in Google Cloud Console, including scheme — PrintOps appends{" "}
+              <code className="text-[11px]">/auth/google/callback</code> itself.
             </span>
           </Field>
         </div>
