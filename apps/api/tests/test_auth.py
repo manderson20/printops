@@ -110,7 +110,7 @@ def test_google_callback_creates_viewer_by_default(client, google_settings, monk
     )
     assert response.status_code in (302, 307)
     location = response.headers["location"]
-    assert location.startswith("/auth/callback#token=")
+    assert location.startswith("/login/callback#token=")
     assert "error" not in location
 
     token = location.split("token=", 1)[1]
