@@ -1,15 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { login, startGoogleLogin } from "@/lib/auth";
 import { Button } from "@/components/ui/Button";
 import { Field, Input } from "@/components/ui/Field";
 import { ErrorState } from "@/components/ui/EmptyState";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const expired = searchParams.get("expired") === "1";
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +39,8 @@ export default function LoginPage() {
           <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Sign in to PrintOps</h1>
           <p className="text-xs text-zinc-500">Print management. Simplified.</p>
         </div>
+
+        {expired && <ErrorState>Your session expired. Please sign in again.</ErrorState>}
 
         <Button type="button" variant="secondary" onClick={startGoogleLogin}>
           Sign in with Google
@@ -76,5 +80,13 @@ export default function LoginPage() {
         </details>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }

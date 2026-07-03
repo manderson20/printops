@@ -1,4 +1,4 @@
-import { getToken } from "@/lib/auth";
+import { getToken, logout } from "@/lib/auth";
 import { API_URL } from "@/lib/config";
 
 export { API_URL };
@@ -34,6 +34,15 @@ async function authorizedFetch(path: string, init: RequestInit = {}): Promise<Re
       ...init.headers,
     },
   });
+  if (response.status === 401 && getToken()) {
+    // Only a signed-in session can get here (verify_backend_token, the CUPS
+    // script's auth, never runs behind authorizedFetch) — so a 401 always
+    // means the JWT expired or was invalidated, not a bad request. Bounce to
+    // login immediately rather than surfacing "Could not validate
+    // credentials" on whatever form happened to trigger the call.
+    logout();
+    window.location.href = "/login?expired=1";
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new ApiError(response.status, body.detail ?? `Request failed: ${response.status}`);
