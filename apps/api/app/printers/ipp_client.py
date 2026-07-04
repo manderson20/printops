@@ -10,7 +10,7 @@ from typing import Any
 
 from pyipp import IPP
 from pyipp.enums import ATTRIBUTE_ENUM_MAP, IppOperation
-from pyipp.exceptions import IPPError
+from pyipp.exceptions import IPPError, IPPVersionNotSupportedError
 
 from app.printers.capabilities import REQUESTED_ATTRIBUTES, _as_list, _scalar
 
@@ -50,6 +50,16 @@ DEFAULT_CANDIDATE_PATHS = ["/ipp/print", "/", "/ipp/printer", "/ipp"]
 DEFAULT_PORT = 631
 DEFAULT_TIMEOUT_SECONDS = 5
 
+# pyipp defaults to requesting IPP/2.0. Several older or budget devices
+# (confirmed: HP LaserJet 4250, ~2004-era firmware, predates IPP/2.0
+# entirely) reject that outright with IPPVersionNotSupportedError rather
+# than negotiating down — retried per path, at 1.1, since a version
+# mismatch is a per-request thing pyipp can't detect up front without
+# asking. Not retried for other error types (connection refused, no
+# printer returned, etc.) — those aren't version problems and 1.1 won't
+# fix them, so we move on to the next candidate path instead.
+IPP_VERSIONS: list[tuple[int, int]] = [(2, 0), (1, 1)]
+
 
 class PrinterProbeError(Exception):
     """Raised when a printer could not be reached or queried over IPP."""
@@ -77,22 +87,33 @@ async def _get_printer_attributes(
     last_error: Exception | None = None
 
     for path in candidate_paths:
-        ipp = IPP(host=ip_address, port=port, base_path=path, tls=tls, request_timeout=timeout)
-        try:
-            response = await ipp.execute(
-                IppOperation.GET_PRINTER_ATTRIBUTES,
-                {"operation-attributes-tag": {"requested-attributes": requested_attributes}},
+        for version in IPP_VERSIONS:
+            ipp = IPP(
+                host=ip_address,
+                port=port,
+                base_path=path,
+                tls=tls,
+                request_timeout=timeout,
+                ipp_version=version,
             )
-            printers = response.get("printers") or []
-            if not printers:
-                last_error = PrinterProbeError(f"No printer attributes returned at {path}")
-                continue
-            return ProbeResult(raw_attributes=printers[0], resolved_path=path)
-        except IPPError as exc:
-            last_error = exc
-            continue
-        finally:
-            await ipp.close()
+            try:
+                response = await ipp.execute(
+                    IppOperation.GET_PRINTER_ATTRIBUTES,
+                    {"operation-attributes-tag": {"requested-attributes": requested_attributes}},
+                )
+                printers = response.get("printers") or []
+                if not printers:
+                    last_error = PrinterProbeError(f"No printer attributes returned at {path}")
+                    break  # not a version problem — try the next path instead
+                return ProbeResult(raw_attributes=printers[0], resolved_path=path)
+            except IPPVersionNotSupportedError as exc:
+                last_error = exc
+                continue  # try the next IPP version at this same path
+            except IPPError as exc:
+                last_error = exc
+                break  # not a version problem — try the next path instead
+            finally:
+                await ipp.close()
 
     raise PrinterProbeError(
         f"Could not reach an IPP printer at {ip_address}:{port} "
