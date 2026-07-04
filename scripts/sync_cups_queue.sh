@@ -60,6 +60,16 @@ fi
 sudo cupsenable "$QUEUE_NAME"
 sudo cupsaccept "$QUEUE_NAME"
 
+# cupsd.conf's global ErrorPolicy is retry-job, which keeps retrying the
+# SAME failed job rather than skipping to the next one — a single bad job
+# (corrupt file, printer momentarily rejecting it, etc.) then jams every
+# other job queued behind it on this printer until someone notices and
+# cancels it manually. abort-job cancels just the failing job and lets the
+# queue keep moving; app/printers/queue_sync.py's custom backend already
+# records the failure on the Job row (visible on the Jobs page) regardless
+# of this policy, so nothing is lost by not stopping to retry.
+sudo lpadmin -p "$QUEUE_NAME" -o printer-error-policy=abort-job
+
 # Step 2: repoint device-uri only, back to our backend, so jobs still route
 # through PrintOps for logging + forwarding. The PPD/capabilities CUPS just
 # derived from the real printer in step 1 are kept.

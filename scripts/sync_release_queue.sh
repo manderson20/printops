@@ -57,4 +57,10 @@ sudo lpadmin -p "$QUEUE_NAME" -o printer-is-shared=false -E
 sudo cupsenable "$QUEUE_NAME"
 sudo cupsaccept "$QUEUE_NAME"
 
+# Same as the client-facing queue — abort just the failing job instead of
+# cupsd's default retry-job, which would otherwise jam every other
+# released job behind it on this same internal delivery queue. See that
+# script's comment for the full reasoning.
+sudo lpadmin -p "$QUEUE_NAME" -o printer-error-policy=abort-job
+
 echo "Release queue '$QUEUE_NAME' -> ${REAL_URI} (${PRINTER_NAME})"
