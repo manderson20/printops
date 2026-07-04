@@ -172,6 +172,18 @@ def _parse_collation_supported(raw: dict[str, Any]) -> bool:
     return "separate-documents-collated-copies" in modes
 
 
+def _parse_firmware_version(raw: dict[str, Any]) -> str | None:
+    """Most devices report a single string, but printer-firmware-string-
+    version is spec'd as 1setOf text(127) — confirmed on a real Kyocera
+    ECOSYS P8060cdn, which reports one value per firmware component
+    (engine, network card, fax, ...) instead of one overall version.
+    Joined into a single readable string (not just the first value) so
+    CapabilitiesOut.firmware_version stays a plain string without losing
+    the extra component versions."""
+    values = [str(_scalar(v)) for v in _as_list(raw.get("printer-firmware-string-version"))]
+    return ", ".join(values) if values else None
+
+
 def _parse_pin_printing_supported(raw: dict[str, Any]) -> bool:
     value = raw.get("job-password-supported")
     return bool(value) and (not isinstance(value, int) or value > 0)
@@ -187,7 +199,7 @@ def parse_capabilities(raw: dict[str, Any]) -> dict[str, Any]:
     """Maps a raw IPP Get-Printer-Attributes dict to PrintOps's capability schema."""
     return {
         "make_model": raw.get("printer-make-and-model"),
-        "firmware_version": raw.get("printer-firmware-string-version"),
+        "firmware_version": _parse_firmware_version(raw),
         "duplex_supported": _parse_duplex_supported(raw),
         "color_supported": _parse_color_supported(raw),
         "copies_max": _parse_copies_max(raw),

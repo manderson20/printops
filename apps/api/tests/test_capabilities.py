@@ -94,6 +94,29 @@ def test_empty_raw_dict_does_not_crash():
     assert caps["copies_max"] is None
 
 
+def test_multi_value_firmware_version_is_joined_not_left_as_a_list():
+    """Confirmed live against a real Kyocera ECOSYS P8060cdn: it reports
+    printer-firmware-string-version as a 1setOf with one entry per
+    firmware component (engine, network card, fax...) instead of a
+    single string — this crashed PrinterOut's response validation
+    (firmware_version expects a plain string) for every printer, not
+    just this one, since the endpoint returns a list."""
+    raw = {"printer-firmware-string-version": ["2.0", "1.02", "1.7", "1.5", "MXTSN.240.246"]}
+    caps = parse_capabilities(raw)
+    assert caps["firmware_version"] == "2.0, 1.02, 1.7, 1.5, MXTSN.240.246"
+
+
+def test_single_value_firmware_version_unaffected():
+    raw = {"printer-firmware-string-version": "1.2.3"}
+    caps = parse_capabilities(raw)
+    assert caps["firmware_version"] == "1.2.3"
+
+
+def test_missing_firmware_version_is_none():
+    caps = parse_capabilities({})
+    assert caps["firmware_version"] is None
+
+
 def test_sanitize_raw_attributes_handles_enums_and_datetimes():
     import datetime
 
