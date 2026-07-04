@@ -191,6 +191,40 @@ async def _held_job_purge_loop() -> None:
         await asyncio.sleep(HELD_JOB_PURGE_INTERVAL_SECONDS)
 
 
+FAILED_JOB_PURGE_INTERVAL_SECONDS = 60 * 60
+FAILED_JOB_RETENTION = timedelta(hours=48)
+
+
+async def _failed_job_purge_loop() -> None:
+    """Deletes Job rows that have been in a terminal "failed" state for
+    more than 48h — keeps the Jobs page from accumulating already-handled
+    errors forever. This is a deliberate tradeoff, not an oversight: Print
+    Insights (app/reports/aggregation.py) reads its failed_jobs count
+    straight from Job rows, no separate aggregate table, so failure counts
+    for date ranges older than 48h will undercount once this has run.
+
+    Also unlinks any leftover spooled file — a failed *release* attempt
+    (app/routers/release.py) sets status="failed" but, unlike a successful
+    release, does not clear held_file_path or delete the file, so without
+    this it would otherwise sit in /var/spool/printops-held forever. Same
+    tolerant per-cycle error handling as the other background loops."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                cutoff = datetime.now(UTC) - FAILED_JOB_RETENTION
+                result = await db.execute(
+                    select(Job).where(Job.status == "failed", Job.completed_at < cutoff)
+                )
+                for job in result.scalars().all():
+                    if job.held_file_path:
+                        Path(job.held_file_path).unlink(missing_ok=True)
+                    await db.delete(job)
+                await db.commit()
+        except Exception:
+            logger.exception("Unexpected error in failed job purge loop")
+        await asyncio.sleep(FAILED_JOB_PURGE_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tasks = [
@@ -204,6 +238,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_snmp_counter_poll_loop()),
         asyncio.create_task(_counter_reading_purge_loop()),
         asyncio.create_task(_held_job_purge_loop()),
+        asyncio.create_task(_failed_job_purge_loop()),
     ]
     yield
     for task in tasks:
