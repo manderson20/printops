@@ -5,6 +5,35 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.5.0] - 2026-07-04
+
+- **Automatic printer rediscovery on reconnect.** When a printer that was
+  offline/erroring comes back online, PrintOps now automatically re-probes
+  its IPP capabilities too, not just its reachability — the same probe the
+  manual "Rediscover" button runs. Covers a printer that gets physically
+  swapped, or gains/loses a module (finisher, extra tray), while it's down
+  for maintenance, without an admin needing to remember to click
+  Rediscover afterward.
+- **More resilient CUPS queue sync.** `-m everywhere`'s full attribute
+  probe can hang or get refused outright by some devices (confirmed on a
+  Kyocera ECOSYS) even though they answer PrintOps's own smaller IPP
+  probes fine. The sync scripts now bound that call to 30s and fall back
+  to a generic driverless PPD (reduced capability accuracy for that queue,
+  but it becomes usable instead of stuck unsynced), and explicitly enable/
+  accept the queue afterward since the fallback can otherwise leave it
+  disabled by default.
+- **Fix:** a printer legitimately deleted while its queue sync was still
+  in flight (now up to ~90s worst case with the new fallback) could 500
+  the request instead of a clean no-op.
+- **Fix:** the printers list is now horizontally scrollable instead of
+  squeezing/clipping columns on narrower screens.
+- **Fix:** printers requiring IPP/1.1 (confirmed on an HP LaserJet 4250)
+  failed to add at all — probes now retry at 1.1 when a device rejects
+  2.0's version.
+- **Fix:** a printer reporting a multi-value firmware string (confirmed
+  on a Lexmark XM3350 and Kyocera ECOSYS) could 500 the entire printers
+  list, not just that one printer.
+
 ## [0.4.0] - 2026-07-03
 
 - **SNMP page/copy/print counter polling.** Printers are now polled over
