@@ -25,7 +25,7 @@ from app.printers.snmp_counters import (
     record_reading,
     refresh_printer_counters,
 )
-from app.printers.status import refresh_printer_status
+from app.printers.status import refresh_printer_status_and_rediscover
 from app.routers import (
     auth,
     device_overrides,
@@ -78,14 +78,18 @@ async def _printer_status_poll_loop() -> None:
     or an offline printer quickly without hammering the fleet. Each printer
     is probed independently (asyncio.gather + return_exceptions) so one
     unreachable printer can't stall/skip the rest of the cycle; a cycle-level
-    failure (e.g. DB down) just logs and retries next interval."""
+    failure (e.g. DB down) just logs and retries next interval.
+
+    Also re-runs capability discovery whenever a printer transitions into
+    "online" from anything else — see
+    refresh_printer_status_and_rediscover's docstring."""
     while True:
         try:
             async with AsyncSessionLocal() as db:
                 printers = (await db.execute(select(Printer))).scalars().all()
 
                 async def _refresh_one(printer: Printer) -> None:
-                    await refresh_printer_status(printer)
+                    await refresh_printer_status_and_rediscover(printer)
 
                 await asyncio.gather(*(_refresh_one(p) for p in printers), return_exceptions=True)
                 await db.commit()

@@ -12,8 +12,8 @@ from app.main import app
 from app.models.base import Base
 from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.printer import Printer
+from app.printers import discovery as printer_discovery
 from app.printers.ipp_client import PrinterProbeError
-from app.routers import printers as printers_router
 
 
 @pytest_asyncio.fixture
@@ -69,7 +69,7 @@ def mock_failed_probe(monkeypatch):
     async def fake_probe_printer(ip_address, port=631, tls=False, timeout=5, ipp_path=None):
         raise PrinterProbeError("Could not reach an IPP printer: timed out")
 
-    monkeypatch.setattr(printers_router, "probe_printer", fake_probe_printer)
+    monkeypatch.setattr(printer_discovery, "probe_printer", fake_probe_printer)
 
 
 def test_create_job_requires_backend_token(client, printer_id):

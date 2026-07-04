@@ -37,11 +37,24 @@ QUEUE_NAME="printops-release-${PRINTER_ID}"
 # actually reports, same as the client-facing queue — this queue talks to
 # the real printer directly, so device-uri is left pointed there (no
 # repoint-to-printops:// step, unlike sync_cups_queue.sh).
-sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m everywhere -D "${PRINTER_NAME} (internal release queue)"
+#
+# Same bounded-timeout + generic-PPD fallback as sync_cups_queue.sh — see
+# that script's comment for why (confirmed live: a Kyocera ECOSYS can't
+# handle -m everywhere's full attribute probe on either queue).
+if ! timeout 30 sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m everywhere -D "${PRINTER_NAME} (internal release queue)"; then
+    echo "WARNING: -m everywhere failed/timed out for $REAL_URI — falling back to a generic IPP Everywhere PPD (reduced capability accuracy for this release queue)." >&2
+    sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m "drv:///cupsfilters.drv/pwgrast.ppd" -D "${PRINTER_NAME} (internal release queue)"
+fi
 
 # Deliberately NOT shared and NOT AirPrint-advertised — this queue only
 # ever receives jobs from app/printers/release.py's own `lp -d` call on
 # this same host, never from a network client.
 sudo lpadmin -p "$QUEUE_NAME" -o printer-is-shared=false -E
+
+# Same as the client-facing queue — the generic-PPD fallback can leave a
+# newly-created queue disabled/rejecting by default; ensure both
+# explicitly, harmless no-op if already enabled/accepting.
+sudo cupsenable "$QUEUE_NAME"
+sudo cupsaccept "$QUEUE_NAME"
 
 echo "Release queue '$QUEUE_NAME' -> ${REAL_URI} (${PRINTER_NAME})"

@@ -88,7 +88,8 @@ export default function PrintersPage() {
       )}
       {state.phase === "ok" && state.printers.length > 0 && (
         <Card className="overflow-hidden p-0">
-          <table className="w-full text-left text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[1100px] text-left text-sm">
             <thead className="bg-black/[.03] text-zinc-600 dark:bg-white/[.05] dark:text-zinc-400">
               <tr>
                 <th className="px-4 py-3 font-medium">Name</th>
@@ -237,6 +238,7 @@ export default function PrintersPage() {
               })}
             </tbody>
           </table>
+          </div>
         </Card>
       )}
     </div>
