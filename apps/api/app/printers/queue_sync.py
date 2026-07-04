@@ -9,8 +9,11 @@ REMOVE_RELEASE_SCRIPT = SCRIPTS_DIR / "remove_release_queue.sh"
 
 # -m everywhere probes the real printer over the network to build a driverless
 # PPD — slower than a typical IPP capability probe, hence the longer timeout
-# than app/printers/test_print.py's.
-SYNC_TIMEOUT_SECONDS = 60
+# than app/printers/test_print.py's. sync_cups_queue.sh itself now bounds
+# -m everywhere to 30s and falls back to a generic PPD (~20s observed) when
+# a device can't handle it — worst case approaches the old 60s ceiling with
+# little margin, so this is raised to give that fallback room to complete.
+SYNC_TIMEOUT_SECONDS = 90
 REMOVE_TIMEOUT_SECONDS = 20
 
 

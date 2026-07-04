@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.core.config import Settings, get_settings
 from app.core.crypto import encrypt
@@ -14,9 +15,8 @@ from app.deps import get_current_user, require_role
 from app.models.job import Job
 from app.models.printer import Printer
 from app.models.report import PrinterTonerCartridge
-from app.printers.capabilities import parse_capabilities, sanitize_raw_attributes
 from app.printers.counter_history import get_daily_deltas
-from app.printers.ipp_client import PrinterProbeError, probe_printer
+from app.printers.discovery import refresh_printer_capabilities
 from app.printers.job_control import JobControlError, purge_cups_queue
 from app.printers.queue_sync import QueueSyncError, remove_queue, sync_queue
 from app.printers.snmp_counters import (
@@ -24,7 +24,7 @@ from app.printers.snmp_counters import (
     record_reading,
     refresh_printer_counters,
 )
-from app.printers.status import refresh_printer_status
+from app.printers.status import refresh_printer_status_and_rediscover
 from app.printers.test_print import TestPrintError, submit_test_print
 from app.schemas.auth import UserOut
 from app.schemas.printer import PrinterCreate, PrinterMdmConnectionOut, PrinterOut, PrinterUpdate
@@ -55,40 +55,30 @@ async def _get_printer_or_404(printer_id: UUID, db: AsyncSession) -> Printer:
     return printer
 
 
-async def _apply_discovery(printer: Printer) -> None:
-    """Probes the printer's stored connection details and updates its capability fields."""
-    try:
-        result = await probe_printer(
-            printer.ip_address,
-            port=printer.port,
-            tls=printer.use_tls,
-            ipp_path=printer.ipp_path,
-        )
-        printer.capabilities = parse_capabilities(result.raw_attributes)
-        printer.capabilities_raw = sanitize_raw_attributes(result.raw_attributes)
-        printer.capabilities_detected_at = datetime.now(UTC)
-        printer.capabilities_error = None
-        if printer.ipp_path is None:
-            printer.ipp_path = result.resolved_path
-        detected_model = printer.capabilities.get("make_model")
-        if not printer.manufacturer and not printer.model and detected_model:
-            printer.model = detected_model
-    except PrinterProbeError as exc:
-        printer.capabilities_error = str(exc)
-
-
 async def _apply_queue_sync(printer: Printer, db: AsyncSession) -> None:
     """Creates/updates the printer's CUPS queue to match its current
     connection details. Must run after the printer is already committed —
     the sync script reads connection info back via the internal API, which
     reads the DB. Non-fatal: failure is recorded on the printer, not raised,
-    so a print-server hiccup doesn't block adding/editing a printer."""
+    so a print-server hiccup doesn't block adding/editing a printer.
+
+    This can run long (sync_cups_queue.sh's bounded-timeout + generic-PPD
+    fallback for devices that can't handle -m everywhere's full attribute
+    probe — confirmed live against a real Kyocera, over 90s worst case
+    across both the client and release queue scripts) — long enough for
+    the printer to be legitimately deleted by an admin while this is still
+    in flight. Treated as a benign no-op rather than a crash: nothing left
+    to record the sync result on."""
     try:
         await asyncio.to_thread(sync_queue, str(printer.id))
         printer.queue_sync_error = None
     except QueueSyncError as exc:
         printer.queue_sync_error = str(exc)
-    await db.commit()
+    try:
+        await db.commit()
+    except StaleDataError:
+        await db.rollback()
+        return
     await db.refresh(printer)
 
 
@@ -119,7 +109,7 @@ async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_
             encrypt(payload.snmp_community) if payload.snmp_community else None
         ),
     )
-    await _apply_discovery(printer)
+    await refresh_printer_capabilities(printer)
     db.add(printer)
     await db.commit()
     await db.refresh(printer)
@@ -191,7 +181,7 @@ async def delete_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
 @router.post("/{printer_id}/discover", response_model=PrinterOut, dependencies=[Depends(require_role("admin"))])
 async def discover_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     printer = await _get_printer_or_404(printer_id, db)
-    await _apply_discovery(printer)
+    await refresh_printer_capabilities(printer)
     await db.commit()
     await db.refresh(printer)
     return printer
@@ -225,11 +215,12 @@ async def regenerate_release_token(printer_id: UUID, db: AsyncSession = Depends(
 @router.post("/{printer_id}/check-status", response_model=PrinterOut)
 async def check_status(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     """Manually refreshes a printer's online/error/offline status on demand
-    — same underlying probe as the 60s background loop (app/main.py), just
-    triggered immediately instead of waiting for the next cycle. Read-only
-    telemetry, so open to any logged-in user (not admin-gated) like GET."""
+    — same underlying probe (and same offline->online rediscovery trigger)
+    as the 60s background loop (app/main.py), just triggered immediately
+    instead of waiting for the next cycle. Read-only telemetry, so open to
+    any logged-in user (not admin-gated) like GET."""
     printer = await _get_printer_or_404(printer_id, db)
-    await refresh_printer_status(printer)
+    await refresh_printer_status_and_rediscover(printer)
     await db.commit()
     await db.refresh(printer)
     return printer

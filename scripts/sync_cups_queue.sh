@@ -37,7 +37,28 @@ QUEUE_NAME="printops-${PRINTER_ID}"
 # accurate driverless PPD (correct document-format/pdl advertisement, needed
 # for AirPrint clients to recognize this as a usable destination) from what
 # the device actually reports — not a guess.
-sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m everywhere -D "$PRINTER_NAME"
+#
+# `-m everywhere` requests the device's full attribute set (all,
+# media-col-database internally) — some devices can't handle that and
+# hang or drop the connection outright (confirmed live: a Kyocera ECOSYS
+# returns 0 bytes/service-unavailable specifically on that request, even
+# though it answers smaller targeted IPP requests, like this app's own
+# capability/status probes, just fine). Bounded timeout + fall back to a
+# generic driverless PPD rather than let the whole sync hang the full
+# Python-level timeout (queue_sync.py) with nothing to show for it —
+# loses precise media-size/capability advertisement for that one queue,
+# but the printer actually becomes usable instead of stuck unsynced.
+if ! timeout 30 sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m everywhere -D "$PRINTER_NAME"; then
+    echo "WARNING: -m everywhere failed/timed out for $REAL_URI — falling back to a generic IPP Everywhere PPD (reduced capability accuracy for this printer)." >&2
+    sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m "drv:///cupsfilters.drv/pwgrast.ppd" -D "$PRINTER_NAME"
+fi
+
+# The generic-PPD fallback above can leave a newly-created queue disabled/
+# rejecting jobs by default (confirmed live) — -m everywhere queues don't
+# need this, but ensure both explicitly either way; enabling an
+# already-enabled queue is a harmless no-op.
+sudo cupsenable "$QUEUE_NAME"
+sudo cupsaccept "$QUEUE_NAME"
 
 # Step 2: repoint device-uri only, back to our backend, so jobs still route
 # through PrintOps for logging + forwarding. The PPD/capabilities CUPS just

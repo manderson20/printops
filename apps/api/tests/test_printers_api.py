@@ -7,7 +7,9 @@ from sqlalchemy.pool import StaticPool
 from app.db import get_db
 from app.main import app
 from app.models.base import Base
-from app.printers.ipp_client import PrinterProbeError, ProbeResult
+from app.printers import discovery as printer_discovery
+from app.printers import status as printer_status
+from app.printers.ipp_client import PrinterProbeError, PrinterStateResult, ProbeResult
 from app.routers import printers as printers_router
 
 
@@ -60,7 +62,7 @@ def mock_successful_probe(monkeypatch):
             resolved_path=ipp_path or "/ipp/print",
         )
 
-    monkeypatch.setattr(printers_router, "probe_printer", fake_probe_printer)
+    monkeypatch.setattr(printer_discovery, "probe_printer", fake_probe_printer)
 
 
 @pytest.fixture
@@ -68,7 +70,7 @@ def mock_failed_probe(monkeypatch):
     async def fake_probe_printer(ip_address, port=631, tls=False, timeout=5, ipp_path=None):
         raise PrinterProbeError("Could not reach an IPP printer at 10.0.0.5:631: timed out")
 
-    monkeypatch.setattr(printers_router, "probe_printer", fake_probe_printer)
+    monkeypatch.setattr(printer_discovery, "probe_printer", fake_probe_printer)
 
 
 @pytest.fixture(autouse=True)
@@ -158,12 +160,68 @@ def test_rediscover_updates_capabilities(client, auth_headers, mock_failed_probe
             raw_attributes={"printer-make-and-model": "Now Online"}, resolved_path="/"
         )
 
-    monkeypatch.setattr(printers_router, "probe_printer", fake_probe_printer_now_online)
+    monkeypatch.setattr(printer_discovery, "probe_printer", fake_probe_printer_now_online)
 
     rediscovered = client.post(f"/api/v1/printers/{printer_id}/discover", headers=auth_headers)
     assert rediscovered.status_code == 200
     assert rediscovered.json()["capabilities_error"] is None
     assert rediscovered.json()["model"] == "Now Online"
+
+
+def test_check_status_rediscovers_capabilities_on_reconnect(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    """A printer coming back online (e.g. after being swapped, or gaining a
+    module, during a maintenance window) should get a fresh capability
+    probe automatically — not just an updated status — without anyone
+    clicking Rediscover. Covers app/printers/status.py's
+    refresh_printer_status_and_rediscover, exercised via check-status the
+    same way the 60s background loop uses it."""
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Swapped Printer", "ip_address": "10.0.0.8"},
+    )
+    printer_id = create.json()["id"]
+    assert create.json()["capabilities"] is None
+
+    async def offline_state(ip_address, port=631, tls=False, ipp_path=None, timeout=5):
+        raise PrinterProbeError("Could not reach an IPP printer at 10.0.0.8:631: timed out")
+
+    monkeypatch.setattr(printer_status, "probe_printer_state", offline_state)
+    still_offline = client.post(
+        f"/api/v1/printers/{printer_id}/check-status", headers=auth_headers
+    )
+    assert still_offline.json()["status"] == "offline"
+    assert still_offline.json()["capabilities"] is None
+
+    probe_calls = []
+
+    async def now_online_state(ip_address, port=631, tls=False, ipp_path=None, timeout=5):
+        return PrinterStateResult(printer_state=3, state_reasons=["none"], state_message=None)
+
+    async def now_online_capabilities(ip_address, port=631, tls=False, timeout=5, ipp_path=None):
+        probe_calls.append(ip_address)
+        return ProbeResult(
+            raw_attributes={"printer-make-and-model": "Swapped-In Model"}, resolved_path="/"
+        )
+
+    monkeypatch.setattr(printer_status, "probe_printer_state", now_online_state)
+    monkeypatch.setattr(printer_discovery, "probe_printer", now_online_capabilities)
+
+    reconnected = client.post(
+        f"/api/v1/printers/{printer_id}/check-status", headers=auth_headers
+    )
+    assert reconnected.json()["status"] == "online"
+    assert reconnected.json()["model"] == "Swapped-In Model"
+    assert len(probe_calls) == 1
+
+    # Already online -> already online again shouldn't re-trigger discovery.
+    already_online = client.post(
+        f"/api/v1/printers/{printer_id}/check-status", headers=auth_headers
+    )
+    assert already_online.json()["status"] == "online"
+    assert len(probe_calls) == 1
 
 
 def test_test_print_requires_auth(client, mock_failed_probe):
@@ -339,6 +397,36 @@ def test_resync_queue_clears_prior_error(client, auth_headers, mock_failed_probe
     response = client.post(f"/api/v1/printers/{printer_id}/resync-queue", headers=auth_headers)
     assert response.status_code == 200
     assert response.json()["queue_sync_error"] is None
+
+
+async def test_apply_queue_sync_survives_printer_deleted_mid_flight(monkeypatch):
+    """Confirmed live: sync_cups_queue.sh's bounded-timeout + generic-PPD
+    fallback (for devices that can't handle -m everywhere's full attribute
+    probe) can push a single sync well past 90s across both CUPS scripts —
+    long enough for an admin to legitimately delete the printer while it's
+    still in flight. The commit at the end must not crash the request with
+    an unhandled StaleDataError once there's no row left to update."""
+    from sqlalchemy.orm.exc import StaleDataError
+
+    from app.models.printer import Printer
+    from app.routers.printers import _apply_queue_sync
+
+    class FakeSession:
+        def __init__(self):
+            self.rolled_back = False
+
+        async def commit(self):
+            raise StaleDataError("stale")
+
+        async def rollback(self):
+            self.rolled_back = True
+
+    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id: None)
+    printer = Printer(name="t", ip_address="10.0.0.1")
+    fake_db = FakeSession()
+
+    await _apply_queue_sync(printer, fake_db)  # must not raise
+    assert fake_db.rolled_back is True
 
 
 def test_enabling_release_required_generates_a_token(client, auth_headers, mock_failed_probe):

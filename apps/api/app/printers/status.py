@@ -8,6 +8,7 @@ POST /printers/{id}/check-status endpoint (app/routers/printers.py).
 from datetime import UTC, datetime
 
 from app.models.printer import Printer
+from app.printers.discovery import refresh_printer_capabilities
 from app.printers.ipp_client import PrinterProbeError, PrinterStateResult, probe_printer_state
 
 # IPP printer-state values (RFC 8011 §5.4.12).
@@ -53,3 +54,18 @@ async def refresh_printer_status(printer: Printer) -> None:
         printer.status_reasons = [r for r in result.state_reasons if r != "none"] or None
         printer.status_message = result.state_message or message
     printer.status_checked_at = datetime.now(UTC)
+
+
+async def refresh_printer_status_and_rediscover(printer: Printer) -> None:
+    """Refreshes status, then re-runs capability discovery
+    (app/printers/discovery.py) if the printer just came back online — a
+    device can be physically swapped, or gain/lose a module (finisher,
+    extra tray), while it was unreachable for maintenance, and the change
+    should surface without someone remembering to click "Rediscover" once
+    it's back. Used by both the 60s background loop and the manual
+    check-status endpoint (app/main.py, app/routers/printers.py) so the two
+    behave identically, per check-status's own docstring."""
+    was_online = printer.status == "online"
+    await refresh_printer_status(printer)
+    if printer.status == "online" and not was_online:
+        await refresh_printer_capabilities(printer)
