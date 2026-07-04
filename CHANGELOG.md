@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.7.0] - 2026-07-04
+
+- **Failed jobs are cleaned up automatically.** A job that ends in
+  "failed" now gets deleted 48 hours after it failed, instead of sitting
+  in the Jobs list forever. Also closes a related gap: a failed
+  print-release attempt was leaving its spooled document behind
+  indefinitely — that file is now cleaned up too. Note this trades some
+  historical accuracy in Print Insights' failure counts for date ranges
+  older than 48 hours, in exchange for not growing the jobs table
+  unboundedly.
+
 ## [0.6.0] - 2026-07-04
 
 - **A jammed print job no longer blocks the rest of the queue.** Every
