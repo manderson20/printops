@@ -5,6 +5,16 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.6.0] - 2026-07-04
+
+- **A jammed print job no longer blocks the rest of the queue.** Every
+  printer queue now cancels a failing job automatically instead of
+  retrying it forever in place — CUPS's default behavior kept retrying
+  the same stuck job, which meant everyone else's jobs sent to that
+  printer piled up behind it until an admin noticed and manually
+  intervened. The failed job is still recorded with its error on the Jobs
+  page as before; it just no longer holds up the printer for anyone else.
+
 ## [0.5.0] - 2026-07-04
 
 - **Automatic printer rediscovery on reconnect.** When a printer that was
