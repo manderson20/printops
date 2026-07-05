@@ -48,12 +48,12 @@ def test_connector_types_only_lists_registered_connectors(client, auth_headers):
         "generic_snmp",
         "canon_department_id",
         "konica_bizhub",
+        "kyocera_department_management",
+        "ricoh_user_code_auth",
+        "xerox_standard_accounting",
         "lexmark_accounting",
         "hp_access_control",
-        "ricoh_accounting",
-        "kyocera_accounting",
         "sharp_accounting",
-        "xerox_accounting",
     }
 
 

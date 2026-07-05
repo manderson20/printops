@@ -6,11 +6,8 @@ from app.copiers.connector import CapabilityNotSupported
 from app.copiers.registry import CONNECTOR_REGISTRY, get_connector
 from app.copiers.vendor_placeholders import (
     HpAccessControlConnector,
-    KyoceraAccountingConnector,
     LexmarkAccountingConnector,
-    RicohAccountingConnector,
     SharpAccountingConnector,
-    XeroxAccountingConnector,
 )
 from app.models.copier_import import CopierImportTemplate
 from app.models.mfp_device import MfpDevice
@@ -20,10 +17,7 @@ STANDARD_TOTAL_OUTPUT = ".1.3.6.1.2.1.43.10.2.1.4.1.1 = Counter32: 12345\n"
 ALL_PLACEHOLDERS = [
     ("lexmark_accounting", LexmarkAccountingConnector),
     ("hp_access_control", HpAccessControlConnector),
-    ("ricoh_accounting", RicohAccountingConnector),
-    ("kyocera_accounting", KyoceraAccountingConnector),
     ("sharp_accounting", SharpAccountingConnector),
-    ("xerox_accounting", XeroxAccountingConnector),
 ]
 
 
@@ -47,8 +41,9 @@ def test_has_setup_notes_explaining_limitations(connector_type, connector_cls):
 @pytest.mark.parametrize("connector_type,connector_cls", ALL_PLACEHOLDERS)
 @pytest.mark.asyncio
 async def test_get_capabilities_not_auto_detected(connector_type, connector_cls):
-    """Unlike Canon/Konica, these are genuinely unconfirmed — the
-    connector doesn't claim to know the device's capabilities."""
+    """Unlike Canon/Konica/Kyocera/Ricoh/Xerox, these are genuinely
+    unconfirmed — the connector doesn't claim to know the device's
+    capabilities."""
     with pytest.raises(CapabilityNotSupported):
         await connector_cls().get_capabilities(_device(connector_type))
 
@@ -83,17 +78,17 @@ async def test_lexmark_meter_uses_existing_unsupported_breakdown_entry():
 
 
 @pytest.mark.asyncio
-async def test_ricoh_meter_falls_back_to_standard_total_only():
-    """Ricoh has no VENDOR_BREAKDOWN_FNS entry at all — falls back to the
+async def test_sharp_meter_falls_back_to_standard_total_only():
+    """Sharp has no VENDOR_BREAKDOWN_FNS entry at all — falls back to the
     generic (total-only, unsupported-confidence) behavior, never a
     fabricated copy/print split."""
     with patch("app.printers.snmp_counters._run_snmp", return_value=STANDARD_TOTAL_OUTPUT):
-        snapshot = await RicohAccountingConnector().get_meter_snapshot(_device("ricoh_accounting"))
+        snapshot = await SharpAccountingConnector().get_meter_snapshot(_device("sharp_accounting"))
     assert snapshot.total == 12345
     assert snapshot.copy is None
     assert snapshot.print is None
     assert snapshot.confidence == "unsupported"
-    assert snapshot.vendor_profile_used == "ricoh"
+    assert snapshot.vendor_profile_used == "sharp"
 
 
 @pytest.mark.parametrize("connector_type,connector_cls", ALL_PLACEHOLDERS)
