@@ -48,6 +48,12 @@ def test_connector_types_only_lists_registered_connectors(client, auth_headers):
         "generic_snmp",
         "canon_department_id",
         "konica_bizhub",
+        "lexmark_accounting",
+        "hp_access_control",
+        "ricoh_accounting",
+        "kyocera_accounting",
+        "sharp_accounting",
+        "xerox_accounting",
     }
 
 
@@ -55,7 +61,7 @@ def test_create_rejects_unknown_connector_type(client, auth_headers):
     response = client.post(
         "/api/v1/mfp-devices",
         headers=auth_headers,
-        json={"name": "X", "connector_type": "lexmark_accounting"},
+        json={"name": "X", "connector_type": "toshiba_accounting"},
     )
     assert response.status_code == 422
 
