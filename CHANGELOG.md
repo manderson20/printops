@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.10.0] - 2026-07-05
+
+- **Placeholder connectors for Lexmark, HP, Ricoh, Kyocera, Sharp, and
+  Xerox copiers.** These are now selectable when adding an MFP device,
+  with honest, vendor-specific setup notes about what's actually
+  supported today (SNMP page totals and CSV import) versus what isn't
+  (per-user accounting retrieval and remote provisioning, none of which
+  have a confirmed network API for any of these six yet). Meant to make
+  it clear these are on the roadmap without pretending they already work
+  more than they do.
+
 ## [0.9.0] - 2026-07-05
 
 - **Konica Minolta bizhub support.** Devices using Konica's Account Track
