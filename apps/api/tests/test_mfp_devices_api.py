@@ -47,6 +47,7 @@ def test_connector_types_only_lists_registered_connectors(client, auth_headers):
         "generic_csv",
         "generic_snmp",
         "canon_department_id",
+        "konica_bizhub",
     }
 
 
@@ -54,7 +55,7 @@ def test_create_rejects_unknown_connector_type(client, auth_headers):
     response = client.post(
         "/api/v1/mfp-devices",
         headers=auth_headers,
-        json={"name": "X", "connector_type": "konica_bizhub"},
+        json={"name": "X", "connector_type": "lexmark_accounting"},
     )
     assert response.status_code == 422
 
