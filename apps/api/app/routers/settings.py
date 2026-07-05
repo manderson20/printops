@@ -277,6 +277,8 @@ def _google_workspace_to_out(settings: GoogleWorkspaceSettings) -> GoogleWorkspa
         last_sync_error=settings.last_sync_error,
         device_count=settings.device_count,
         staff_org_unit_path=settings.staff_org_unit_path,
+        auto_create_copier_identity_from_employee_id=settings.auto_create_copier_identity_from_employee_id,
+        auto_copier_identity_type=settings.auto_copier_identity_type,
     )
 
 
@@ -305,6 +307,12 @@ async def update_google_workspace_settings(
         # Blank clears the filter (falls back to "include everyone with an
         # Employee ID") rather than being rejected as invalid input.
         settings.staff_org_unit_path = updates["staff_org_unit_path"] or None
+    if updates.get("auto_create_copier_identity_from_employee_id") is not None:
+        settings.auto_create_copier_identity_from_employee_id = updates[
+            "auto_create_copier_identity_from_employee_id"
+        ]
+    if updates.get("auto_copier_identity_type") is not None:
+        settings.auto_copier_identity_type = updates["auto_copier_identity_type"]
 
     await db.commit()
     await db.refresh(settings)
@@ -369,7 +377,7 @@ async def list_google_workspace_users(db: AsyncSession = Depends(get_db)):
     a correction email against a real org address rather than free text."""
     result = await db.execute(select(GoogleWorkspaceUser).order_by(GoogleWorkspaceUser.email))
     return [
-        GoogleWorkspaceUserOut(email=u.email, name=u.name, employee_id=u.employee_id)
+        GoogleWorkspaceUserOut(email=u.email, name=u.name, employee_id=u.employee_id, aliases=u.aliases)
         for u in result.scalars().all()
     ]
 

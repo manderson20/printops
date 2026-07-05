@@ -9,6 +9,7 @@ import {
   syncGoogleWorkspaceDevices,
   testGoogleWorkspaceConnection,
   updateGoogleWorkspaceSettings,
+  type CopierIdentityType,
   type GoogleWorkspaceSettings,
 } from "@/lib/api";
 import { useCurrentUser } from "@/lib/useCurrentUser";
@@ -35,6 +36,8 @@ export default function GoogleWorkspaceSettingsPage() {
     staff_org_unit_path: "",
   });
   const [enabled, setEnabled] = useState(false);
+  const [autoCopierIdentity, setAutoCopierIdentity] = useState(false);
+  const [autoCopierIdentityType, setAutoCopierIdentityType] = useState<CopierIdentityType>("staff_id");
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -62,6 +65,8 @@ export default function GoogleWorkspaceSettingsPage() {
           staff_org_unit_path: settings.staff_org_unit_path ?? "",
         }));
         setEnabled(settings.enabled);
+        setAutoCopierIdentity(settings.auto_create_copier_identity_from_employee_id);
+        setAutoCopierIdentityType(settings.auto_copier_identity_type);
       })
       .catch((error: unknown) =>
         setState({
@@ -96,6 +101,8 @@ export default function GoogleWorkspaceSettingsPage() {
         // Always sent (even blank) so clearing the field actually clears
         // the saved setting — see app/routers/settings.py's "" -> None rule.
         staff_org_unit_path: form.staff_org_unit_path,
+        auto_create_copier_identity_from_employee_id: autoCopierIdentity,
+        auto_copier_identity_type: autoCopierIdentityType,
       });
       setState({ phase: "ok", settings });
       setForm((prev) => ({ ...prev, service_account_json: "" }));
@@ -477,6 +484,39 @@ export default function GoogleWorkspaceSettingsPage() {
             ID (e.g. students). Leave blank to include everyone with an Employee ID set.
           </span>
         </Field>
+
+        <label className="mt-4 flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={autoCopierIdentity}
+            onChange={(e) => setAutoCopierIdentity(e.target.checked)}
+          />
+          <span>
+            Automatically use Employee ID as a copier login
+            <br />
+            <span className="text-xs text-zinc-500">
+              Off by default — not every district wants this. When on, every synced staff
+              member&apos;s Employee ID is added to Staff Copier Identities as a{" "}
+              {autoCopierIdentity && (
+                <select
+                  value={autoCopierIdentityType}
+                  onChange={(e) => setAutoCopierIdentityType(e.target.value as CopierIdentityType)}
+                  className="mx-1 rounded border border-black/[.15] bg-transparent px-1 py-0.5 text-xs dark:border-white/[.2]"
+                >
+                  <option value="staff_id">Staff ID</option>
+                  <option value="pin">PIN</option>
+                  <option value="user_code">Vendor User Code</option>
+                  <option value="department_id">Department ID</option>
+                </select>
+              )}
+              {!autoCopierIdentity && "staff ID"}, kept in sync automatically — no manual entry
+              needed. An admin&apos;s own manual entry for the same value always wins if one
+              already exists.
+            </span>
+          </span>
+        </label>
+
         <Button onClick={handleSave} disabled={saving} className="mt-3">
           {saving ? "Saving…" : "Save"}
         </Button>

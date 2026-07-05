@@ -35,6 +35,7 @@ import { Input } from "@/components/ui/Field";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
 import { SharePair, TimelineChart, VolumeBarChart } from "./charts";
+import { CombinedUsageSection } from "./CombinedUsageSection";
 
 type DatePreset =
   | "today"
@@ -595,6 +596,8 @@ export default function InsightsPage() {
                 Toner Cartridges panel), falling back to the flat rates below otherwise.
               </p>
             </Card>
+
+            <CombinedUsageSection filters={filters} />
 
             {isAdmin && <ReportFormulasPanel />}
             {isAdmin && <SnapshotsSection filters={filters} periodLabel={periodLabel} />}

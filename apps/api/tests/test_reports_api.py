@@ -8,6 +8,8 @@ from app.core.config import get_settings
 from app.db import get_db
 from app.main import app
 from app.models.base import Base
+from app.models.copier_usage import CopierUsageRecord
+from app.models.mfp_device import MfpDevice
 from app.models.printer import Printer
 
 GOOGLE_CLAIMS = {
@@ -53,6 +55,36 @@ async def printer_id(db_session_factory):
         await session.commit()
         await session.refresh(printer)
         return str(printer.id)
+
+
+@pytest_asyncio.fixture
+async def mfp_device_id(db_session_factory):
+    async with db_session_factory() as session:
+        device = MfpDevice(name="Copy Room MFP", vendor="canon", connector_type="generic_csv")
+        session.add(device)
+        await session.commit()
+        await session.refresh(device)
+        return str(device.id)
+
+
+async def _make_copier_usage(db_session_factory, device_id, staff_email, page_count):
+    import uuid
+    from datetime import UTC, datetime
+
+    async with db_session_factory() as session:
+        session.add(
+            CopierUsageRecord(
+                mfp_device_id=uuid.UUID(device_id),
+                vendor="canon",
+                staff_email=staff_email,
+                external_identity_used=staff_email or "unknown",
+                source_connector="generic_csv",
+                page_count=page_count,
+                occurred_at=datetime.now(UTC),
+                raw_payload={},
+            )
+        )
+        await session.commit()
 
 
 @pytest.fixture
@@ -427,3 +459,46 @@ def test_summary_includes_paper_cost(client, printer_id, backend_headers, admin_
     body = response.json()
     assert body["estimated_cost_paper"] == 2.0  # 4 sheets * $0.50
     assert body["estimated_cost_total"] == 2.0
+
+
+async def test_combined_summary_merges_print_and_copy_pages(
+    client, printer_id, backend_headers, admin_headers, mfp_device_id, db_session_factory
+):
+    _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 850)
+    await _make_copier_usage(db_session_factory, mfp_device_id, "jane.smith@district.org", 220)
+    await _make_copier_usage(db_session_factory, mfp_device_id, None, 15)  # unmapped
+
+    response = client.get("/api/v1/reports/combined-summary", headers=admin_headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["print_pages"] == 850
+    assert body["copy_pages"] == 220  # unmapped row excluded from the total
+    assert body["total_pages"] == 1070
+    assert body["unmapped_copy_activity_count"] == 1
+
+
+async def test_combined_leaderboard_ranks_by_combined_total(
+    client, printer_id, backend_headers, admin_headers, mfp_device_id, db_session_factory
+):
+    _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 850)
+    _make_job(client, printer_id, backend_headers, "big.printer@district.org", 900)
+    await _make_copier_usage(db_session_factory, mfp_device_id, "jane.smith@district.org", 220)
+
+    response = client.get("/api/v1/reports/combined-leaderboard", headers=admin_headers)
+    entries = {e["key"]: e for e in response.json()}
+    assert entries["jane.smith@district.org"]["print_pages"] == 850
+    assert entries["jane.smith@district.org"]["copy_pages"] == 220
+    assert entries["jane.smith@district.org"]["total_pages"] == 1070
+    # Jane's combined total (1070) now outranks the print-only leader (900).
+    assert response.json()[0]["key"] == "jane.smith@district.org"
+
+
+async def test_combined_export_csv_includes_totals(
+    client, printer_id, backend_headers, admin_headers, mfp_device_id, db_session_factory
+):
+    _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 850)
+    await _make_copier_usage(db_session_factory, mfp_device_id, "jane.smith@district.org", 220)
+
+    response = client.get("/api/v1/reports/export-combined.csv", headers=admin_headers)
+    assert response.status_code == 200
+    assert "jane.smith@district.org,850,220,1070" in response.text

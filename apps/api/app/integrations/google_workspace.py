@@ -4,11 +4,14 @@ from datetime import UTC, datetime
 
 import httpx
 import jwt
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt
+from app.models.attribution_alias import AttributionAlias
 from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceSettings, GoogleWorkspaceUser
+from app.models.job import Job
+from app.models.staff_copier_identity import StaffCopierIdentity
 
 REQUEST_TIMEOUT_SECONDS = 30
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -287,11 +290,111 @@ async def sync_devices(db: AsyncSession) -> int:
     return count
 
 
+async def _refresh_google_sourced_aliases(db: AsyncSession, users: list[dict]) -> None:
+    """Mirrors each user's Google-reported account aliases
+    (Directory API's `aliases` field — exactly what Google itself
+    populates when an account's primary address is renamed) into
+    AttributionAlias rows, so app/attribution/resolve.py resolves an old/
+    alternate address to the current canonical one automatically. Full
+    replace of source="google_workspace_sync" rows only — manual ones
+    (an admin's own merges, e.g. a local username) are never touched.
+
+    Only backfills already-logged Job.submitted_by rows for aliases that
+    are new or changed since the last sync, not the whole set every
+    cycle — this runs on the same 15-min loop as every other device sync
+    (app/main.py), so re-touching unchanged rows every cycle would be
+    pure waste."""
+    new_aliases: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for user in users:
+        email = user.get("primaryEmail")
+        if not email:
+            continue
+        for raw_alias in user.get("aliases") or []:
+            key = raw_alias.strip().lower()
+            if not key:
+                continue
+            if key in new_aliases and new_aliases[key] != email.lower():
+                ambiguous.add(key)  # same alias claimed by two different accounts — drop, don't guess
+            else:
+                new_aliases[key] = email.lower()
+    for key in ambiguous:
+        new_aliases.pop(key, None)
+
+    manual_result = await db.execute(select(AttributionAlias.alias).where(AttributionAlias.source == "manual"))
+    manual_aliases = {row[0].lower() for row in manual_result.all()}
+    new_aliases = {k: v for k, v in new_aliases.items() if k not in manual_aliases}
+
+    old_result = await db.execute(
+        select(AttributionAlias.alias, AttributionAlias.resolved_email).where(
+            AttributionAlias.source == "google_workspace_sync"
+        )
+    )
+    old_aliases = {alias: resolved_email for alias, resolved_email in old_result.all()}
+    changed = {k: v for k, v in new_aliases.items() if old_aliases.get(k) != v}
+
+    await db.execute(delete(AttributionAlias).where(AttributionAlias.source == "google_workspace_sync"))
+    for alias, resolved_email in new_aliases.items():
+        db.add(AttributionAlias(alias=alias, resolved_email=resolved_email, source="google_workspace_sync"))
+
+    for alias, resolved_email in changed.items():
+        await db.execute(
+            update(Job)
+            .where(func.lower(Job.submitted_by) == alias)
+            .values(submitted_by=resolved_email, attribution_method="alias")
+        )
+
+
+async def _refresh_google_sourced_copier_identities(
+    db: AsyncSession, users_with_employee_id: list[tuple[str, str]], settings: GoogleWorkspaceSettings
+) -> None:
+    """Mirrors GoogleWorkspaceUser.employee_id into a StaffCopierIdentity
+    (app/models/staff_copier_identity.py) when an admin has opted in
+    (auto_create_copier_identity_from_employee_id) — off by default,
+    since not every district wants Employee ID doubling as a copier
+    login. Full replace of source="google_workspace_sync" rows only,
+    same convention as _refresh_google_sourced_aliases; if the toggle is
+    off, any previously auto-created rows are removed so turning it off
+    actually takes effect rather than just freezing stale rows."""
+    identity_type = settings.auto_copier_identity_type
+
+    if not settings.auto_create_copier_identity_from_employee_id:
+        await db.execute(delete(StaffCopierIdentity).where(StaffCopierIdentity.source == "google_workspace_sync"))
+        return
+
+    manual_result = await db.execute(
+        select(StaffCopierIdentity.identity_value, StaffCopierIdentity.staff_email).where(
+            StaffCopierIdentity.source == "manual",
+            StaffCopierIdentity.identity_type == identity_type,
+            StaffCopierIdentity.mfp_device_id.is_(None),
+        )
+    )
+    manual_claims = {value: email for value, email in manual_result.all()}
+
+    await db.execute(delete(StaffCopierIdentity).where(StaffCopierIdentity.source == "google_workspace_sync"))
+    for email, employee_id in users_with_employee_id:
+        claimed_by = manual_claims.get(employee_id)
+        if claimed_by and claimed_by.lower() != email.lower():
+            continue  # an admin already manually assigned this value to someone else
+        db.add(
+            StaffCopierIdentity(
+                staff_email=email,
+                identity_type=identity_type,
+                identity_value=employee_id,
+                mfp_device_id=None,
+                source="google_workspace_sync",
+            )
+        )
+
+
 async def sync_users(db: AsyncSession) -> int:
     """Refreshes the local GoogleWorkspaceUser cache — the canonical email
     roster used to validate device overrides and disambiguate bare local
-    usernames (app/attribution/resolve.py). Raises GoogleWorkspaceError on
-    failure without touching last_sync_error itself — see run_sync()."""
+    usernames (app/attribution/resolve.py). Also refreshes Google-sourced
+    attribution aliases and (if enabled) copier identities from Employee
+    ID — see _refresh_google_sourced_aliases/
+    _refresh_google_sourced_copier_identities. Raises GoogleWorkspaceError
+    on failure without touching last_sync_error itself — see run_sync()."""
     settings = await get_settings(db)
     if settings is None or not settings.enabled:
         raise GoogleWorkspaceError("Google Workspace integration is not configured/enabled.")
@@ -302,20 +405,29 @@ async def sync_users(db: AsyncSession) -> int:
     now = datetime.now(UTC)
     await db.execute(delete(GoogleWorkspaceUser))
     count = 0
+    users_with_employee_id: list[tuple[str, str]] = []
     for user in users:
         email = user.get("primaryEmail")
         if not email:
             continue
+        employee_id = extract_employee_id(user)
         db.add(
             GoogleWorkspaceUser(
                 email=email.lower(),
                 name=(user.get("name") or {}).get("fullName"),
-                employee_id=extract_employee_id(user),
+                employee_id=employee_id,
                 org_unit_path=user.get("orgUnitPath"),
+                aliases=user.get("aliases"),
                 synced_at=now,
             )
         )
         count += 1
+        if employee_id:
+            users_with_employee_id.append((email.lower(), employee_id))
+
+    await _refresh_google_sourced_aliases(db, users)
+    await _refresh_google_sourced_copier_identities(db, users_with_employee_id, settings)
+
     await db.commit()
     return count
 

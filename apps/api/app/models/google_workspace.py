@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime
+from sqlalchemy import JSON, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -44,6 +44,19 @@ class GoogleWorkspaceSettings(Base, TimestampMixin):
     # students also have one set, but kept as the safe default rather than
     # silently excluding everyone before this is configured).
     staff_org_unit_path: Mapped[str | None] = mapped_column(default=None)
+
+    # When enabled, every synced user's employee_id is mirrored into a
+    # StaffCopierIdentity row automatically (source="google_workspace_sync",
+    # see app/integrations/google_workspace.py and app/models/
+    # staff_copier_identity.py) — off by default since not every district
+    # wants Employee ID doubling as a copier login; auto_copier_identity_type
+    # picks which StaffCopierIdentity.identity_type it's created as.
+    auto_create_copier_identity_from_employee_id: Mapped[bool] = mapped_column(
+        default=False, server_default="false"
+    )
+    auto_copier_identity_type: Mapped[str] = mapped_column(
+        default="staff_id", server_default="staff_id"
+    )
 
 
 class GoogleWorkspaceDevice(Base):
@@ -88,5 +101,15 @@ class GoogleWorkspaceUser(Base):
     # user regardless of that setting, since this roster also has to stay
     # complete (students included) for job-attribution/device-override use.
     org_unit_path: Mapped[str | None] = mapped_column(default=None)
+    # Google's own account aliases (Directory API's `aliases` field) — the
+    # exact mechanism Google itself uses when an account's primary address
+    # is renamed (the old address becomes an alias automatically), so
+    # syncing this is what makes a username/email change transparent to
+    # attribution without any manual action. Mirrored into
+    # AttributionAlias rows (source="google_workspace_sync") by
+    # app/integrations/google_workspace.py:sync_users, which is what
+    # app/attribution/resolve.py actually reads at job-attribution time —
+    # this column is just the synced-from-Google source of truth.
+    aliases: Mapped[list[str] | None] = mapped_column(JSON, default=None)
 
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

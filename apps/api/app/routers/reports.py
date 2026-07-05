@@ -14,6 +14,8 @@ from app.models.report import PrinterTonerCartridge, ReportFormulaSettings, Repo
 from app.reports.aggregation import (
     CostRawRow,
     ReportFilters,
+    get_combined_summary,
+    get_combined_user_leaderboard,
     get_cost_raw_rows,
     get_peak_times,
     get_printer_leaderboard,
@@ -33,6 +35,8 @@ from app.reports.formulas import (
 from app.reports.fun_facts import generate_fun_facts
 from app.schemas.auth import UserOut
 from app.schemas.report import (
+    CombinedLeaderboardEntryOut,
+    CombinedSummaryOut,
     CostEntryOut,
     FunFactsOut,
     LeaderboardEntryOut,
@@ -270,6 +274,26 @@ async def report_leaderboard(
     return [LeaderboardEntryOut(**vars(e)) for e in entries]
 
 
+@router.get("/combined-summary", response_model=CombinedSummaryOut)
+async def report_combined_summary(
+    filters: ReportFilters = Depends(_report_filters), db: AsyncSession = Depends(get_db)
+):
+    """Print + walk-up-copy totals together — see app/reports/aggregation.py's
+    module docstring for which filters apply to the copier side."""
+    summary = await get_combined_summary(db, filters)
+    return CombinedSummaryOut(**vars(summary))
+
+
+@router.get("/combined-leaderboard", response_model=list[CombinedLeaderboardEntryOut])
+async def report_combined_leaderboard(
+    limit: int = 10,
+    filters: ReportFilters = Depends(_report_filters),
+    db: AsyncSession = Depends(get_db),
+):
+    entries = await get_combined_user_leaderboard(db, filters, limit=min(limit, 50))
+    return [CombinedLeaderboardEntryOut(**vars(e)) for e in entries]
+
+
 @router.get("/cost-breakdown", response_model=list[CostEntryOut])
 async def report_cost_breakdown(
     group_by: str = "printer",
@@ -412,6 +436,26 @@ async def export_csv(
         content=buffer.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=print-insights-export.csv"},
+    )
+
+
+@router.get("/export-combined.csv")
+async def export_combined_csv(
+    filters: ReportFilters = Depends(_report_filters), db: AsyncSession = Depends(get_db)
+):
+    """Per-user combined print+copy summary — a sibling to /export.csv
+    rather than a branch of it, since the column set genuinely differs
+    (this is one row per staff member, not one row per job)."""
+    entries = await get_combined_user_leaderboard(db, filters, limit=10_000)
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["staff_email", "printed_pages", "copied_pages", "total_pages"])
+    for entry in entries:
+        writer.writerow([entry.key, entry.print_pages, entry.copy_pages, entry.total_pages])
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=combined-print-copy-export.csv"},
     )
 
 

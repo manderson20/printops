@@ -27,15 +27,20 @@ from app.printers.snmp_counters import (
 )
 from app.printers.status import refresh_printer_status_and_rediscover
 from app.routers import (
+    attribution_aliases,
     auth,
+    copier_imports,
+    copier_unmapped,
     device_overrides,
     health,
     internal,
     jobs,
+    mfp_devices,
     printers,
     release,
     reports,
     settings as settings_router,
+    staff_copier_identities,
     updates,
     users,
 )
@@ -274,6 +279,17 @@ app.include_router(internal.router, prefix="/api/v1/internal", tags=["internal"]
 app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["settings"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(device_overrides.router, prefix="/api/v1/devices", tags=["devices"])
+app.include_router(
+    attribution_aliases.router, prefix="/api/v1/attribution-aliases", tags=["attribution-aliases"]
+)
 app.include_router(updates.router, prefix="/api/v1/updates", tags=["updates"])
 app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])
 app.include_router(release.router, prefix="/api/v1/release", tags=["release"])
+app.include_router(mfp_devices.router, prefix="/api/v1/mfp-devices", tags=["mfp-devices"])
+app.include_router(
+    staff_copier_identities.router,
+    prefix="/api/v1/staff-copier-identities",
+    tags=["staff-copier-identities"],
+)
+app.include_router(copier_imports.router, prefix="/api/v1/copier-imports", tags=["copier-imports"])
+app.include_router(copier_unmapped.router, prefix="/api/v1/copier-unmapped", tags=["copier-unmapped"])

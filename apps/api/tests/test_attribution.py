@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.attribution.resolve import resolve_user
 from app.core.crypto import encrypt
 from app.integrations.classguard import ClassGuardClient, ClassGuardError
+from app.models.attribution_alias import AttributionAlias
 from app.models.base import Base
 from app.models.classguard import ClassGuardSettings
 from app.models.device_override import DeviceUserOverride
@@ -397,3 +398,70 @@ async def test_mosyle_takes_priority_over_google_workspace(db_session_factory, m
         await db.commit()
         user, method, mac = await resolve_user(db, None, "10.0.0.5")
     assert (user, method, mac) == ("mosyle-user@example.com", "mosyle", "AA:BB:CC:DD:EE:FF")
+
+
+@pytest.mark.asyncio
+async def test_bare_username_alias_resolves_without_any_mac_lookup(db_session_factory):
+    """The "matt" scenario: a bare local username with no ClassGuard/MAC
+    machinery configured at all still resolves via a manual attribution
+    alias (app/routers/attribution_aliases.py)."""
+    async with db_session_factory() as db:
+        db.add(AttributionAlias(alias="matt", resolved_email="manderson@brookfieldr3.org", source="manual"))
+        await db.commit()
+        user, method, mac = await resolve_user(db, "matt", None)
+    assert (user, method, mac) == ("manderson@brookfieldr3.org", "alias", None)
+
+
+@pytest.mark.asyncio
+async def test_email_shaped_alias_resolves_immediately_no_mac_lookup(db_session_factory, monkeypatch):
+    """A Google Workspace-synced alias email (an old/renamed address) is
+    caught before the normal "any email wins outright" rule — and never
+    triggers a ClassGuard lookup, matching the existing email-shaped-value
+    fast path."""
+
+    async def fail_if_called(self, ip):
+        raise AssertionError("ClassGuard should never be queried for an alias-resolved email")
+
+    monkeypatch.setattr(ClassGuardClient, "lookup_mac", fail_if_called)
+
+    async with db_session_factory() as db:
+        db.add(ClassGuardSettings(enabled=True, access_token_encrypted=encrypt("tok")))
+        db.add(
+            AttributionAlias(
+                alias="manderson.old@brookfieldr3.org",
+                resolved_email="manderson@brookfieldr3.org",
+                source="google_workspace_sync",
+            )
+        )
+        await db.commit()
+        user, method, mac = await resolve_user(db, "manderson.old@brookfieldr3.org", "10.0.0.5")
+    assert (user, method, mac) == ("manderson@brookfieldr3.org", "alias", None)
+
+
+@pytest.mark.asyncio
+async def test_device_override_still_wins_over_username_alias(db_session_factory, monkeypatch):
+    """A device-specific MAC override is more precise than a general
+    "this string always means X" alias, and is checked first for the
+    bare-username fallback case."""
+
+    async def fake_lookup_mac(self, ip):
+        return "aa:bb:cc:dd:ee:ff"
+
+    monkeypatch.setattr(ClassGuardClient, "lookup_mac", fake_lookup_mac)
+
+    async with db_session_factory() as db:
+        db.add(ClassGuardSettings(enabled=True, access_token_encrypted=encrypt("tok")))
+        db.add(DeviceUserOverride(mac_address="AA:BB:CC:DD:EE:FF", resolved_email="override@example.com"))
+        db.add(AttributionAlias(alias="matt", resolved_email="manderson@brookfieldr3.org", source="manual"))
+        await db.commit()
+        user, method, mac = await resolve_user(db, "matt", "10.0.0.5")
+    assert (user, method, mac) == ("override@example.com", "override", "AA:BB:CC:DD:EE:FF")
+
+
+@pytest.mark.asyncio
+async def test_no_matching_alias_falls_back_to_raw_cups_value(db_session_factory):
+    async with db_session_factory() as db:
+        db.add(AttributionAlias(alias="someone-else", resolved_email="x@example.com", source="manual"))
+        await db.commit()
+        user, method, mac = await resolve_user(db, "matt", None)
+    assert (user, method, mac) == ("matt", "cups", None)
