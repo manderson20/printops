@@ -1,21 +1,40 @@
 """Single source of truth for which connectors actually exist. The
 frontend's connector-type picker (apps/web/.../mfp-devices/new/page.tsx)
-lists only these keys — an unimplemented vendor connector (Lexmark, HP,
-Ricoh, Kyocera, Sharp, Xerox, ...) simply isn't selectable yet, rather
-than existing as a fake option that raises NotImplementedError at
-runtime. See app/copiers/connector.py's module docstring for why."""
+lists only these keys — an unimplemented vendor connector simply isn't
+selectable, rather than existing as a fake option that raises
+NotImplementedError at runtime. See app/copiers/connector.py's module
+docstring for why.
+
+Lexmark/HP/Ricoh/Kyocera/Sharp/Xerox are Stage 4 *placeholders*
+(app/copiers/vendor_placeholders.py) — registered and selectable, but
+deliberately not full connectors; see that module's docstring for
+exactly what is and isn't real about each."""
 
 from app.copiers.canon_department_id import CanonDepartmentIdConnector
 from app.copiers.connector import CopierConnector
 from app.copiers.generic_csv import GenericCsvConnector
 from app.copiers.generic_snmp import GenericSnmpConnector
 from app.copiers.konica_bizhub import KonicaBizhubConnector
+from app.copiers.vendor_placeholders import (
+    HpAccessControlConnector,
+    KyoceraAccountingConnector,
+    LexmarkAccountingConnector,
+    RicohAccountingConnector,
+    SharpAccountingConnector,
+    XeroxAccountingConnector,
+)
 
 CONNECTOR_REGISTRY: dict[str, type[CopierConnector]] = {
     "generic_csv": GenericCsvConnector,
     "generic_snmp": GenericSnmpConnector,
     "canon_department_id": CanonDepartmentIdConnector,
     "konica_bizhub": KonicaBizhubConnector,
+    "lexmark_accounting": LexmarkAccountingConnector,
+    "hp_access_control": HpAccessControlConnector,
+    "ricoh_accounting": RicohAccountingConnector,
+    "kyocera_accounting": KyoceraAccountingConnector,
+    "sharp_accounting": SharpAccountingConnector,
+    "xerox_accounting": XeroxAccountingConnector,
 }
 
 
