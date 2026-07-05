@@ -5,6 +5,38 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.8.0] - 2026-07-05
+
+- **Walk-up copier accounting.** PrintOps can now track copies made
+  directly at a shared copier — not just print jobs it proxies — and
+  attribute them back to the same staff member. Admins register MFP
+  devices, map staff to their copier login (staff ID, PIN, badge, or
+  vendor code), and bring in usage data via a CSV import wizard (upload,
+  map columns, preview, commit) or SNMP meter reads. Unresolved logins
+  show up on a dedicated screen where mapping one immediately re-processes
+  every past record that used it. Print Insights now shows combined
+  print + copy totals per staff member alongside the existing print-only
+  numbers.
+- **Canon Department ID Management support.** Devices using Canon's
+  Department ID Management get real meter reads (reusing PrintOps's
+  already-verified Canon SNMP logic) and setup guidance for enabling it
+  on the device. Per-user accounting retrieval and remote provisioning
+  aren't available over Canon's own API — the connector says so plainly
+  rather than pretending, and CSV import remains the way to bring that
+  data in.
+- **Merge duplicate staff identities for print attribution.** If a
+  computer reports a bare local username (e.g. "matt") instead of a real
+  email, or someone's address changed, an admin can now merge it to the
+  correct staff member from the Devices page — instantly correcting every
+  past job that used it, not just future ones. Google Workspace's own
+  account aliases (created automatically when an address changes) merge
+  in the same way with no manual step. A new opt-in setting can also
+  mirror each staff member's Employee ID into a copier login
+  automatically.
+- **Fix:** a device reporting its status message as multiple values
+  instead of one was crashing the background status check for that
+  printer every minute.
+
 ## [0.7.0] - 2026-07-04
 
 - **Failed jobs are cleaned up automatically.** A job that ends in
