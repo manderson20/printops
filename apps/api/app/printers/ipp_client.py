@@ -154,6 +154,21 @@ class PrinterStateResult:
     state_message: str | None
 
 
+def _parse_state_message(raw: dict[str, Any]) -> str | None:
+    """printer-state-message is spec'd (RFC 8011 §5.4.13) as a single
+    text(255) value, but confirmed live: a real device reports it as a
+    1setOf text instead — same "device doesn't actually follow the
+    single-value spec" quirk as printer-firmware-string-version (see
+    app/printers/capabilities.py:_parse_firmware_version). Blank entries
+    (e.g. a device reporting ["", ""] — no real message) are dropped
+    rather than joined into noise; a status_message the app then tries to
+    write into a plain VARCHAR column crashes the whole status poll cycle
+    for that printer if this isn't unwrapped to a string first."""
+    values = [str(_scalar(v)) for v in _as_list(raw.get("printer-state-message"))]
+    non_blank = [v for v in values if v.strip()]
+    return ", ".join(non_blank) if non_blank else None
+
+
 async def probe_printer_state(
     ip_address: str,
     port: int = DEFAULT_PORT,
@@ -172,5 +187,5 @@ async def probe_printer_state(
     return PrinterStateResult(
         printer_state=_scalar(raw.get("printer-state")),
         state_reasons=reasons,
-        state_message=raw.get("printer-state-message") or None,
+        state_message=_parse_state_message(raw),
     )
