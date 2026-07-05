@@ -5,6 +5,16 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.9.0] - 2026-07-05
+
+- **Konica Minolta bizhub support.** Devices using Konica's Account Track
+  or User Authentication get real meter reads (reusing PrintOps's
+  already-verified Konica SNMP logic) and setup guidance for enabling it
+  on the device. Same as Canon: per-user accounting retrieval and remote
+  provisioning aren't available over a network API, so the connector says
+  so plainly, and CSV import (from the device's own PageScope Web
+  Connection admin page) is the way to bring that data in.
+
 ## [0.8.0] - 2026-07-05
 
 - **Walk-up copier accounting.** PrintOps can now track copies made
