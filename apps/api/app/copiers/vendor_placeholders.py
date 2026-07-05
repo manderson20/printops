@@ -1,11 +1,20 @@
 """Stage 4 of the copier accounting spec: connector *placeholders* for
-Lexmark, HP, Ricoh, Kyocera, Sharp, and Xerox — deliberately not full
-connectors. Per the user's own spec: "Do not claim full support until
-the connector can actually retrieve or import user-level accounting."
-None of these six have a confirmed network API for per-user accounting
-or user/PIN provisioning in this codebase, so none of them claim one.
+Lexmark, HP, and Sharp — deliberately not full connectors. Per the
+user's own spec: "Do not claim full support until the connector can
+actually retrieve or import user-level accounting." None of these three
+have a confirmed network API for per-user accounting or user/PIN
+provisioning in this codebase, so none of them claim one. (Kyocera,
+Ricoh, and Xerox were upgraded to real named-feature connectors — see
+app/copiers/kyocera_department_management.py,
+app/copiers/ricoh_user_code_auth.py, app/copiers/xerox_standard_accounting.py
+— because each has a well-documented, stable, device-local accounting
+feature. These three don't have an equivalent this codebase can
+confidently name: HP's real solution (Access Control/JetAdvantage) and
+Lexmark's (Print Management) are separate server products, not a device
+toggle; Sharp's on-device mechanism varies too much across its OSA
+platform generations to assert specifics.)
 
-What each of these six actually does, uniformly:
+What each of these three actually does, uniformly:
 - CSV import delegates to the same generic pipeline as every other
   connector — the only real integration path available today for any of
   them (export whatever accounting report the device offers, import it
@@ -13,17 +22,16 @@ What each of these six actually does, uniformly:
 - Meter reads reuse app/printers/snmp_counters.py's
   VENDOR_BREAKDOWN_FNS, falling back to the standard RFC 3805 total-only
   behavior for whichever of these vendors that dict has no entry for.
-  Lexmark/HP/Kyocera already have entries there (each explicitly
-  "unsupported" confidence — no real hardware has been available to
-  verify a copy/print split for any of them, per that module's own
-  docstring); Ricoh/Sharp/Xerox have no vendor-specific entry at all yet,
-  so they get the same honest total-only fallback.
+  Lexmark/HP already have entries there (each explicitly "unsupported"
+  confidence — no real hardware has been available to verify a copy/print
+  split for either, per that module's own docstring); Sharp has no
+  vendor-specific entry at all yet, so it gets the same honest
+  total-only fallback.
 - get_capabilities is NOT implemented (raises CapabilityNotSupported) —
-  unlike Canon/Konica (where Department ID Management / Account Track
-  are well-documented, confirmed features), none of these six has a
-  vendor feature confirmed in this codebase yet. An admin can still set
-  a device's capability flags manually (app/routers/mfp_devices.py's
-  check-capabilities is just skipped for these).
+  none of these three has a vendor feature confirmed in this codebase
+  yet. An admin can still set a device's capability flags manually
+  (app/routers/mfp_devices.py's check-capabilities is just skipped for
+  these).
 - get_user_accounting/sync_users_to_device are NOT implemented — no
   vendor here has a confirmed network API for either.
 """
@@ -140,55 +148,17 @@ class HpAccessControlConnector(_VendorPlaceholderMixin, CopierConnector):
     )
 
 
-class RicohAccountingConnector(_VendorPlaceholderMixin, CopierConnector):
-    connector_type = "ricoh_accounting"
-    display_name = "Ricoh Accounting (placeholder)"
-    _vendor_profile = "ricoh"
-    setup_notes = (
-        "Not yet a full integration — no Ricoh hardware has been available "
-        "to confirm either a per-user network API or an SNMP copy/print "
-        "breakdown; only the standard SNMP page-total counter is expected "
-        "to work. Ricoh's own device admin page (Web Image Monitor) can "
-        "typically export a User Counter report — bring that in via "
-        "Accounting Imports."
-    )
-
-
-class KyoceraAccountingConnector(_VendorPlaceholderMixin, CopierConnector):
-    connector_type = "kyocera_accounting"
-    display_name = "Kyocera Accounting (placeholder)"
-    _vendor_profile = "kyocera"
-    setup_notes = (
-        "Not yet a full integration — no confirmed network API for "
-        "Kyocera's accounting features; no Kyocera hardware has been "
-        "available yet to verify an SNMP copy/print breakdown, only the "
-        "standard SNMP page-total counter. Kyocera Command Center RX (the "
-        "device's own admin page) can typically export a Department "
-        "ID/user counter report — bring that in via Accounting Imports."
-    )
-
-
 class SharpAccountingConnector(_VendorPlaceholderMixin, CopierConnector):
     connector_type = "sharp_accounting"
     display_name = "Sharp Accounting (placeholder)"
     _vendor_profile = "sharp"
     setup_notes = (
-        "Not yet a full integration — no Sharp hardware has been available "
-        "to confirm a network API or SNMP copy/print breakdown; only the "
-        "standard SNMP page-total counter is expected to work. Sharp's own "
-        "device admin page can typically export an Account/User counter "
-        "report — bring that in via Accounting Imports."
-    )
-
-
-class XeroxAccountingConnector(_VendorPlaceholderMixin, CopierConnector):
-    connector_type = "xerox_accounting"
-    display_name = "Xerox Accounting (placeholder)"
-    _vendor_profile = "xerox"
-    setup_notes = (
-        "Not yet a full integration — no Xerox hardware has been available "
-        "to confirm a network API or SNMP copy/print breakdown; only the "
-        "standard SNMP page-total counter is expected to work. Xerox's own "
-        "CentreWare Internet Services admin page can typically export a "
-        "User/Accounting report — bring that in via Accounting Imports."
+        "Not yet a full integration — Sharp's on-device accounting mechanism "
+        "and admin-page layout vary too much across its OSA platform "
+        "generations for PrintOps to name a specific menu path with "
+        "confidence; no Sharp hardware has been available to confirm an "
+        "SNMP copy/print breakdown either, only the standard SNMP "
+        "page-total counter. Check your specific model's own admin page for "
+        "an Account/User counter export and bring that in via Accounting "
+        "Imports."
     )
