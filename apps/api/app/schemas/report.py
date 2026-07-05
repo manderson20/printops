@@ -44,6 +44,21 @@ class LeaderboardEntryOut(BaseModel):
     total_pages: int
 
 
+class CombinedSummaryOut(BaseModel):
+    print_pages: int
+    copy_pages: int
+    total_pages: int
+    unmapped_copy_activity_count: int
+
+
+class CombinedLeaderboardEntryOut(BaseModel):
+    key: str
+    label: str
+    print_pages: int
+    copy_pages: int
+    total_pages: int
+
+
 class PeakTimesOut(BaseModel):
     by_day_of_week: dict[int, int]
     by_hour: dict[int, int]

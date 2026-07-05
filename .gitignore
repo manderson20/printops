@@ -30,3 +30,6 @@ venv/
 
 # Local-only scratch space (screenshots, issue attachments, etc.) — never pushed
 /referencefiles/
+
+# Runtime spool data (uploaded copier accounting CSVs — app/routers/copier_imports.py)
+/var/

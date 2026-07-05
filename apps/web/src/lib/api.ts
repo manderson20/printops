@@ -26,10 +26,14 @@ export class ApiError extends Error {
 
 async function authorizedFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = getToken();
+  // FormData bodies (multipart file uploads) must NOT get a manual
+  // Content-Type — the browser sets its own boundary-bearing value, and
+  // overriding it here would corrupt the upload.
+  const isFormData = init.body instanceof FormData;
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...(init.body && !isFormData ? { "Content-Type": "application/json" } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init.headers,
     },
@@ -243,6 +247,474 @@ export async function getMdmConnection(id: string): Promise<MdmConnectionInfo> {
   return response.json();
 }
 
+// --- MFP / copier accounting (Stage 1) ---
+
+export type MfpVendor =
+  | "canon"
+  | "konica_minolta"
+  | "hp"
+  | "lexmark"
+  | "kyocera"
+  | "ricoh"
+  | "sharp"
+  | "xerox"
+  | "generic";
+
+export type DeviceCapabilities = {
+  walkup_copy_accounting: boolean | null;
+  user_code_pin_auth: boolean | null;
+  badge_card_auth: boolean | null;
+  department_id_accounting: boolean | null;
+  ldap_auth: boolean | null;
+  local_user_table: boolean | null;
+  remote_user_provisioning: boolean | null;
+  csv_accounting_export: boolean | null;
+  api_accounting_retrieval: boolean | null;
+  snmp_meter_counters: boolean | null;
+  scan_accounting: boolean | null;
+  color_mono_accounting: boolean | null;
+  quotas: boolean | null;
+  secure_print_release: boolean | null;
+};
+
+export type MfpDevice = {
+  id: string;
+  printer_id: string | null;
+  name: string;
+  vendor: MfpVendor;
+  model: string | null;
+  serial_number: string | null;
+  ip_address: string | null;
+  hostname: string | null;
+  building: string | null;
+  room: string | null;
+  department: string | null;
+  connector_type: string;
+  connector_config: Record<string, unknown> | null;
+  capabilities: DeviceCapabilities;
+  capabilities_source: "manual" | "connector_reported" | null;
+  capabilities_detected_at: string | null;
+  snmp_enabled: boolean;
+  snmp_port: number | null;
+  snmp_version: SnmpVersion | null;
+  has_snmp_community: boolean;
+  snmp_vendor_profile: string | null;
+  page_count_total: number | null;
+  page_count_copy: number | null;
+  page_count_print: number | null;
+  page_count_confidence: PageCountConfidence | null;
+  page_count_vendor_profile_used: string | null;
+  page_count_checked_at: string | null;
+  page_count_error: string | null;
+  last_test_connection_at: string | null;
+  last_test_connection_ok: boolean | null;
+  last_test_connection_message: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ConnectorTypeOption = { connector_type: string; label: string; setup_notes: string | null };
+
+export type MfpDeviceCreateInput = {
+  name: string;
+  vendor?: MfpVendor;
+  model?: string | null;
+  serial_number?: string | null;
+  printer_id?: string | null;
+  ip_address?: string | null;
+  hostname?: string | null;
+  building?: string | null;
+  room?: string | null;
+  department?: string | null;
+  connector_type?: string;
+  connector_config?: Record<string, unknown> | null;
+  snmp_enabled?: boolean;
+  snmp_port?: number | null;
+  snmp_version?: SnmpVersion | null;
+  snmp_community?: string | null;
+  snmp_vendor_profile?: string | null;
+  notes?: string | null;
+};
+
+export type MfpDeviceUpdateInput = Partial<MfpDeviceCreateInput> & {
+  capabilities?: Partial<DeviceCapabilities>;
+};
+
+export async function listConnectorTypes(): Promise<ConnectorTypeOption[]> {
+  const response = await authorizedFetch("/api/v1/mfp-devices/connector-types");
+  return response.json();
+}
+
+export async function listMfpDevices(): Promise<MfpDevice[]> {
+  const response = await authorizedFetch("/api/v1/mfp-devices");
+  return response.json();
+}
+
+export async function getMfpDevice(id: string): Promise<MfpDevice> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}`);
+  return response.json();
+}
+
+export async function createMfpDevice(input: MfpDeviceCreateInput): Promise<MfpDevice> {
+  const response = await authorizedFetch("/api/v1/mfp-devices", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function updateMfpDevice(id: string, input: MfpDeviceUpdateInput): Promise<MfpDevice> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function deleteMfpDevice(id: string): Promise<void> {
+  await authorizedFetch(`/api/v1/mfp-devices/${id}`, { method: "DELETE" });
+}
+
+export async function testMfpDeviceConnection(id: string): Promise<MfpDevice> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/test-connection`, {
+    method: "POST",
+  });
+  return response.json();
+}
+
+export async function checkMfpDeviceCapabilities(id: string): Promise<MfpDevice> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/check-capabilities`, {
+    method: "POST",
+  });
+  return response.json();
+}
+
+export async function checkMfpDeviceMeter(id: string): Promise<MfpDevice> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/check-meter`, {
+    method: "POST",
+  });
+  return response.json();
+}
+
+export type CopierUsageRecord = {
+  id: string;
+  mfp_device_id: string;
+  vendor: string;
+  model: string | null;
+  serial_number: string | null;
+  location_building: string | null;
+  staff_email: string | null;
+  staff_employee_id: string | null;
+  external_identity_used: string;
+  external_identity_type: string | null;
+  authentication_method: string | null;
+  activity_type: string;
+  page_count: number | null;
+  sheet_count: number | null;
+  color_page_count: number | null;
+  monochrome_page_count: number | null;
+  duplex: boolean | null;
+  paper_size: string | null;
+  occurred_at: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  source_connector: string;
+  import_batch_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function listMfpDeviceUsage(id: string, limit = 100): Promise<CopierUsageRecord[]> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/usage?limit=${limit}`);
+  return response.json();
+}
+
+export type CopierIdentityType =
+  | "staff_id"
+  | "pin"
+  | "badge_id"
+  | "department_id"
+  | "user_code"
+  | "vendor_user_id"
+  | "email";
+
+export type StaffCopierIdentity = {
+  id: string;
+  staff_email: string;
+  identity_type: CopierIdentityType;
+  identity_value: string;
+  mfp_device_id: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StaffCopierIdentityCreateInput = {
+  staff_email: string;
+  identity_type: CopierIdentityType;
+  identity_value: string;
+  mfp_device_id?: string | null;
+  note?: string | null;
+};
+
+export type StaffCopierIdentityUpdateInput = Partial<
+  Omit<StaffCopierIdentityCreateInput, "staff_email">
+>;
+
+export async function listStaffCopierIdentities(params?: {
+  staff_email?: string;
+  identity_type?: string;
+}): Promise<StaffCopierIdentity[]> {
+  const query = new URLSearchParams();
+  if (params?.staff_email) query.set("staff_email", params.staff_email);
+  if (params?.identity_type) query.set("identity_type", params.identity_type);
+  const qs = query.toString();
+  const response = await authorizedFetch(`/api/v1/staff-copier-identities${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export async function listStaffMissingCopierIdentity(): Promise<GoogleWorkspaceUserEntry[]> {
+  const response = await authorizedFetch("/api/v1/staff-copier-identities/missing");
+  return response.json();
+}
+
+export async function getStaffCopierIdentitiesByEmail(email: string): Promise<StaffCopierIdentity[]> {
+  const response = await authorizedFetch(
+    `/api/v1/staff-copier-identities/by-staff/${encodeURIComponent(email)}`,
+  );
+  return response.json();
+}
+
+export async function createStaffCopierIdentity(
+  input: StaffCopierIdentityCreateInput,
+): Promise<StaffCopierIdentity> {
+  const response = await authorizedFetch("/api/v1/staff-copier-identities", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function updateStaffCopierIdentity(
+  id: string,
+  input: StaffCopierIdentityUpdateInput,
+): Promise<StaffCopierIdentity> {
+  const response = await authorizedFetch(`/api/v1/staff-copier-identities/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function deleteStaffCopierIdentity(id: string): Promise<void> {
+  await authorizedFetch(`/api/v1/staff-copier-identities/${id}`, { method: "DELETE" });
+}
+
+// --- Copier accounting imports (Stage 1) ---
+
+export type CopierImportTemplate = {
+  id: string;
+  name: string;
+  vendor: string;
+  model: string | null;
+  column_mapping: Record<string, string>;
+  identity_type: CopierIdentityType;
+  delimiter: string;
+  created_by: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CopierImportTemplateInput = {
+  name: string;
+  vendor: string;
+  model?: string | null;
+  column_mapping: Record<string, string>;
+  identity_type: CopierIdentityType;
+  delimiter?: string;
+  notes?: string | null;
+};
+
+export async function listCopierImportTemplates(): Promise<CopierImportTemplate[]> {
+  const response = await authorizedFetch("/api/v1/copier-imports/templates");
+  return response.json();
+}
+
+export async function createCopierImportTemplate(
+  input: CopierImportTemplateInput,
+): Promise<CopierImportTemplate> {
+  const response = await authorizedFetch("/api/v1/copier-imports/templates", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function updateCopierImportTemplate(
+  id: string,
+  input: Partial<CopierImportTemplateInput>,
+): Promise<CopierImportTemplate> {
+  const response = await authorizedFetch(`/api/v1/copier-imports/templates/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function deleteCopierImportTemplate(id: string): Promise<void> {
+  await authorizedFetch(`/api/v1/copier-imports/templates/${id}`, { method: "DELETE" });
+}
+
+export type CopierImportUpload = {
+  batch_id: string;
+  original_filename: string;
+  header: string[];
+  sample_rows: Record<string, string>[];
+  suggested_mapping: Record<string, string> | null;
+  suggested_identity_type: string | null;
+  row_count: number;
+};
+
+export async function uploadCopierImportFile(
+  deviceId: string,
+  file: File,
+  templateId?: string,
+): Promise<CopierImportUpload> {
+  const formData = new FormData();
+  formData.append("device_id", deviceId);
+  if (templateId) formData.append("template_id", templateId);
+  formData.append("file", file);
+  const response = await authorizedFetch("/api/v1/copier-imports/upload", {
+    method: "POST",
+    body: formData,
+  });
+  return response.json();
+}
+
+export type CopierImportPreviewRow = {
+  row_number: number;
+  external_identity_used: string | null;
+  staff_email: string | null;
+  is_duplicate: boolean;
+  error: string | null;
+};
+
+export type CopierImportPreview = {
+  batch_id: string;
+  total_rows: number;
+  valid_rows: number;
+  duplicate_rows: number;
+  unmapped_rows: number;
+  error_rows: number;
+  sample_rows: CopierImportPreviewRow[];
+  saved_template_id: string | null;
+};
+
+export async function previewCopierImportBatch(
+  batchId: string,
+  input: {
+    column_mapping: Record<string, string>;
+    identity_type: CopierIdentityType;
+    period_label?: string | null;
+    save_as_template?: CopierImportTemplateInput | null;
+  },
+): Promise<CopierImportPreview> {
+  const response = await authorizedFetch(`/api/v1/copier-imports/${batchId}/preview`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export type CopierImportBatch = {
+  id: string;
+  mfp_device_id: string;
+  template_id: string | null;
+  original_filename: string;
+  uploaded_by: string;
+  period_label: string | null;
+  status: "uploaded" | "previewed" | "committed" | "failed";
+  column_mapping: Record<string, string> | null;
+  identity_type: string | null;
+  row_count: number;
+  imported_row_count: number;
+  duplicate_row_count: number;
+  unmapped_identity_count: number;
+  error_detail: { row_number: number; message: string }[] | null;
+  committed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function commitCopierImportBatch(
+  batchId: string,
+  skipDuplicates = true,
+): Promise<CopierImportBatch> {
+  const response = await authorizedFetch(`/api/v1/copier-imports/${batchId}/commit`, {
+    method: "POST",
+    body: JSON.stringify({ skip_duplicates: skipDuplicates }),
+  });
+  return response.json();
+}
+
+export async function listCopierImportBatches(deviceId?: string): Promise<CopierImportBatch[]> {
+  const qs = deviceId ? `?mfp_device_id=${deviceId}` : "";
+  const response = await authorizedFetch(`/api/v1/copier-imports/batches${qs}`);
+  return response.json();
+}
+
+export async function getCopierImportBatch(id: string): Promise<CopierImportBatch> {
+  const response = await authorizedFetch(`/api/v1/copier-imports/batches/${id}`);
+  return response.json();
+}
+
+export async function deleteCopierImportBatch(id: string): Promise<void> {
+  await authorizedFetch(`/api/v1/copier-imports/batches/${id}`, { method: "DELETE" });
+}
+
+export type UnmappedCopierIdentityGroup = {
+  mfp_device_id: string;
+  external_identity_used: string;
+  occurrence_count: number;
+  first_seen: string;
+  last_seen: string;
+  attempted_identity_type: CopierIdentityType | null;
+  sample_raw_payload: Record<string, string>;
+};
+
+export type ResolveUnmappedInput = {
+  mfp_device_id?: string | null;
+  identity_type: CopierIdentityType;
+  identity_value: string;
+  resolved_email: string;
+  note?: string | null;
+};
+
+export type ResolveUnmappedResult = {
+  resolved_email: string;
+  identity_type: CopierIdentityType;
+  identity_value: string;
+  mfp_device_id: string | null;
+  backfilled_row_count: number;
+};
+
+export async function listUnmappedCopierActivity(): Promise<UnmappedCopierIdentityGroup[]> {
+  const response = await authorizedFetch("/api/v1/copier-unmapped");
+  return response.json();
+}
+
+export async function resolveUnmappedCopierActivity(
+  input: ResolveUnmappedInput,
+): Promise<ResolveUnmappedResult> {
+  const response = await authorizedFetch("/api/v1/copier-unmapped/resolve", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
 export type JobStatus = "received" | "forwarding" | "forwarded" | "failed" | "cancelled";
 export type AttributionMethod = "cups" | "mosyle" | "google_workspace" | "unresolved";
 
@@ -401,6 +873,8 @@ export type GoogleWorkspaceSettings = {
   last_sync_error: string | null;
   device_count: number;
   staff_org_unit_path: string | null;
+  auto_create_copier_identity_from_employee_id: boolean;
+  auto_copier_identity_type: CopierIdentityType;
 };
 
 export type GoogleWorkspaceSettingsInput = {
@@ -409,6 +883,8 @@ export type GoogleWorkspaceSettingsInput = {
   customer_id?: string;
   enabled?: boolean;
   staff_org_unit_path?: string;
+  auto_create_copier_identity_from_employee_id?: boolean;
+  auto_copier_identity_type?: CopierIdentityType;
 };
 
 export type GoogleWorkspaceTestResult = {
@@ -528,10 +1004,43 @@ export async function deleteDeviceOverride(macAddress: string): Promise<void> {
   });
 }
 
+export type AttributionAlias = {
+  id: string;
+  alias: string;
+  resolved_email: string;
+  source: "manual" | "google_workspace_sync";
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+  backfilled_job_count: number;
+};
+
+export async function listAttributionAliases(): Promise<AttributionAlias[]> {
+  const response = await authorizedFetch("/api/v1/attribution-aliases");
+  return response.json();
+}
+
+export async function createAttributionAlias(input: {
+  alias: string;
+  resolved_email: string;
+  note?: string | null;
+}): Promise<AttributionAlias> {
+  const response = await authorizedFetch("/api/v1/attribution-aliases", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function deleteAttributionAlias(id: string): Promise<void> {
+  await authorizedFetch(`/api/v1/attribution-aliases/${id}`, { method: "DELETE" });
+}
+
 export type GoogleWorkspaceUserEntry = {
   email: string;
   name: string | null;
   employee_id: string | null;
+  aliases: string[] | null;
 };
 
 export async function listGoogleWorkspaceUsers(): Promise<GoogleWorkspaceUserEntry[]> {
@@ -786,6 +1295,48 @@ export async function downloadReportCsv(filters?: ReportFilters): Promise<void> 
   const a = document.createElement("a");
   a.href = url;
   a.download = "print-insights-export.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export type CombinedSummary = {
+  print_pages: number;
+  copy_pages: number;
+  total_pages: number;
+  unmapped_copy_activity_count: number;
+};
+
+export async function getCombinedReportSummary(filters?: ReportFilters): Promise<CombinedSummary> {
+  const qs = buildReportQuery(filters);
+  const response = await authorizedFetch(`/api/v1/reports/combined-summary${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export type CombinedLeaderboardEntry = {
+  key: string;
+  label: string;
+  print_pages: number;
+  copy_pages: number;
+  total_pages: number;
+};
+
+export async function getCombinedUserLeaderboard(
+  filters?: ReportFilters,
+  limit = 10,
+): Promise<CombinedLeaderboardEntry[]> {
+  const qs = buildReportQuery(filters, { limit: String(limit) });
+  const response = await authorizedFetch(`/api/v1/reports/combined-leaderboard${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export async function downloadCombinedReportCsv(filters?: ReportFilters): Promise<void> {
+  const qs = buildReportQuery(filters);
+  const response = await authorizedFetch(`/api/v1/reports/export-combined.csv${qs ? `?${qs}` : ""}`);
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "combined-print-copy-export.csv";
   a.click();
   URL.revokeObjectURL(url);
 }

@@ -20,6 +20,7 @@ from uuid import UUID
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.copier_usage import CopierUsageRecord
 from app.models.job import Job
 from app.models.printer import Printer
 
@@ -316,3 +317,153 @@ async def get_raw_rows_for_export(db: AsyncSession, filters: ReportFilters):
         select(Job, Printer.name.label("printer_name")), filters
     ).order_by(Job.created_at.desc())
     return (await db.execute(stmt)).all()
+
+
+# --- Combined print + copy reporting (Stage 1 copier accounting) ---
+#
+# CopierUsageRecord.staff_email is deliberately the same loose, plain-string
+# join key as Job.submitted_by (see app/models/copier_usage.py) — merging
+# the two here is Python dict merging by that shared string, not a SQL
+# join, so neither table needs a schema change to support this.
+#
+# Only start/end/building/submitted_by from ReportFilters apply to the
+# copier side — printer_id/status/color_mode/duplex are IPP-job-specific
+# concepts with no CopierUsageRecord equivalent, and are silently ignored
+# here rather than erroring (a combined report with, say, a color_mode
+# filter still shows unfiltered copy totals; this is a known Stage 1
+# simplification, not a bug). Date filtering uses created_at (when the
+# usage was recorded in PrintOps — via import or a future direct
+# connector), not occurred_at/period_start/period_end, since not every
+# row has occurred_at populated (period-based rows don't) and created_at
+# is the one timestamp every row always has.
+
+
+def _apply_copier_filters(stmt: Select, filters: ReportFilters) -> Select:
+    if filters.start is not None:
+        stmt = stmt.where(CopierUsageRecord.created_at >= filters.start)
+    if filters.end is not None:
+        stmt = stmt.where(CopierUsageRecord.created_at < filters.end)
+    if filters.building is not None:
+        stmt = stmt.where(CopierUsageRecord.location_building == filters.building)
+    if filters.submitted_by is not None:
+        stmt = stmt.where(CopierUsageRecord.staff_email == filters.submitted_by)
+    return stmt
+
+
+@dataclass
+class CopyTotals:
+    copy_record_count: int = 0
+    copy_pages: int = 0
+
+
+async def get_copier_usage_totals(db: AsyncSession, filters: ReportFilters) -> dict[str, CopyTotals]:
+    """staff_email -> aggregated copy totals — the copier-side mirror of
+    get_user_leaderboard, over CopierUsageRecord instead of Job. Excludes
+    unmapped rows (staff_email is null) entirely; see
+    get_unmapped_copier_activity_count for surfacing those separately
+    rather than silently dropping them from the report."""
+    stmt = _apply_copier_filters(
+        select(
+            CopierUsageRecord.staff_email,
+            func.count(CopierUsageRecord.id),
+            func.sum(func.coalesce(CopierUsageRecord.page_count, 0)),
+        ).where(CopierUsageRecord.staff_email.is_not(None)),
+        filters,
+    ).group_by(CopierUsageRecord.staff_email)
+    rows = (await db.execute(stmt)).all()
+    return {
+        email: CopyTotals(copy_record_count=count, copy_pages=pages or 0)
+        for email, count, pages in rows
+    }
+
+
+async def get_unmapped_copier_activity_count(db: AsyncSession, filters: ReportFilters) -> int:
+    """Count of CopierUsageRecord rows with no resolved staff_email in this
+    filtered window — surfaced as its own callout on the combined report
+    (app/routers/copier_unmapped.py is where an admin actually resolves
+    these), never silently excluded from view."""
+    stmt = _apply_copier_filters(
+        select(func.count(CopierUsageRecord.id)).where(CopierUsageRecord.staff_email.is_(None)),
+        filters,
+    )
+    return (await db.execute(stmt)).scalar_one() or 0
+
+
+@dataclass
+class CombinedSummary:
+    print_pages: int = 0
+    copy_pages: int = 0
+    total_pages: int = 0
+    unmapped_copy_activity_count: int = 0
+
+
+async def get_combined_summary(db: AsyncSession, filters: ReportFilters) -> CombinedSummary:
+    print_summary = await get_summary(db, filters)
+    copy_totals = await get_copier_usage_totals(db, filters)
+    copy_pages = sum(t.copy_pages for t in copy_totals.values())
+    unmapped_count = await get_unmapped_copier_activity_count(db, filters)
+    return CombinedSummary(
+        print_pages=print_summary.total_pages,
+        copy_pages=copy_pages,
+        total_pages=print_summary.total_pages + copy_pages,
+        unmapped_copy_activity_count=unmapped_count,
+    )
+
+
+@dataclass
+class CombinedLeaderboardEntry:
+    key: str  # staff email
+    label: str
+    print_pages: int = 0
+    copy_pages: int = 0
+    total_pages: int = 0
+
+
+async def _get_all_user_print_totals(
+    db: AsyncSession, filters: ReportFilters
+) -> dict[str, LeaderboardEntry]:
+    """Same query as get_user_leaderboard, but with no limit — the
+    combined leaderboard below needs every user's print total before it
+    can rank by combined (print + copy) pages; get_user_leaderboard's own
+    limit would otherwise cut someone with modest print volume but heavy
+    copy volume before the copy side is even merged in, undercounting
+    them in the combined ranking."""
+    stmt = (
+        _apply_filters(
+            select(
+                Job.submitted_by,
+                func.count(Job.id).label("job_count"),
+                func.sum(func.coalesce(Job.page_count, 0)).label("total_pages"),
+            ),
+            filters,
+        )
+        .where(Job.submitted_by.is_not(None))
+        .group_by(Job.submitted_by)
+    )
+    rows = (await db.execute(stmt)).all()
+    return {
+        r.submitted_by: LeaderboardEntry(
+            key=r.submitted_by, label=r.submitted_by, job_count=r.job_count, total_pages=r.total_pages or 0
+        )
+        for r in rows
+    }
+
+
+async def get_combined_user_leaderboard(
+    db: AsyncSession, filters: ReportFilters, limit: int = 10
+) -> list[CombinedLeaderboardEntry]:
+    print_totals = await _get_all_user_print_totals(db, filters)
+    copy_totals = await get_copier_usage_totals(db, filters)
+
+    merged: dict[str, CombinedLeaderboardEntry] = {
+        email: CombinedLeaderboardEntry(
+            key=email, label=email, print_pages=entry.total_pages, total_pages=entry.total_pages
+        )
+        for email, entry in print_totals.items()
+    }
+    for email, copy_entry in copy_totals.items():
+        entry = merged.setdefault(email, CombinedLeaderboardEntry(key=email, label=email))
+        entry.copy_pages = copy_entry.copy_pages
+        entry.total_pages += copy_entry.copy_pages
+
+    return sorted(merged.values(), key=lambda e: e.total_pages, reverse=True)[:limit]

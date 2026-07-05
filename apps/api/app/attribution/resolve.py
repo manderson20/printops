@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.integrations.classguard import ClassGuardError, client_from_settings, get_settings
 from app.integrations.mosyle import normalize_mac as normalize_mac_mosyle
+from app.models.attribution_alias import AttributionAlias
 from app.models.device_override import DeviceUserOverride
 from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceSettings, GoogleWorkspaceUser
 from app.models.mosyle import MosyleDevice, MosyleSettings
@@ -62,6 +63,20 @@ async def _find_roster_user_by_email(db: AsyncSession, email: str) -> GoogleWork
     return result.scalar_one_or_none()
 
 
+async def _find_attribution_alias(db: AsyncSession, value: str) -> AttributionAlias | None:
+    """Checks app/models/attribution_alias.py's alias table — an admin
+    merge ("matt" always means manderson@district.org, regardless of
+    device) or a Google Workspace account alias synced automatically
+    (app/integrations/google_workspace.py). Checked for both a bare
+    username and an already-email-shaped CUPS value, since a stale/old
+    alias email is just as much "the wrong identity" as a raw local
+    username is."""
+    result = await db.execute(
+        select(AttributionAlias).where(AttributionAlias.alias == value.strip().lower())
+    )
+    return result.scalar_one_or_none()
+
+
 async def _find_roster_user_by_local_part(db: AsyncSession, username: str) -> GoogleWorkspaceUser | None:
     """Best-effort reconciliation for a Mosyle-reported username that
     doesn't show up verbatim as a roster email — Mosyle's own `username`
@@ -105,15 +120,31 @@ async def resolve_user(
     since Mosyle's own reported email can be a stale alias that no longer
     matches the canonical Workspace address.
 
+    A CUPS-reported value (email-shaped or not) is checked against
+    app/models/attribution_alias.py's alias table before being trusted as
+    final — an admin-merged username/alias (app/routers/
+    attribution_aliases.py) or a Google Workspace account alias synced
+    automatically (app/integrations/google_workspace.py) both resolve to
+    the canonical email this way. For an email-shaped value this happens
+    immediately (no MAC lookup needed either way). For a bare username,
+    it's still checked only as the last-resort fallback, same place and
+    same rationale as the plain "cups" fallback below it — a device-
+    specific MAC match (admin override, then Mosyle, then Google
+    Workspace) is more precise than a general "this string always means
+    X" alias and gets first refusal.
+
     Returns (attributed_user, method, mac_address) where method is one of
-    "cups" / "override" / "mosyle" / "google_workspace" / "unresolved", and
-    mac_address is whatever ClassGuard resolved for source_host (or None),
-    independent of whether that MAC resolved to a user — callers persist
-    it on the Job row so a later admin override can backfill this specific
-    job (see app/routers/device_overrides.py)."""
+    "cups" / "alias" / "override" / "mosyle" / "google_workspace" /
+    "unresolved", and mac_address is whatever ClassGuard resolved for
+    source_host (or None), independent of whether that MAC resolved to a
+    user — callers persist it on the Job row so a later admin override
+    can backfill this specific job (see app/routers/device_overrides.py)."""
     cups_user_clean = cups_user if cups_user and cups_user.strip().lower() not in GENERIC_CUPS_USERS else None
 
     if cups_user_clean and _looks_like_email(cups_user_clean):
+        alias = await _find_attribution_alias(db, cups_user_clean)
+        if alias:
+            return alias.resolved_email, "alias", None
         return cups_user_clean, "cups", None
 
     mac: str | None = None
@@ -163,6 +194,9 @@ async def resolve_user(
                 return device.user_email, "google_workspace", mac
 
     if cups_user_clean:
+        alias = await _find_attribution_alias(db, cups_user_clean)
+        if alias:
+            return alias.resolved_email, "alias", mac
         return cups_user_clean, "cups", mac
 
     return cups_user or "unknown", "unresolved", mac
