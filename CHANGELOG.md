@@ -5,6 +5,28 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.15.2] - 2026-07-06
+
+- **Fixed color copiers silently defaulting to grayscale for some apps.**
+  Word, Adobe, and similar apps that don't explicitly request a color mode
+  inherit whatever a printer's queue declares as its default — four color
+  copiers (CO Danica Copier, IT Department Color Copier, ES Room 102 Color
+  Printer, ES Principal Color Copier) had a stored `print-color-mode`
+  default of monochrome, so those apps printed grayscale despite the user
+  selecting Color, while apps that set their own explicit color preference
+  (Chrome) were unaffected. Corrected the default on all four printers'
+  queues directly; `scripts/sync_cups_queue.sh` and
+  `scripts/sync_release_queue.sh` now also detect color-capable printers
+  during every future sync and force this default to color automatically,
+  so this can't silently regress or recur on newly-added printers.
+- **Fixed ES-MS Library Printer not printing PDFs correctly.** This older
+  HP LaserJet 4250 doesn't support IPP Everywhere, so its queue had
+  silently fallen back to CUPS's generic PWG-Raster PPD — a format this
+  printer can't interpret at all, since it only accepts PostScript, PCL,
+  and plain text. Reassigned both its client-facing and internal release
+  queues to CUPS's Generic PostScript PPD, restoring the standard PDF
+  filter chain.
+
 ## [0.15.1] - 2026-07-06
 
 - **Fixed the "Log out" button drifting to the bottom of the page.** On a
