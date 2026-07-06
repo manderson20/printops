@@ -26,7 +26,7 @@ class LdapRelaySettings(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
 
     enabled: Mapped[bool] = mapped_column(default=False, server_default="false")
-    # e.g. "dc=example,dc=org" — admin-chosen, shared across every
+    # e.g. "dc=example,dc=com" — admin-chosen, shared across every
     # printer's LDAP address-book config so they can all point at the same
     # base DN. Entries are served at "ou=people,<base_dn>".
     base_dn: Mapped[str] = mapped_column(default="dc=printops,dc=local", server_default="dc=printops,dc=local")

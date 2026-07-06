@@ -406,10 +406,10 @@ async def test_bare_username_alias_resolves_without_any_mac_lookup(db_session_fa
     machinery configured at all still resolves via a manual attribution
     alias (app/routers/attribution_aliases.py)."""
     async with db_session_factory() as db:
-        db.add(AttributionAlias(alias="matt", resolved_email="manderson@example.org", source="manual"))
+        db.add(AttributionAlias(alias="matt", resolved_email="manderson@example.com", source="manual"))
         await db.commit()
         user, method, mac = await resolve_user(db, "matt", None)
-    assert (user, method, mac) == ("manderson@example.org", "alias", None)
+    assert (user, method, mac) == ("manderson@example.com", "alias", None)
 
 
 @pytest.mark.asyncio
@@ -428,14 +428,14 @@ async def test_email_shaped_alias_resolves_immediately_no_mac_lookup(db_session_
         db.add(ClassGuardSettings(enabled=True, access_token_encrypted=encrypt("tok")))
         db.add(
             AttributionAlias(
-                alias="manderson.old@example.org",
-                resolved_email="manderson@example.org",
+                alias="manderson.old@example.com",
+                resolved_email="manderson@example.com",
                 source="google_workspace_sync",
             )
         )
         await db.commit()
-        user, method, mac = await resolve_user(db, "manderson.old@example.org", "10.0.0.5")
-    assert (user, method, mac) == ("manderson@example.org", "alias", None)
+        user, method, mac = await resolve_user(db, "manderson.old@example.com", "10.0.0.5")
+    assert (user, method, mac) == ("manderson@example.com", "alias", None)
 
 
 @pytest.mark.asyncio
@@ -452,7 +452,7 @@ async def test_device_override_still_wins_over_username_alias(db_session_factory
     async with db_session_factory() as db:
         db.add(ClassGuardSettings(enabled=True, access_token_encrypted=encrypt("tok")))
         db.add(DeviceUserOverride(mac_address="AA:BB:CC:DD:EE:FF", resolved_email="override@example.com"))
-        db.add(AttributionAlias(alias="matt", resolved_email="manderson@example.org", source="manual"))
+        db.add(AttributionAlias(alias="matt", resolved_email="manderson@example.com", source="manual"))
         await db.commit()
         user, method, mac = await resolve_user(db, "matt", "10.0.0.5")
     assert (user, method, mac) == ("override@example.com", "override", "AA:BB:CC:DD:EE:FF")

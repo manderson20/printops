@@ -28,7 +28,7 @@ async def db_session_factory():
     async with session_factory() as seed:
         seed.add(
             GoogleWorkspaceUser(
-                email="manderson@example.org",
+                email="manderson@example.com",
                 name="Matt Anderson",
                 synced_at=datetime.now(UTC),
             )
@@ -81,7 +81,7 @@ def test_create_rejects_email_not_in_roster(client, auth_headers):
     response = client.post(
         "/api/v1/attribution-aliases",
         headers=auth_headers,
-        json={"alias": "matt", "resolved_email": "nobody@example.org"},
+        json={"alias": "matt", "resolved_email": "nobody@example.com"},
     )
     assert response.status_code == 400
 
@@ -89,12 +89,12 @@ def test_create_rejects_email_not_in_roster(client, auth_headers):
 def test_create_backfills_existing_jobs(client, auth_headers, printer_id, backend_headers):
     _make_job(client, printer_id, backend_headers, "matt")
     _make_job(client, printer_id, backend_headers, "matt")
-    _make_job(client, printer_id, backend_headers, "someone.else@example.org")
+    _make_job(client, printer_id, backend_headers, "someone.else@example.com")
 
     response = client.post(
         "/api/v1/attribution-aliases",
         headers=auth_headers,
-        json={"alias": "matt", "resolved_email": "manderson@example.org"},
+        json={"alias": "matt", "resolved_email": "manderson@example.com"},
     )
     assert response.status_code == 201, response.text
     body = response.json()
@@ -102,13 +102,13 @@ def test_create_backfills_existing_jobs(client, auth_headers, printer_id, backen
     assert body["source"] == "manual"
 
     jobs = client.get("/api/v1/jobs", headers=auth_headers).json()
-    matt_jobs = [j for j in jobs if j["submitted_by"] == "manderson@example.org"]
+    matt_jobs = [j for j in jobs if j["submitted_by"] == "manderson@example.com"]
     assert len(matt_jobs) == 2
     assert all(j["attribution_method"] == "alias" for j in matt_jobs)
 
 
 def test_create_rejects_duplicate_alias(client, auth_headers):
-    payload = {"alias": "matt", "resolved_email": "manderson@example.org"}
+    payload = {"alias": "matt", "resolved_email": "manderson@example.com"}
     first = client.post("/api/v1/attribution-aliases", headers=auth_headers, json=payload)
     assert first.status_code == 201
     second = client.post("/api/v1/attribution-aliases", headers=auth_headers, json=payload)
@@ -119,19 +119,19 @@ def test_alias_matching_is_case_insensitive(client, auth_headers):
     response = client.post(
         "/api/v1/attribution-aliases",
         headers=auth_headers,
-        json={"alias": "Matt", "resolved_email": "MAndersoN@example.org"},
+        json={"alias": "Matt", "resolved_email": "MAndersoN@example.com"},
     )
     assert response.status_code == 201
     body = response.json()
     assert body["alias"] == "matt"
-    assert body["resolved_email"] == "manderson@example.org"
+    assert body["resolved_email"] == "manderson@example.com"
 
 
 def test_list_and_delete(client, auth_headers):
     alias_id = client.post(
         "/api/v1/attribution-aliases",
         headers=auth_headers,
-        json={"alias": "matt", "resolved_email": "manderson@example.org"},
+        json={"alias": "matt", "resolved_email": "manderson@example.com"},
     ).json()["id"]
 
     listing = client.get("/api/v1/attribution-aliases", headers=auth_headers)
@@ -152,7 +152,7 @@ def test_list_attribution_aliases_pagination_and_search(client, auth_headers):
     client.post(
         "/api/v1/attribution-aliases",
         headers=auth_headers,
-        json={"alias": "matt", "resolved_email": "manderson@example.org"},
+        json={"alias": "matt", "resolved_email": "manderson@example.com"},
     )
 
     response = client.get(
