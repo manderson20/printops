@@ -23,7 +23,7 @@ function LoginForm() {
     setSubmitting(true);
     try {
       await login(username, password);
-      router.push("/printers");
+      router.push("/insights");
     } catch {
       setError("Invalid username or password.");
     } finally {
@@ -35,12 +35,22 @@ function LoginForm() {
     <div className="flex flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
       <div className="flex w-full max-w-sm flex-col gap-4 rounded-xl border border-black/[.08] bg-white p-8 dark:border-white/[.145] dark:bg-black">
         <div className="mb-2 flex flex-col items-center gap-2 text-center">
-          <Image src="/printops-logo.png" alt="PrintOps" width={56} height={56} priority />
-          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Sign in to PrintOps</h1>
+          <Image
+            src="/printops-logo.png"
+            alt="PrintOps"
+            width={56}
+            height={56}
+            priority
+          />
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">
+            Sign in to PrintOps
+          </h1>
           <p className="text-xs text-zinc-500">Print management. Simplified.</p>
         </div>
 
-        {expired && <ErrorState>Your session expired. Please sign in again.</ErrorState>}
+        {expired && (
+          <ErrorState>Your session expired. Please sign in again.</ErrorState>
+        )}
 
         <Button type="button" variant="secondary" onClick={startGoogleLogin}>
           Sign in with Google

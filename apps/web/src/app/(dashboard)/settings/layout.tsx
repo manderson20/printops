@@ -10,6 +10,7 @@ const SETTINGS_NAV = [
   { href: "/settings/users", label: "Users" },
   { href: "/settings/snmp", label: "SNMP" },
   { href: "/settings/aliases", label: "Attribution Aliases" },
+  { href: "/settings/insights", label: "Insights" },
 ] as const;
 
 export default function SettingsLayout({ children }: { children: ReactNode }) {
@@ -32,16 +33,20 @@ export default function SettingsLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex w-full max-w-5xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Settings</h1>
+        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">
+          Settings
+        </h1>
         <p className="mt-1 text-sm text-zinc-500">
-          Org-wide configuration that isn&apos;t tied to a single device or integration.
+          Org-wide configuration that isn&apos;t tied to a single device or
+          integration.
         </p>
       </div>
 
       <div className="flex gap-8">
         <nav className="flex w-44 shrink-0 flex-col gap-1">
           {SETTINGS_NAV.map((link) => {
-            const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
+            const active =
+              pathname === link.href || pathname.startsWith(`${link.href}/`);
             return (
               <Link
                 key={link.href}
