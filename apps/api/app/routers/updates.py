@@ -7,7 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.deps import get_current_user, require_role, verify_backend_token
-from app.integrations.git_update import GitUpdateError, get_changelog_section, get_current_version, get_latest_version
+from app.integrations.git_update import (
+    GitUpdateError,
+    get_changelog_section,
+    get_current_version,
+    get_latest_version,
+    is_newer_version,
+)
 from app.models.update_schedule import UpdateSchedule
 from app.schemas.auth import UserOut
 from app.schemas.update_schedule import (
@@ -41,7 +47,7 @@ async def check_for_update():
         latest = get_latest_version()
     except GitUpdateError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    update_available = latest != current
+    update_available = is_newer_version(latest, current)
     changelog = get_changelog_section(latest) if update_available else None
     return UpdateCheckOut(
         current_version=current,

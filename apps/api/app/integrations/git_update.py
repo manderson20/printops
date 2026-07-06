@@ -50,6 +50,34 @@ def get_latest_version() -> str:
     return _run_git(["show", "origin/main:VERSION"]).strip()
 
 
+def is_newer_version(candidate: str, baseline: str) -> bool:
+    """True only if `candidate` is a strictly greater version than
+    `baseline` — plain `!=` isn't enough, since origin/main can legitimately
+    be *behind* the locally running working tree (e.g. commits made and
+    deployed directly on this box, not yet pushed) and that must never be
+    reported as "an update is available".
+
+    Falls back to `candidate != baseline` for anything that doesn't parse
+    as dotted integers (e.g. a hand-edited non-numeric VERSION file) —
+    same conservative "don't block surfacing a real difference" spirit as
+    get_changelog_section's own fallback below, just inverted: an
+    unparseable version can't be proven newer, so it's treated as not an
+    update rather than crashing the check."""
+
+    def _parse(value: str) -> tuple[int, ...] | None:
+        parts = value.strip().split(".")
+        try:
+            return tuple(int(p) for p in parts)
+        except ValueError:
+            return None
+
+    candidate_parts = _parse(candidate)
+    baseline_parts = _parse(baseline)
+    if candidate_parts is None or baseline_parts is None:
+        return candidate != baseline
+    return candidate_parts > baseline_parts
+
+
 def get_changelog_section(version: str) -> str | None:
     """Best-effort — a missing/malformed changelog section shouldn't block
     surfacing that an update is available."""
