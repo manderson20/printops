@@ -94,6 +94,25 @@ def test_check_for_update_reports_up_to_date_without_fetching_changelog(client, 
     assert body["changelog"] is None
 
 
+def test_check_for_update_not_available_when_origin_is_behind(client, auth_headers, monkeypatch):
+    """Regression test: origin/main can legitimately be behind the running
+    working tree (commits made/deployed locally, not yet pushed) — this
+    must never be reported as an update, even though the versions differ."""
+    monkeypatch.setattr("app.routers.updates.get_current_version", lambda: "0.12.0")
+    monkeypatch.setattr("app.routers.updates.get_latest_version", lambda: "0.7.0")
+
+    def fail_if_called(v):
+        raise AssertionError("changelog should not be fetched when not actually an update")
+
+    monkeypatch.setattr("app.routers.updates.get_changelog_section", fail_if_called)
+
+    response = client.get("/api/v1/updates/check", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["update_available"] is False
+    assert body["changelog"] is None
+
+
 def test_check_for_update_surfaces_git_errors_as_502(client, auth_headers, monkeypatch):
     def raise_error():
         raise git_update.GitUpdateError("could not reach origin")

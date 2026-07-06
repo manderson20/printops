@@ -5,6 +5,15 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.15.0] - 2026-07-06
+
+- **Fixed a false "update available" notice.** The Updates page compared
+  versions with a plain inequality, so it reported an update whenever
+  origin/main's version merely *differed* from what's running — including
+  when origin was actually behind (commits made/deployed directly on this
+  box, not yet pushed). It now only flags a real update when origin's
+  version is genuinely newer.
+
 ## [0.14.0] - 2026-07-06
 
 - **Per-printer, per-user page quotas.** Cap how many pages a user can
