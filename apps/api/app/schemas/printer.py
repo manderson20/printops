@@ -82,6 +82,13 @@ class PrinterUpdate(BaseModel):
         "canon", "konica_minolta", "hp", "lexmark", "kyocera", "generic", ""
     ] | None = None
 
+    ldap_enabled: bool | None = None
+    ldap_bind_username: str | None = None
+    # Write-only, like snmp_community above — never echoed back (see
+    # PrinterOut's has_ldap_bind_password), hashed (not encrypted) into
+    # ldap_bind_password_hash on write (see routers/printers.py).
+    ldap_bind_password: str | None = None
+
 
 class PrinterConnectionOut(BaseModel):
     """Minimal connection + capability summary for the CUPS backend script and
@@ -150,6 +157,10 @@ class PrinterOut(BaseModel):
     snmp_version: SnmpVersion | None
     has_snmp_community: bool
     snmp_vendor_profile: VendorProfile | None
+
+    ldap_enabled: bool
+    ldap_bind_username: str | None
+    has_ldap_bind_password: bool
 
     page_count_total: int | None
     page_count_copy: int | None

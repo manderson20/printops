@@ -47,6 +47,9 @@ class JobOut(BaseModel):
     attribution_method: str
     file_size_bytes: int | None
     status: str
+    # "pin_release" | "quota" | None — see Job.hold_reason's docstring
+    # (app/models/job.py) for why status="held" alone isn't enough anymore.
+    hold_reason: str | None
     error_message: str | None
     page_count: int | None
     document_name: str | None

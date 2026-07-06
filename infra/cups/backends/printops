@@ -233,7 +233,13 @@ def main() -> int:
 
     job_record_id = job["id"]
 
-    if printer.get("release_required"):
+    # Whether to hold instead of forward, and why, is decided server-side in
+    # create_job (app/routers/jobs.py:create_job ->
+    # app/quotas/service.py:resolve_hold_reason) — covers both a
+    # release_required printer ("pin_release") and a user over their page
+    # quota ("quota"). This script just reacts to whichever came back on the
+    # job it already created above, rather than deciding anything itself.
+    if job.get("hold_reason"):
         try:
             held_path = spool_held_file(job_record_id, filename)
         except OSError as exc:

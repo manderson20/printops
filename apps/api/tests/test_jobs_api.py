@@ -312,6 +312,104 @@ def test_update_job_held_uses_configured_expiry_window(
     assert 0.9 < delta_hours < 1.1
 
 
+def test_create_job_no_hold_reason_by_default(client, printer_id, backend_headers):
+    create = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "matt@example.org"},
+        headers=backend_headers,
+    )
+    assert create.status_code == 201
+    assert create.json()["hold_reason"] is None
+    assert create.json()["status"] == "forwarding"
+
+
+async def test_create_job_hold_reason_pin_release(
+    client, backend_headers, db_session_factory
+):
+    async with db_session_factory() as session:
+        printer = Printer(name="Release Printer", ip_address="10.0.0.10", release_required=True)
+        session.add(printer)
+        await session.commit()
+        await session.refresh(printer)
+
+    create = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": str(printer.id), "submitted_by": "matt@example.org"},
+        headers=backend_headers,
+    )
+    assert create.status_code == 201
+    body = create.json()
+    assert body["hold_reason"] == "pin_release"
+    # The job's persisted status is still "forwarding" at create time — the
+    # CUPS backend script is what flips it to "held" via a follow-up PATCH,
+    # once it sees hold_reason set on this response.
+    assert body["status"] == "forwarding"
+
+
+async def test_create_job_hold_reason_quota_when_over_limit(
+    client, auth_headers, backend_headers, printer_id
+):
+    quota = client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": None, "period": "monthly", "page_limit": 10},
+    )
+    assert quota.status_code == 201
+    enable = client.put("/api/v1/settings/quotas", headers=auth_headers, json={"enabled": True})
+    assert enable.status_code == 200
+
+    first = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "matt@example.org"},
+        headers=backend_headers,
+    )
+    client.patch(
+        f"/api/v1/jobs/{first.json()['id']}",
+        headers=backend_headers,
+        json={"status": "forwarded", "page_count": 10},
+    )
+
+    second = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "matt@example.org"},
+        headers=backend_headers,
+    )
+    assert second.json()["hold_reason"] == "quota"
+
+
+async def test_create_job_no_hold_reason_when_quotas_disabled(
+    client, auth_headers, backend_headers, printer_id
+):
+    quota = client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": None, "period": "monthly", "page_limit": 1},
+    )
+    assert quota.status_code == 201
+    # Quotas configured but the org-wide switch is off (the default) — no
+    # job should ever be held for it.
+    settings = client.get("/api/v1/settings/quotas", headers=auth_headers)
+    assert settings.json()["enabled"] is False
+
+    first = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "matt@example.org"},
+        headers=backend_headers,
+    )
+    client.patch(
+        f"/api/v1/jobs/{first.json()['id']}",
+        headers=backend_headers,
+        json={"status": "forwarded", "page_count": 5},
+    )
+
+    second = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "matt@example.org"},
+        headers=backend_headers,
+    )
+    assert second.json()["hold_reason"] is None
+
+
 async def test_job_usage_aggregates_per_user(
     client, printer_id, backend_headers, auth_headers, db_session_factory
 ):

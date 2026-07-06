@@ -591,6 +591,60 @@ def test_update_printer_blank_string_clears_snmp_overrides(client, auth_headers,
     assert body["has_snmp_community"] is False
     assert body["snmp_version"] is None
     assert body["snmp_port"] is None
+
+
+def test_update_printer_ldap_bind_password_never_echoed(client, auth_headers, mock_failed_probe):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "LDAP Printer", "ip_address": "10.0.0.31"},
+    )
+    printer_id = create.json()["id"]
+
+    response = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={
+            "ldap_enabled": True,
+            "ldap_bind_username": "ldap-printer",
+            "ldap_bind_password": "top-secret",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ldap_enabled"] is True
+    assert body["ldap_bind_username"] == "ldap-printer"
+    assert body["has_ldap_bind_password"] is True
+    assert "top-secret" not in response.text
+
+
+def test_update_printer_blank_string_clears_ldap_overrides(client, auth_headers, mock_failed_probe):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "LDAP Printer", "ip_address": "10.0.0.31"},
+    )
+    printer_id = create.json()["id"]
+
+    client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={
+            "ldap_enabled": True,
+            "ldap_bind_username": "ldap-printer",
+            "ldap_bind_password": "top-secret",
+        },
+    )
+
+    cleared = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"ldap_bind_username": "", "ldap_bind_password": ""},
+    )
+    assert cleared.status_code == 200
+    body = cleared.json()
+    assert body["ldap_bind_username"] is None
+    assert body["has_ldap_bind_password"] is False
     assert body["snmp_vendor_profile"] is None
 
 

@@ -87,12 +87,20 @@ async def list_held_jobs(
     token: str, payload: ReleasePinRequest, db: AsyncSession = Depends(get_db)
 ):
     """This person's held jobs at this one printer only — matches the
-    "specific URL per printer" kiosk design, not a cross-printer view."""
+    "specific URL per printer" kiosk design, not a cross-printer view.
+    Restricted to hold_reason="pin_release" — a job held for being over a
+    page quota (app/routers/quota_holds.py) must never appear here, since
+    the whole point of that hold is that only an admin can release it."""
     printer = await _get_printer_by_token(db, token)
     user = await _resolve_pin(db, token, payload.pin)
     result = await db.execute(
         select(Job)
-        .where(Job.printer_id == printer.id, Job.submitted_by == user.email, Job.status == "held")
+        .where(
+            Job.printer_id == printer.id,
+            Job.submitted_by == user.email,
+            Job.status == "held",
+            Job.hold_reason == "pin_release",
+        )
         .order_by(Job.created_at)
     )
     return result.scalars().all()
@@ -111,6 +119,7 @@ async def release_job(
         or job.printer_id != printer.id
         or job.submitted_by != user.email
         or job.status != "held"
+        or job.hold_reason != "pin_release"
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Held job not found.")
 

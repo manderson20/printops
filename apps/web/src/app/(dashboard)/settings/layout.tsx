@@ -11,6 +11,8 @@ const SETTINGS_NAV = [
   { href: "/settings/snmp", label: "SNMP" },
   { href: "/settings/aliases", label: "Attribution Aliases" },
   { href: "/settings/insights", label: "Insights" },
+  { href: "/settings/quotas", label: "Quotas" },
+  { href: "/settings/ldap", label: "LDAP Relay" },
 ] as const;
 
 export default function SettingsLayout({ children }: { children: ReactNode }) {

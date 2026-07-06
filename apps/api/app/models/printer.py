@@ -113,6 +113,25 @@ class Printer(Base, TimestampMixin):
     )
     page_count_error: Mapped[str | None] = mapped_column(default=None)
 
+    # LDAP address-book relay (infra/ldap-relay/, app/routers/internal.py's
+    # /ldap/bind + /ldap/search) — lets this printer's scan-to-email address
+    # book search PrintOps instead of holding its own direct connection to
+    # Google Workspace. ldap_bind_username is a short admin-chosen login
+    # name (plaintext — not itself secret, like a username), matched
+    # case-insensitively against whatever bind identifier the copier sends
+    # (vendors format the LDAP "username"/DN field differently, so this
+    # isn't a strict full-DN comparison). The password is hashed (bcrypt via
+    # app/core/security.py's hash_password/verify_password — the same
+    # scheme the local admin login uses), not encrypted like
+    # snmp_community_encrypted: PrintOps only ever needs to *verify* a bind
+    # attempt, never reproduce the plaintext, so a one-way hash is the
+    # stronger choice here. Off by default per printer, same as
+    # LdapRelaySettings.enabled is off by default org-wide — both gates
+    # must be on for this printer's address book to actually work.
+    ldap_enabled: Mapped[bool] = mapped_column(default=False, server_default="false")
+    ldap_bind_username: Mapped[str | None] = mapped_column(unique=True, default=None)
+    ldap_bind_password_hash: Mapped[str | None] = mapped_column(default=None)
+
     @property
     def has_snmp_community(self) -> bool:
         """Masks snmp_community_encrypted for PrinterOut — a plain property
@@ -120,3 +139,9 @@ class Printer(Base, TimestampMixin):
         getattr the same way it reads a real column, matching how routers
         just `return printer` and let FastAPI do the ORM->schema mapping."""
         return bool(self.snmp_community_encrypted)
+
+    @property
+    def has_ldap_bind_password(self) -> bool:
+        """Masks ldap_bind_password_hash for PrinterOut — same masking
+        pattern as has_snmp_community above."""
+        return bool(self.ldap_bind_password_hash)

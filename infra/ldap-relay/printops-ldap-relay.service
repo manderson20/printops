@@ -1,0 +1,23 @@
+[Unit]
+Description=PrintOps LDAP address-book relay for copiers
+After=network.target printops-api.service
+Requires=printops-api.service
+
+[Service]
+Type=simple
+User=itadmin
+Group=itadmin
+WorkingDirectory=/home/itadmin/printops/infra/ldap-relay
+Environment="PRINTOPS_ENV_FILE=/home/itadmin/printops/apps/api/.env"
+Environment="PRINTOPS_API_BASE=http://localhost:8000"
+ExecStart=/home/itadmin/printops/infra/ldap-relay/.venv/bin/python server.py
+Restart=on-failure
+RestartSec=3
+# Port 389 (LDAP's standard port, what every copier's address-book config
+# expects by default) is privileged (<1024) — this grants just enough
+# capability to bind it without running the whole process as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

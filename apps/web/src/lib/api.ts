@@ -24,7 +24,10 @@ export class ApiError extends Error {
   }
 }
 
-async function authorizedFetch(path: string, init: RequestInit = {}): Promise<Response> {
+async function authorizedFetch(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
   const token = getToken();
   // FormData bodies (multipart file uploads) must NOT get a manual
   // Content-Type — the browser sets its own boundary-bearing value, and
@@ -33,7 +36,9 @@ async function authorizedFetch(path: string, init: RequestInit = {}): Promise<Re
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
-      ...(init.body && !isFormData ? { "Content-Type": "application/json" } : {}),
+      ...(init.body && !isFormData
+        ? { "Content-Type": "application/json" }
+        : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init.headers,
     },
@@ -49,7 +54,10 @@ async function authorizedFetch(path: string, init: RequestInit = {}): Promise<Re
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new ApiError(response.status, body.detail ?? `Request failed: ${response.status}`);
+    throw new ApiError(
+      response.status,
+      body.detail ?? `Request failed: ${response.status}`,
+    );
   }
   return response;
 }
@@ -102,6 +110,9 @@ export type Printer = {
   snmp_version: SnmpVersion | null;
   has_snmp_community: boolean;
   snmp_vendor_profile: VendorProfile | null;
+  ldap_enabled: boolean;
+  ldap_bind_username: string | null;
+  has_ldap_bind_password: boolean;
   page_count_total: number | null;
   page_count_copy: number | null;
   page_count_print: number | null;
@@ -116,7 +127,8 @@ export type Printer = {
 export type PrinterStatus = "online" | "error" | "offline" | "unknown";
 
 export type SnmpVersion = "v1" | "v2c";
-export type VendorProfile = "canon" | "konica_minolta" | "hp" | "lexmark" | "kyocera" | "generic";
+export type VendorProfile =
+  "canon" | "konica_minolta" | "hp" | "lexmark" | "kyocera" | "generic";
 export type PageCountConfidence = "verified" | "best_effort" | "unsupported";
 
 export type PrinterCreateInput = {
@@ -145,6 +157,10 @@ export type PrinterUpdateInput = Partial<PrinterCreateInput> & {
   snmp_version?: SnmpVersion | "" | null;
   snmp_community?: string | null;
   snmp_vendor_profile?: VendorProfile | "" | null;
+  ldap_enabled?: boolean;
+  // "" clears the override, same convention as the SNMP fields above.
+  ldap_bind_username?: string | null;
+  ldap_bind_password?: string | null;
 };
 
 export async function listPrinters(): Promise<Printer[]> {
@@ -157,7 +173,9 @@ export async function getPrinter(id: string): Promise<Printer> {
   return response.json();
 }
 
-export async function createPrinter(input: PrinterCreateInput): Promise<Printer> {
+export async function createPrinter(
+  input: PrinterCreateInput,
+): Promise<Printer> {
   const response = await authorizedFetch("/api/v1/printers", {
     method: "POST",
     body: JSON.stringify(input),
@@ -165,7 +183,10 @@ export async function createPrinter(input: PrinterCreateInput): Promise<Printer>
   return response.json();
 }
 
-export async function updatePrinter(id: string, input: PrinterUpdateInput): Promise<Printer> {
+export async function updatePrinter(
+  id: string,
+  input: PrinterUpdateInput,
+): Promise<Printer> {
   const response = await authorizedFetch(`/api/v1/printers/${id}`, {
     method: "PATCH",
     body: JSON.stringify(input),
@@ -178,36 +199,56 @@ export async function deletePrinter(id: string): Promise<void> {
 }
 
 export async function rediscoverPrinter(id: string): Promise<Printer> {
-  const response = await authorizedFetch(`/api/v1/printers/${id}/discover`, { method: "POST" });
+  const response = await authorizedFetch(`/api/v1/printers/${id}/discover`, {
+    method: "POST",
+  });
   return response.json();
 }
 
 export async function resyncQueue(id: string): Promise<Printer> {
-  const response = await authorizedFetch(`/api/v1/printers/${id}/resync-queue`, { method: "POST" });
+  const response = await authorizedFetch(
+    `/api/v1/printers/${id}/resync-queue`,
+    { method: "POST" },
+  );
   return response.json();
 }
 
-export async function regeneratePrinterReleaseToken(id: string): Promise<Printer> {
-  const response = await authorizedFetch(`/api/v1/printers/${id}/regenerate-release-token`, {
+export async function regeneratePrinterReleaseToken(
+  id: string,
+): Promise<Printer> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${id}/regenerate-release-token`,
+    {
+      method: "POST",
+    },
+  );
+  return response.json();
+}
+
+export async function testPrintPrinter(
+  id: string,
+): Promise<{ message: string }> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/test-print`, {
     method: "POST",
   });
-  return response.json();
-}
-
-export async function testPrintPrinter(id: string): Promise<{ message: string }> {
-  const response = await authorizedFetch(`/api/v1/printers/${id}/test-print`, { method: "POST" });
   return response.json();
 }
 
 export async function checkPrinterStatus(id: string): Promise<Printer> {
-  const response = await authorizedFetch(`/api/v1/printers/${id}/check-status`, { method: "POST" });
+  const response = await authorizedFetch(
+    `/api/v1/printers/${id}/check-status`,
+    { method: "POST" },
+  );
   return response.json();
 }
 
 export async function checkPrinterCounters(id: string): Promise<Printer> {
-  const response = await authorizedFetch(`/api/v1/printers/${id}/check-counters`, {
-    method: "POST",
-  });
+  const response = await authorizedFetch(
+    `/api/v1/printers/${id}/check-counters`,
+    {
+      method: "POST",
+    },
+  );
   return response.json();
 }
 
@@ -228,8 +269,12 @@ export async function getPrinterCounterHistory(
   return response.json();
 }
 
-export async function purgePrinterJobs(id: string): Promise<{ cancelled_count: number }> {
-  const response = await authorizedFetch(`/api/v1/printers/${id}/purge-jobs`, { method: "POST" });
+export async function purgePrinterJobs(
+  id: string,
+): Promise<{ cancelled_count: number }> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/purge-jobs`, {
+    method: "POST",
+  });
   return response.json();
 }
 
@@ -243,7 +288,9 @@ export type MdmConnectionInfo = {
 };
 
 export async function getMdmConnection(id: string): Promise<MdmConnectionInfo> {
-  const response = await authorizedFetch(`/api/v1/printers/${id}/mdm-connection`);
+  const response = await authorizedFetch(
+    `/api/v1/printers/${id}/mdm-connection`,
+  );
   return response.json();
 }
 
@@ -314,7 +361,11 @@ export type MfpDevice = {
   updated_at: string;
 };
 
-export type ConnectorTypeOption = { connector_type: string; label: string; setup_notes: string | null };
+export type ConnectorTypeOption = {
+  connector_type: string;
+  label: string;
+  setup_notes: string | null;
+};
 
 export type MfpDeviceCreateInput = {
   name: string;
@@ -356,7 +407,9 @@ export async function getMfpDevice(id: string): Promise<MfpDevice> {
   return response.json();
 }
 
-export async function createMfpDevice(input: MfpDeviceCreateInput): Promise<MfpDevice> {
+export async function createMfpDevice(
+  input: MfpDeviceCreateInput,
+): Promise<MfpDevice> {
   const response = await authorizedFetch("/api/v1/mfp-devices", {
     method: "POST",
     body: JSON.stringify(input),
@@ -364,7 +417,10 @@ export async function createMfpDevice(input: MfpDeviceCreateInput): Promise<MfpD
   return response.json();
 }
 
-export async function updateMfpDevice(id: string, input: MfpDeviceUpdateInput): Promise<MfpDevice> {
+export async function updateMfpDevice(
+  id: string,
+  input: MfpDeviceUpdateInput,
+): Promise<MfpDevice> {
   const response = await authorizedFetch(`/api/v1/mfp-devices/${id}`, {
     method: "PATCH",
     body: JSON.stringify(input),
@@ -377,23 +433,34 @@ export async function deleteMfpDevice(id: string): Promise<void> {
 }
 
 export async function testMfpDeviceConnection(id: string): Promise<MfpDevice> {
-  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/test-connection`, {
-    method: "POST",
-  });
+  const response = await authorizedFetch(
+    `/api/v1/mfp-devices/${id}/test-connection`,
+    {
+      method: "POST",
+    },
+  );
   return response.json();
 }
 
-export async function checkMfpDeviceCapabilities(id: string): Promise<MfpDevice> {
-  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/check-capabilities`, {
-    method: "POST",
-  });
+export async function checkMfpDeviceCapabilities(
+  id: string,
+): Promise<MfpDevice> {
+  const response = await authorizedFetch(
+    `/api/v1/mfp-devices/${id}/check-capabilities`,
+    {
+      method: "POST",
+    },
+  );
   return response.json();
 }
 
 export async function checkMfpDeviceMeter(id: string): Promise<MfpDevice> {
-  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/check-meter`, {
-    method: "POST",
-  });
+  const response = await authorizedFetch(
+    `/api/v1/mfp-devices/${id}/check-meter`,
+    {
+      method: "POST",
+    },
+  );
   return response.json();
 }
 
@@ -425,8 +492,13 @@ export type CopierUsageRecord = {
   updated_at: string;
 };
 
-export async function listMfpDeviceUsage(id: string, limit = 100): Promise<CopierUsageRecord[]> {
-  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/usage?limit=${limit}`);
+export async function listMfpDeviceUsage(
+  id: string,
+  limit = 100,
+): Promise<CopierUsageRecord[]> {
+  const response = await authorizedFetch(
+    `/api/v1/mfp-devices/${id}/usage?limit=${limit}`,
+  );
   return response.json();
 }
 
@@ -470,16 +542,24 @@ export async function listStaffCopierIdentities(params?: {
   if (params?.staff_email) query.set("staff_email", params.staff_email);
   if (params?.identity_type) query.set("identity_type", params.identity_type);
   const qs = query.toString();
-  const response = await authorizedFetch(`/api/v1/staff-copier-identities${qs ? `?${qs}` : ""}`);
+  const response = await authorizedFetch(
+    `/api/v1/staff-copier-identities${qs ? `?${qs}` : ""}`,
+  );
   return response.json();
 }
 
-export async function listStaffMissingCopierIdentity(): Promise<GoogleWorkspaceUserEntry[]> {
-  const response = await authorizedFetch("/api/v1/staff-copier-identities/missing");
+export async function listStaffMissingCopierIdentity(): Promise<
+  GoogleWorkspaceUserEntry[]
+> {
+  const response = await authorizedFetch(
+    "/api/v1/staff-copier-identities/missing",
+  );
   return response.json();
 }
 
-export async function getStaffCopierIdentitiesByEmail(email: string): Promise<StaffCopierIdentity[]> {
+export async function getStaffCopierIdentitiesByEmail(
+  email: string,
+): Promise<StaffCopierIdentity[]> {
   const response = await authorizedFetch(
     `/api/v1/staff-copier-identities/by-staff/${encodeURIComponent(email)}`,
   );
@@ -500,15 +580,20 @@ export async function updateStaffCopierIdentity(
   id: string,
   input: StaffCopierIdentityUpdateInput,
 ): Promise<StaffCopierIdentity> {
-  const response = await authorizedFetch(`/api/v1/staff-copier-identities/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
+  const response = await authorizedFetch(
+    `/api/v1/staff-copier-identities/${id}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    },
+  );
   return response.json();
 }
 
 export async function deleteStaffCopierIdentity(id: string): Promise<void> {
-  await authorizedFetch(`/api/v1/staff-copier-identities/${id}`, { method: "DELETE" });
+  await authorizedFetch(`/api/v1/staff-copier-identities/${id}`, {
+    method: "DELETE",
+  });
 }
 
 // --- Copier accounting imports (Stage 1) ---
@@ -537,7 +622,9 @@ export type CopierImportTemplateInput = {
   notes?: string | null;
 };
 
-export async function listCopierImportTemplates(): Promise<CopierImportTemplate[]> {
+export async function listCopierImportTemplates(): Promise<
+  CopierImportTemplate[]
+> {
   const response = await authorizedFetch("/api/v1/copier-imports/templates");
   return response.json();
 }
@@ -556,15 +643,20 @@ export async function updateCopierImportTemplate(
   id: string,
   input: Partial<CopierImportTemplateInput>,
 ): Promise<CopierImportTemplate> {
-  const response = await authorizedFetch(`/api/v1/copier-imports/templates/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
+  const response = await authorizedFetch(
+    `/api/v1/copier-imports/templates/${id}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    },
+  );
   return response.json();
 }
 
 export async function deleteCopierImportTemplate(id: string): Promise<void> {
-  await authorizedFetch(`/api/v1/copier-imports/templates/${id}`, { method: "DELETE" });
+  await authorizedFetch(`/api/v1/copier-imports/templates/${id}`, {
+    method: "DELETE",
+  });
 }
 
 export type CopierImportUpload = {
@@ -621,10 +713,13 @@ export async function previewCopierImportBatch(
     save_as_template?: CopierImportTemplateInput | null;
   },
 ): Promise<CopierImportPreview> {
-  const response = await authorizedFetch(`/api/v1/copier-imports/${batchId}/preview`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  const response = await authorizedFetch(
+    `/api/v1/copier-imports/${batchId}/preview`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
   return response.json();
 }
 
@@ -652,26 +747,37 @@ export async function commitCopierImportBatch(
   batchId: string,
   skipDuplicates = true,
 ): Promise<CopierImportBatch> {
-  const response = await authorizedFetch(`/api/v1/copier-imports/${batchId}/commit`, {
-    method: "POST",
-    body: JSON.stringify({ skip_duplicates: skipDuplicates }),
-  });
+  const response = await authorizedFetch(
+    `/api/v1/copier-imports/${batchId}/commit`,
+    {
+      method: "POST",
+      body: JSON.stringify({ skip_duplicates: skipDuplicates }),
+    },
+  );
   return response.json();
 }
 
-export async function listCopierImportBatches(deviceId?: string): Promise<CopierImportBatch[]> {
+export async function listCopierImportBatches(
+  deviceId?: string,
+): Promise<CopierImportBatch[]> {
   const qs = deviceId ? `?mfp_device_id=${deviceId}` : "";
   const response = await authorizedFetch(`/api/v1/copier-imports/batches${qs}`);
   return response.json();
 }
 
-export async function getCopierImportBatch(id: string): Promise<CopierImportBatch> {
-  const response = await authorizedFetch(`/api/v1/copier-imports/batches/${id}`);
+export async function getCopierImportBatch(
+  id: string,
+): Promise<CopierImportBatch> {
+  const response = await authorizedFetch(
+    `/api/v1/copier-imports/batches/${id}`,
+  );
   return response.json();
 }
 
 export async function deleteCopierImportBatch(id: string): Promise<void> {
-  await authorizedFetch(`/api/v1/copier-imports/batches/${id}`, { method: "DELETE" });
+  await authorizedFetch(`/api/v1/copier-imports/batches/${id}`, {
+    method: "DELETE",
+  });
 }
 
 export type UnmappedCopierIdentityGroup = {
@@ -700,7 +806,9 @@ export type ResolveUnmappedResult = {
   backfilled_row_count: number;
 };
 
-export async function listUnmappedCopierActivity(): Promise<UnmappedCopierIdentityGroup[]> {
+export async function listUnmappedCopierActivity(): Promise<
+  UnmappedCopierIdentityGroup[]
+> {
   const response = await authorizedFetch("/api/v1/copier-unmapped");
   return response.json();
 }
@@ -715,8 +823,11 @@ export async function resolveUnmappedCopierActivity(
   return response.json();
 }
 
-export type JobStatus = "received" | "forwarding" | "forwarded" | "failed" | "cancelled";
-export type AttributionMethod = "cups" | "mosyle" | "google_workspace" | "unresolved";
+export type JobStatus =
+  "received" | "forwarding" | "forwarded" | "failed" | "cancelled" | "held";
+export type AttributionMethod =
+  "cups" | "mosyle" | "google_workspace" | "unresolved";
+export type HoldReason = "pin_release" | "quota" | null;
 
 export type Job = {
   id: string;
@@ -728,6 +839,7 @@ export type Job = {
   file_size_bytes: number | null;
   page_count: number | null;
   status: JobStatus;
+  hold_reason: HoldReason;
   error_message: string | null;
   document_name: string | null;
   copy_count: number | null;
@@ -740,12 +852,30 @@ export type Job = {
   updated_at: string;
 };
 
-export async function listJobs(params?: { printer_id?: string; limit?: number }): Promise<Job[]> {
+export async function listJobs(params?: {
+  printer_id?: string;
+  limit?: number;
+}): Promise<Job[]> {
   const query = new URLSearchParams();
   if (params?.printer_id) query.set("printer_id", params.printer_id);
   if (params?.limit) query.set("limit", String(params.limit));
   const qs = query.toString();
   const response = await authorizedFetch(`/api/v1/jobs${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export async function listQuotaHolds(): Promise<Job[]> {
+  const response = await authorizedFetch("/api/v1/quota-holds");
+  return response.json();
+}
+
+export async function releaseQuotaHold(jobId: string): Promise<Job> {
+  const response = await authorizedFetch(
+    `/api/v1/quota-holds/${jobId}/release`,
+    {
+      method: "POST",
+    },
+  );
   return response.json();
 }
 
@@ -764,7 +894,9 @@ export async function getJobUsage(): Promise<UserUsage[]> {
 }
 
 export async function cancelJob(id: string): Promise<Job> {
-  const response = await authorizedFetch(`/api/v1/jobs/${id}/cancel`, { method: "POST" });
+  const response = await authorizedFetch(`/api/v1/jobs/${id}/cancel`, {
+    method: "POST",
+  });
   return response.json();
 }
 
@@ -798,7 +930,9 @@ export async function getMosyleSettings(): Promise<MosyleSettings> {
   return response.json();
 }
 
-export async function updateMosyleSettings(input: MosyleSettingsInput): Promise<MosyleSettings> {
+export async function updateMosyleSettings(
+  input: MosyleSettingsInput,
+): Promise<MosyleSettings> {
   const response = await authorizedFetch("/api/v1/settings/mosyle", {
     method: "PUT",
     body: JSON.stringify(input),
@@ -806,7 +940,9 @@ export async function updateMosyleSettings(input: MosyleSettingsInput): Promise<
   return response.json();
 }
 
-export async function testMosyleConnection(input: MosyleSettingsInput): Promise<MosyleTestResult> {
+export async function testMosyleConnection(
+  input: MosyleSettingsInput,
+): Promise<MosyleTestResult> {
   const response = await authorizedFetch("/api/v1/settings/mosyle/test", {
     method: "POST",
     body: JSON.stringify(input),
@@ -815,7 +951,9 @@ export async function testMosyleConnection(input: MosyleSettingsInput): Promise<
 }
 
 export async function syncMosyleDevices(): Promise<MosyleSettings> {
-  const response = await authorizedFetch("/api/v1/settings/mosyle/sync", { method: "POST" });
+  const response = await authorizedFetch("/api/v1/settings/mosyle/sync", {
+    method: "POST",
+  });
   return response.json();
 }
 
@@ -911,15 +1049,21 @@ export async function updateGoogleWorkspaceSettings(
 export async function testGoogleWorkspaceConnection(
   input: GoogleWorkspaceSettingsInput,
 ): Promise<GoogleWorkspaceTestResult> {
-  const response = await authorizedFetch("/api/v1/settings/google-workspace/test", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  const response = await authorizedFetch(
+    "/api/v1/settings/google-workspace/test",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
   return response.json();
 }
 
 export async function syncGoogleWorkspaceDevices(): Promise<GoogleWorkspaceSettings> {
-  const response = await authorizedFetch("/api/v1/settings/google-workspace/sync", { method: "POST" });
+  const response = await authorizedFetch(
+    "/api/v1/settings/google-workspace/sync",
+    { method: "POST" },
+  );
   return response.json();
 }
 
@@ -1007,17 +1151,23 @@ export async function setDeviceOverride(
   macAddress: string,
   input: { resolved_email: string; note?: string | null },
 ): Promise<DeviceOverride> {
-  const response = await authorizedFetch(`/api/v1/devices/${encodeURIComponent(macAddress)}/override`, {
-    method: "PUT",
-    body: JSON.stringify(input),
-  });
+  const response = await authorizedFetch(
+    `/api/v1/devices/${encodeURIComponent(macAddress)}/override`,
+    {
+      method: "PUT",
+      body: JSON.stringify(input),
+    },
+  );
   return response.json();
 }
 
 export async function deleteDeviceOverride(macAddress: string): Promise<void> {
-  await authorizedFetch(`/api/v1/devices/${encodeURIComponent(macAddress)}/override`, {
-    method: "DELETE",
-  });
+  await authorizedFetch(
+    `/api/v1/devices/${encodeURIComponent(macAddress)}/override`,
+    {
+      method: "DELETE",
+    },
+  );
 }
 
 export type AttributionAlias = {
@@ -1048,7 +1198,9 @@ export async function listAttributionAliases(params?: {
   if (params?.pageSize) query.set("page_size", String(params.pageSize));
   if (params?.search) query.set("search", params.search);
   const qs = query.toString();
-  const response = await authorizedFetch(`/api/v1/attribution-aliases${qs ? `?${qs}` : ""}`);
+  const response = await authorizedFetch(
+    `/api/v1/attribution-aliases${qs ? `?${qs}` : ""}`,
+  );
   return response.json();
 }
 
@@ -1065,7 +1217,9 @@ export async function createAttributionAlias(input: {
 }
 
 export async function deleteAttributionAlias(id: string): Promise<void> {
-  await authorizedFetch(`/api/v1/attribution-aliases/${id}`, { method: "DELETE" });
+  await authorizedFetch(`/api/v1/attribution-aliases/${id}`, {
+    method: "DELETE",
+  });
 }
 
 export type GoogleWorkspaceUserEntry = {
@@ -1075,8 +1229,12 @@ export type GoogleWorkspaceUserEntry = {
   aliases: string[] | null;
 };
 
-export async function listGoogleWorkspaceUsers(): Promise<GoogleWorkspaceUserEntry[]> {
-  const response = await authorizedFetch("/api/v1/settings/google-workspace/users");
+export async function listGoogleWorkspaceUsers(): Promise<
+  GoogleWorkspaceUserEntry[]
+> {
+  const response = await authorizedFetch(
+    "/api/v1/settings/google-workspace/users",
+  );
   return response.json();
 }
 
@@ -1086,7 +1244,9 @@ export async function listGoogleWorkspaceUsers(): Promise<GoogleWorkspaceUserEnt
  * column layout is a starting point, not a confirmed match for any
  * specific device's bulk-import format. */
 export async function downloadCopierPinRoster(): Promise<void> {
-  const response = await authorizedFetch("/api/v1/settings/google-workspace/copier-pin-roster.csv");
+  const response = await authorizedFetch(
+    "/api/v1/settings/google-workspace/copier-pin-roster.csv",
+  );
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1192,7 +1352,10 @@ export type ReportFilters = {
   duplex?: boolean;
 };
 
-function buildReportQuery(filters?: ReportFilters, extra?: Record<string, string>): string {
+function buildReportQuery(
+  filters?: ReportFilters,
+  extra?: Record<string, string>,
+): string {
   const query = new URLSearchParams();
   if (filters?.start) query.set("start", filters.start);
   if (filters?.end) query.set("end", filters.end);
@@ -1202,7 +1365,8 @@ function buildReportQuery(filters?: ReportFilters, extra?: Record<string, string
   if (filters?.submitted_by) query.set("submitted_by", filters.submitted_by);
   if (filters?.status) query.set("status", filters.status);
   if (filters?.color_mode) query.set("color_mode", filters.color_mode);
-  if (filters?.duplex !== undefined) query.set("duplex", String(filters.duplex));
+  if (filters?.duplex !== undefined)
+    query.set("duplex", String(filters.duplex));
   if (extra) {
     for (const [key, value] of Object.entries(extra)) query.set(key, value);
   }
@@ -1231,9 +1395,13 @@ export type ReportSummary = {
   co2_grams: number;
 };
 
-export async function getReportSummary(filters?: ReportFilters): Promise<ReportSummary> {
+export async function getReportSummary(
+  filters?: ReportFilters,
+): Promise<ReportSummary> {
   const qs = buildReportQuery(filters);
-  const response = await authorizedFetch(`/api/v1/reports/summary${qs ? `?${qs}` : ""}`);
+  const response = await authorizedFetch(
+    `/api/v1/reports/summary${qs ? `?${qs}` : ""}`,
+  );
   return response.json();
 }
 
@@ -1254,7 +1422,9 @@ export async function getReportTimeline(
   filters?: ReportFilters,
 ): Promise<TimelineBucket[]> {
   const qs = buildReportQuery(filters, { granularity });
-  const response = await authorizedFetch(`/api/v1/reports/timeline${qs ? `?${qs}` : ""}`);
+  const response = await authorizedFetch(
+    `/api/v1/reports/timeline${qs ? `?${qs}` : ""}`,
+  );
   return response.json();
 }
 
@@ -1271,7 +1441,9 @@ export async function getReportLeaderboard(
   limit = 10,
 ): Promise<LeaderboardEntry[]> {
   const qs = buildReportQuery(filters, { type, limit: String(limit) });
-  const response = await authorizedFetch(`/api/v1/reports/leaderboard${qs ? `?${qs}` : ""}`);
+  const response = await authorizedFetch(
+    `/api/v1/reports/leaderboard${qs ? `?${qs}` : ""}`,
+  );
   return response.json();
 }
 
@@ -1290,7 +1462,9 @@ export async function getCostBreakdown(
   filters?: ReportFilters,
 ): Promise<CostEntry[]> {
   const qs = buildReportQuery(filters, { group_by: groupBy });
-  const response = await authorizedFetch(`/api/v1/reports/cost-breakdown${qs ? `?${qs}` : ""}`);
+  const response = await authorizedFetch(
+    `/api/v1/reports/cost-breakdown${qs ? `?${qs}` : ""}`,
+  );
   return response.json();
 }
 
@@ -1299,9 +1473,13 @@ export type PeakTimes = {
   by_hour: Record<string, number>;
 };
 
-export async function getReportPeakTimes(filters?: ReportFilters): Promise<PeakTimes> {
+export async function getReportPeakTimes(
+  filters?: ReportFilters,
+): Promise<PeakTimes> {
   const qs = buildReportQuery(filters);
-  const response = await authorizedFetch(`/api/v1/reports/peak-times${qs ? `?${qs}` : ""}`);
+  const response = await authorizedFetch(
+    `/api/v1/reports/peak-times${qs ? `?${qs}` : ""}`,
+  );
   return response.json();
 }
 
@@ -1310,7 +1488,9 @@ export async function getReportFunFacts(
   filters?: ReportFilters,
 ): Promise<string[]> {
   const qs = buildReportQuery(filters, { period_label: periodLabel });
-  const response = await authorizedFetch(`/api/v1/reports/fun-facts${qs ? `?${qs}` : ""}`);
+  const response = await authorizedFetch(
+    `/api/v1/reports/fun-facts${qs ? `?${qs}` : ""}`,
+  );
   const body: { facts: string[] } = await response.json();
   return body.facts;
 }
@@ -1319,9 +1499,13 @@ export async function getReportFunFacts(
  * authorizedFetch (unlike a plain <a href>) so the JWT bearer token
  * actually reaches the API; browsers don't attach custom headers to a
  * navigation click. */
-export async function downloadReportCsv(filters?: ReportFilters): Promise<void> {
+export async function downloadReportCsv(
+  filters?: ReportFilters,
+): Promise<void> {
   const qs = buildReportQuery(filters);
-  const response = await authorizedFetch(`/api/v1/reports/export.csv${qs ? `?${qs}` : ""}`);
+  const response = await authorizedFetch(
+    `/api/v1/reports/export.csv${qs ? `?${qs}` : ""}`,
+  );
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1338,9 +1522,13 @@ export type CombinedSummary = {
   unmapped_copy_activity_count: number;
 };
 
-export async function getCombinedReportSummary(filters?: ReportFilters): Promise<CombinedSummary> {
+export async function getCombinedReportSummary(
+  filters?: ReportFilters,
+): Promise<CombinedSummary> {
   const qs = buildReportQuery(filters);
-  const response = await authorizedFetch(`/api/v1/reports/combined-summary${qs ? `?${qs}` : ""}`);
+  const response = await authorizedFetch(
+    `/api/v1/reports/combined-summary${qs ? `?${qs}` : ""}`,
+  );
   return response.json();
 }
 
@@ -1357,13 +1545,19 @@ export async function getCombinedUserLeaderboard(
   limit = 10,
 ): Promise<CombinedLeaderboardEntry[]> {
   const qs = buildReportQuery(filters, { limit: String(limit) });
-  const response = await authorizedFetch(`/api/v1/reports/combined-leaderboard${qs ? `?${qs}` : ""}`);
+  const response = await authorizedFetch(
+    `/api/v1/reports/combined-leaderboard${qs ? `?${qs}` : ""}`,
+  );
   return response.json();
 }
 
-export async function downloadCombinedReportCsv(filters?: ReportFilters): Promise<void> {
+export async function downloadCombinedReportCsv(
+  filters?: ReportFilters,
+): Promise<void> {
   const qs = buildReportQuery(filters);
-  const response = await authorizedFetch(`/api/v1/reports/export-combined.csv${qs ? `?${qs}` : ""}`);
+  const response = await authorizedFetch(
+    `/api/v1/reports/export-combined.csv${qs ? `?${qs}` : ""}`,
+  );
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1420,7 +1614,9 @@ export async function getReportSnapshot(id: string): Promise<ReportSnapshot> {
 }
 
 export async function deleteReportSnapshot(id: string): Promise<void> {
-  await authorizedFetch(`/api/v1/reports/snapshots/${id}`, { method: "DELETE" });
+  await authorizedFetch(`/api/v1/reports/snapshots/${id}`, {
+    method: "DELETE",
+  });
 }
 
 export type ReportFormulaSettings = {
@@ -1456,8 +1652,12 @@ export type Cartridge = {
   yield_pages: number;
 };
 
-export async function getPrinterCartridges(printerId: string): Promise<Cartridge[]> {
-  const response = await authorizedFetch(`/api/v1/printers/${printerId}/toner-cartridges`);
+export async function getPrinterCartridges(
+  printerId: string,
+): Promise<Cartridge[]> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/toner-cartridges`,
+  );
   return response.json();
 }
 
@@ -1465,9 +1665,101 @@ export async function updatePrinterCartridges(
   printerId: string,
   cartridges: Cartridge[],
 ): Promise<Cartridge[]> {
-  const response = await authorizedFetch(`/api/v1/printers/${printerId}/toner-cartridges`, {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/toner-cartridges`,
+    {
+      method: "PUT",
+      body: JSON.stringify(cartridges),
+    },
+  );
+  return response.json();
+}
+
+export type QuotaPeriod =
+  "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+
+export type PrinterQuota = {
+  id: string;
+  printer_id: string;
+  user_email: string | null;
+  period: QuotaPeriod;
+  page_limit: number;
+  pages_used: number;
+};
+
+export type PrinterQuotaInput = {
+  user_email?: string | null;
+  period: QuotaPeriod;
+  page_limit: number;
+};
+
+export type PrinterQuotaUpdateInput = {
+  period?: QuotaPeriod;
+  page_limit?: number;
+};
+
+export async function listPrinterQuotas(
+  printerId: string,
+): Promise<PrinterQuota[]> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/quotas`,
+  );
+  return response.json();
+}
+
+export async function createPrinterQuota(
+  printerId: string,
+  input: PrinterQuotaInput,
+): Promise<PrinterQuota> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/quotas`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+  return response.json();
+}
+
+export async function updatePrinterQuota(
+  printerId: string,
+  quotaId: string,
+  input: PrinterQuotaUpdateInput,
+): Promise<PrinterQuota> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/quotas/${quotaId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    },
+  );
+  return response.json();
+}
+
+export async function deletePrinterQuota(
+  printerId: string,
+  quotaId: string,
+): Promise<void> {
+  await authorizedFetch(`/api/v1/printers/${printerId}/quotas/${quotaId}`, {
+    method: "DELETE",
+  });
+}
+
+export type QuotaSettings = {
+  enabled: boolean;
+};
+
+export async function getQuotaSettings(): Promise<QuotaSettings> {
+  const response = await authorizedFetch("/api/v1/settings/quotas");
+  return response.json();
+}
+
+export async function updateQuotaSettings(
+  input: Partial<QuotaSettings>,
+): Promise<QuotaSettings> {
+  const response = await authorizedFetch("/api/v1/settings/quotas", {
     method: "PUT",
-    body: JSON.stringify(cartridges),
+    body: JSON.stringify(input),
   });
   return response.json();
 }
@@ -1514,8 +1806,33 @@ export async function getSnmpDefaults(): Promise<SnmpDefaults> {
   return response.json();
 }
 
-export async function updateSnmpDefaults(input: SnmpDefaultsInput): Promise<SnmpDefaults> {
+export async function updateSnmpDefaults(
+  input: SnmpDefaultsInput,
+): Promise<SnmpDefaults> {
   const response = await authorizedFetch("/api/v1/settings/snmp", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export type LdapRelaySettings = {
+  enabled: boolean;
+  base_dn: string;
+  port: number;
+};
+
+export type LdapRelaySettingsInput = Partial<LdapRelaySettings>;
+
+export async function getLdapRelaySettings(): Promise<LdapRelaySettings> {
+  const response = await authorizedFetch("/api/v1/settings/ldap");
+  return response.json();
+}
+
+export async function updateLdapRelaySettings(
+  input: LdapRelaySettingsInput,
+): Promise<LdapRelaySettings> {
+  const response = await authorizedFetch("/api/v1/settings/ldap", {
     method: "PUT",
     body: JSON.stringify(input),
   });
@@ -1560,12 +1877,22 @@ async function releaseFetch(path: string, body: unknown): Promise<Response> {
   return response;
 }
 
-export async function listHeldJobs(token: string, pin: string): Promise<HeldJob[]> {
-  const response = await releaseFetch(`/api/v1/release/${encodeURIComponent(token)}/jobs`, { pin });
+export async function listHeldJobs(
+  token: string,
+  pin: string,
+): Promise<HeldJob[]> {
+  const response = await releaseFetch(
+    `/api/v1/release/${encodeURIComponent(token)}/jobs`,
+    { pin },
+  );
   return response.json();
 }
 
-export async function releaseHeldJob(token: string, jobId: string, pin: string): Promise<HeldJob> {
+export async function releaseHeldJob(
+  token: string,
+  jobId: string,
+  pin: string,
+): Promise<HeldJob> {
   const response = await releaseFetch(
     `/api/v1/release/${encodeURIComponent(token)}/jobs/${jobId}/release`,
     { pin },

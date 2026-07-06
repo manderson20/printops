@@ -7,9 +7,11 @@ from app.models.device_override import DeviceUserOverride
 from app.models.google_sso import GoogleSsoSettings
 from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceSettings, GoogleWorkspaceUser
 from app.models.job import Job
+from app.models.ldap_relay import LdapRelaySettings
 from app.models.mfp_device import MfpDevice
 from app.models.mosyle import MosyleDevice, MosyleSettings
 from app.models.printer import Printer
+from app.models.quota import PrinterUserQuota, QuotaSettings
 from app.models.release import PrintReleaseSettings
 from app.models.report import PrinterTonerCartridge, ReportFormulaSettings, ReportSnapshot
 from app.models.snmp import PrinterCounterReading, SnmpDefaultsSettings
@@ -30,13 +32,16 @@ __all__ = [
     "GoogleWorkspaceSettings",
     "GoogleWorkspaceUser",
     "Job",
+    "LdapRelaySettings",
     "MfpDevice",
     "MosyleDevice",
     "MosyleSettings",
     "Printer",
     "PrinterCounterReading",
     "PrinterTonerCartridge",
+    "PrinterUserQuota",
     "PrintReleaseSettings",
+    "QuotaSettings",
     "ReportFormulaSettings",
     "ReportSnapshot",
     "StaffCopierIdentity",

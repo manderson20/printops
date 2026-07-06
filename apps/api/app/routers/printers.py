@@ -4,16 +4,19 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.core.config import Settings, get_settings
 from app.core.crypto import encrypt
+from app.core.security import hash_password
 from app.db import get_db
 from app.deps import get_current_user, require_role
+from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.job import Job
 from app.models.printer import Printer
+from app.models.quota import PrinterUserQuota
 from app.models.report import PrinterTonerCartridge
 from app.printers.counter_history import get_daily_deltas
 from app.printers.discovery import refresh_printer_capabilities
@@ -26,8 +29,10 @@ from app.printers.snmp_counters import (
 )
 from app.printers.status import refresh_printer_status_and_rediscover
 from app.printers.test_print import TestPrintError, submit_test_print
+from app.quotas.service import get_pages_used, period_bounds
 from app.schemas.auth import UserOut
 from app.schemas.printer import PrinterCreate, PrinterMdmConnectionOut, PrinterOut, PrinterUpdate
+from app.schemas.quota import PrinterUserQuotaCreate, PrinterUserQuotaOut, PrinterUserQuotaUpdate
 from app.schemas.report import CartridgeIn, CartridgeOut
 from app.schemas.snmp import DailyCounterDeltaOut
 
@@ -139,19 +144,24 @@ async def update_printer(
     # A blank string clears one of these overrides back to "use the global
     # SnmpDefaultsSettings" — same idiom already established for
     # GoogleWorkspaceSettings.staff_org_unit_path in app/routers/settings.py.
-    for field in ("snmp_version", "snmp_port", "snmp_vendor_profile"):
+    # ldap_bind_username gets the same treatment so clearing it to "" can't
+    # collide with another printer's blank value under its unique constraint.
+    for field in ("snmp_version", "snmp_port", "snmp_vendor_profile", "ldap_bind_username"):
         if field in updates:
             updates[field] = updates[field] or None
-    # Community is encrypted, so it can't go through the generic setattr
-    # loop below like the other overrides — only overwrite when a non-empty
-    # value is supplied (mirrors update_mosyle_settings' secret handling);
-    # a blank string clears it back to "use the global default" too.
+    # Community/bind-password are secrets that can't go through the generic
+    # setattr loop below like the other overrides — only overwrite when a
+    # non-empty value is supplied (mirrors update_mosyle_settings' secret
+    # handling); a blank string clears it back to "not set" too.
     _not_provided = object()
     snmp_community = updates.pop("snmp_community", _not_provided)
+    ldap_bind_password = updates.pop("ldap_bind_password", _not_provided)
     for field, value in updates.items():
         setattr(printer, field, value)
     if snmp_community is not _not_provided:
         printer.snmp_community_encrypted = encrypt(snmp_community) if snmp_community else None
+    if ldap_bind_password is not _not_provided:
+        printer.ldap_bind_password_hash = hash_password(ldap_bind_password) if ldap_bind_password else None
     # First time release is turned on for this printer, it needs a token to
     # exist at all — generated here rather than requiring a separate manual
     # step before the toggle does anything useful. Regenerating an existing
@@ -372,3 +382,112 @@ async def update_toner_cartridges(
         select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer_id)
     )
     return result.scalars().all()
+
+
+async def _quota_out(db: AsyncSession, quota: PrinterUserQuota) -> PrinterUserQuotaOut:
+    start, end = period_bounds(quota.period, datetime.now(UTC))
+    pages_used = await get_pages_used(db, quota.printer_id, quota.user_email, start, end) if quota.user_email else 0
+    return PrinterUserQuotaOut(
+        id=quota.id,
+        printer_id=quota.printer_id,
+        user_email=quota.user_email,
+        period=quota.period,
+        page_limit=quota.page_limit,
+        pages_used=pages_used,
+    )
+
+
+@router.get("/{printer_id}/quotas", response_model=list[PrinterUserQuotaOut])
+async def list_printer_quotas(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    await _get_printer_or_404(printer_id, db)
+    result = await db.execute(
+        select(PrinterUserQuota)
+        .where(PrinterUserQuota.printer_id == printer_id)
+        .order_by(PrinterUserQuota.user_email.is_(None).desc(), PrinterUserQuota.user_email)
+    )
+    return [await _quota_out(db, quota) for quota in result.scalars().all()]
+
+
+@router.post(
+    "/{printer_id}/quotas",
+    response_model=PrinterUserQuotaOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def create_printer_quota(
+    printer_id: UUID, payload: PrinterUserQuotaCreate, db: AsyncSession = Depends(get_db)
+):
+    """A quota's user_email is a specific staff member, or None for a
+    per-printer default/wildcard row (see PrinterUserQuota's docstring) —
+    at most one of each per printer, enforced below (specific rows) and by
+    a partial unique index (default rows, see app/models/quota.py)."""
+    await _get_printer_or_404(printer_id, db)
+
+    email = payload.user_email.strip().lower() if payload.user_email else None
+    if email is not None:
+        roster_match = await db.execute(
+            select(GoogleWorkspaceUser).where(func.lower(GoogleWorkspaceUser.email) == email)
+        )
+        if roster_match.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"'{payload.user_email}' is not in the synced Google Workspace user "
+                    "roster — sync Google Workspace settings, or double-check the address."
+                ),
+            )
+
+    existing = await db.execute(
+        select(PrinterUserQuota).where(
+            PrinterUserQuota.printer_id == printer_id,
+            PrinterUserQuota.user_email == email if email is not None else PrinterUserQuota.user_email.is_(None),
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        detail = (
+            f"A quota for '{payload.user_email}' already exists on this printer."
+            if email is not None
+            else "A default quota already exists on this printer."
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+    quota = PrinterUserQuota(
+        printer_id=printer_id, user_email=email, period=payload.period, page_limit=payload.page_limit
+    )
+    db.add(quota)
+    await db.commit()
+    await db.refresh(quota)
+    return await _quota_out(db, quota)
+
+
+@router.patch(
+    "/{printer_id}/quotas/{quota_id}",
+    response_model=PrinterUserQuotaOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def update_printer_quota(
+    printer_id: UUID, quota_id: UUID, payload: PrinterUserQuotaUpdate, db: AsyncSession = Depends(get_db)
+):
+    quota = await db.get(PrinterUserQuota, quota_id)
+    if quota is None or quota.printer_id != printer_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quota not found")
+    if payload.period is not None:
+        quota.period = payload.period
+    if payload.page_limit is not None:
+        quota.page_limit = payload.page_limit
+    await db.commit()
+    await db.refresh(quota)
+    return await _quota_out(db, quota)
+
+
+@router.delete(
+    "/{printer_id}/quotas/{quota_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def delete_printer_quota(printer_id: UUID, quota_id: UUID, db: AsyncSession = Depends(get_db)):
+    quota = await db.get(PrinterUserQuota, quota_id)
+    if quota is None or quota.printer_id != printer_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quota not found")
+    await db.delete(quota)
+    await db.commit()

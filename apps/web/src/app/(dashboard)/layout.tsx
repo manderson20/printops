@@ -29,6 +29,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           { href: "/usage", label: "Usage" },
           { href: "/devices", label: "Devices" },
           { href: "/mfp-devices", label: "Copiers" },
+          { href: "/quota-holds", label: "Quota Holds" },
           { href: "/settings", label: "Settings" },
           { href: "/updates", label: "Updates" },
         ]
