@@ -9,8 +9,8 @@ this router only ever creates/deletes source="manual" rows."""
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select, update
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
@@ -18,26 +18,50 @@ from app.deps import require_role
 from app.models.attribution_alias import AttributionAlias
 from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.job import Job
-from app.schemas.attribution_alias import AttributionAliasCreate, AttributionAliasOut
+from app.schemas.attribution_alias import AttributionAliasCreate, AttributionAliasOut, AttributionAliasPage
 
 router = APIRouter(dependencies=[Depends(require_role("admin"))])
 
 
-@router.get("", response_model=list[AttributionAliasOut])
-async def list_attribution_aliases(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(AttributionAlias).order_by(AttributionAlias.alias))
-    return [
-        AttributionAliasOut(
-            id=a.id,
-            alias=a.alias,
-            resolved_email=a.resolved_email,
-            source=a.source,
-            note=a.note,
-            created_at=a.created_at,
-            updated_at=a.updated_at,
-        )
-        for a in result.scalars().all()
-    ]
+@router.get("", response_model=AttributionAliasPage)
+async def list_attribution_aliases(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    filters = []
+    if search:
+        pattern = f"%{search}%"
+        filters.append(or_(AttributionAlias.alias.ilike(pattern), AttributionAlias.resolved_email.ilike(pattern)))
+
+    count_stmt = select(func.count()).select_from(AttributionAlias)
+    items_stmt = select(AttributionAlias).order_by(AttributionAlias.alias)
+    for condition in filters:
+        count_stmt = count_stmt.where(condition)
+        items_stmt = items_stmt.where(condition)
+
+    total = (await db.execute(count_stmt)).scalar_one()
+    items_stmt = items_stmt.offset((page - 1) * page_size).limit(page_size)
+    rows = (await db.execute(items_stmt)).scalars().all()
+
+    return AttributionAliasPage(
+        items=[
+            AttributionAliasOut(
+                id=a.id,
+                alias=a.alias,
+                resolved_email=a.resolved_email,
+                source=a.source,
+                note=a.note,
+                created_at=a.created_at,
+                updated_at=a.updated_at,
+            )
+            for a in rows
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post("", response_model=AttributionAliasOut, status_code=status.HTTP_201_CREATED)

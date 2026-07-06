@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.12.0] - 2026-07-06
+
+- **Consolidated Settings section.** User accounts, attribution aliases, and
+  global SNMP defaults now live under one `/settings` area with tabbed
+  navigation instead of being scattered across the Devices page and a
+  standalone Users page.
+- **Pagination and search for Users and Attribution Aliases.** Both list
+  endpoints now page results (50 per page) and support a `search` filter
+  (name/email, or alias/resolved-email), so these lists stay usable as the
+  roster and alias table grow.
+
 ## [0.11.0] - 2026-07-05
 
 - **Kyocera, Ricoh, and Xerox copier support.** These three join Canon

@@ -135,10 +135,39 @@ def test_list_and_delete(client, auth_headers):
     ).json()["id"]
 
     listing = client.get("/api/v1/attribution-aliases", headers=auth_headers)
-    assert listing.status_code == 200 and len(listing.json()) == 1
+    assert listing.status_code == 200
+    body = listing.json()
+    assert body["total"] == 1
+    assert len(body["items"]) == 1
 
     deleted = client.delete(f"/api/v1/attribution-aliases/{alias_id}", headers=auth_headers)
     assert deleted.status_code == 204
 
     listing_after = client.get("/api/v1/attribution-aliases", headers=auth_headers).json()
-    assert listing_after == []
+    assert listing_after["items"] == []
+    assert listing_after["total"] == 0
+
+
+def test_list_attribution_aliases_pagination_and_search(client, auth_headers):
+    client.post(
+        "/api/v1/attribution-aliases",
+        headers=auth_headers,
+        json={"alias": "matt", "resolved_email": "manderson@example.org"},
+    )
+
+    response = client.get(
+        "/api/v1/attribution-aliases", headers=auth_headers, params={"page": 1, "page_size": 1}
+    )
+    body = response.json()
+    assert body["page_size"] == 1
+    assert len(body["items"]) == 1
+
+    response = client.get(
+        "/api/v1/attribution-aliases", headers=auth_headers, params={"search": "matt"}
+    )
+    assert response.json()["total"] == 1
+
+    response = client.get(
+        "/api/v1/attribution-aliases", headers=auth_headers, params={"search": "no-such-alias"}
+    )
+    assert response.json()["total"] == 0
