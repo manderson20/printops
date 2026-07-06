@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.11.0] - 2026-07-05
+
+- **Kyocera, Ricoh, and Xerox copier support.** These three join Canon
+  and Konica Minolta as real connectors with setup guidance for their
+  actual device features (Kyocera Job Accounting/User Login, Ricoh User
+  Code Authentication, Xerox Standard Accounting) — not just generic CSV
+  import. Same honesty as the others: per-user accounting retrieval and
+  remote provisioning aren't available over a network API for any of
+  these, so CSV import (from each device's own admin page) remains how
+  usage data comes in.
+
 ## [0.10.0] - 2026-07-05
 
 - **Placeholder connectors for Lexmark, HP, Ricoh, Kyocera, Sharp, and
