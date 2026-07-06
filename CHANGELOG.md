@@ -5,6 +5,14 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.15.1] - 2026-07-06
+
+- **Fixed the "Log out" button drifting to the bottom of the page.** On a
+  long page (e.g. the printer list with many rows), the sidebar stretched
+  to match the page's full scrollable height instead of staying pinned to
+  the viewport — the sidebar is now capped to the visible screen height,
+  with just the main content scrolling underneath it.
+
 ## [0.15.0] - 2026-07-06
 
 - **Fixed a false "update available" notice.** The Updates page compared

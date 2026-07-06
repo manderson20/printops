@@ -48,8 +48,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-full flex-1 bg-zinc-50 font-sans dark:bg-black">
-      <aside className="flex w-56 shrink-0 flex-col border-r border-black/[.08] bg-white p-5 print:hidden dark:border-white/[.145] dark:bg-black">
+    <div className="flex h-screen overflow-hidden bg-zinc-50 font-sans print:h-auto print:overflow-visible dark:bg-black">
+      <aside className="flex w-56 shrink-0 flex-col overflow-y-auto border-r border-black/[.08] bg-white p-5 print:hidden dark:border-white/[.145] dark:bg-black">
         <Link href="/insights" className="mb-8 flex items-center gap-2">
           <Image src="/printops-logo.png" alt="" width={28} height={28} />
           <span className="text-base font-semibold text-black dark:text-zinc-50">
