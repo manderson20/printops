@@ -90,6 +90,7 @@ async def _make_held_job(db_session_factory, printer_id, submitted_by, **overrid
         "printer_id": printer_id,
         "submitted_by": submitted_by,
         "status": "held",
+        "hold_reason": "pin_release",
         "held_file_path": "/var/spool/printops-held/x",
         "held_job_options": "sides=one-sided",
         "document_name": "Report.pdf",
@@ -191,6 +192,29 @@ async def test_cannot_release_already_forwarded_job(
         db_session_factory, printer_with_release.id, alice.email, status="forwarded"
     )
 
+    response = client.post(
+        f"/api/v1/release/test-token-123/jobs/{job.id}/release", json={"pin": "1001"}
+    )
+    assert response.status_code == 404
+
+
+async def test_quota_held_job_invisible_to_kiosk_listing(
+    client, printer_with_release, alice, db_session_factory
+):
+    await _make_held_job(
+        db_session_factory, printer_with_release.id, alice.email, hold_reason="quota"
+    )
+    response = client.post("/api/v1/release/test-token-123/jobs", json={"pin": "1001"})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_quota_held_job_cannot_be_self_released(
+    client, printer_with_release, alice, db_session_factory
+):
+    job = await _make_held_job(
+        db_session_factory, printer_with_release.id, alice.email, hold_reason="quota"
+    )
     response = client.post(
         f"/api/v1/release/test-token-123/jobs/{job.id}/release", json={"pin": "1001"}
     )

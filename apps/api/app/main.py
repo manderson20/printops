@@ -37,6 +37,7 @@ from app.routers import (
     jobs,
     mfp_devices,
     printers,
+    quota_holds,
     release,
     reports,
     settings as settings_router,
@@ -293,3 +294,4 @@ app.include_router(
 )
 app.include_router(copier_imports.router, prefix="/api/v1/copier-imports", tags=["copier-imports"])
 app.include_router(copier_unmapped.router, prefix="/api/v1/copier-unmapped", tags=["copier-unmapped"])
+app.include_router(quota_holds.router, prefix="/api/v1/quota-holds", tags=["quota-holds"])

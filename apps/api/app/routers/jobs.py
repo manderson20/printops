@@ -14,6 +14,7 @@ from app.models.job import Job
 from app.models.printer import Printer
 from app.models.release import PrintReleaseSettings
 from app.printers.job_control import JobControlError, cancel_cups_job
+from app.quotas.service import resolve_hold_reason
 from app.schemas.auth import UserOut
 from app.schemas.job import JobCreate, JobListOut, JobOut, JobUpdate, UserUsageOut
 
@@ -48,10 +49,21 @@ async def list_jobs(
 
 @router.post("", response_model=JobOut, status_code=status.HTTP_201_CREATED)
 async def create_job(payload: JobCreate, db: AsyncSession = Depends(get_db)):
-    """Called by the CUPS backend script right before it attempts delivery."""
+    """Called by the CUPS backend script right before it attempts delivery.
+
+    hold_reason is decided here — once, using submitted_by as already
+    resolved a few lines up — rather than by the script itself. The script
+    (infra/cups/backends/printops) only reacts to whatever's returned here:
+    if hold_reason is set, it spools the document and PATCHes this job to
+    status="held" instead of forwarding, the same mechanics it already had
+    for a release_required printer, just triggered by this field now instead
+    of a separate printer.release_required lookup. See
+    app/quotas/service.py:resolve_hold_reason for "pin_release" vs "quota"."""
     attributed_user, attribution_method, mac_address = await resolve_user(
         db, payload.submitted_by, payload.source_host
     )
+    printer = await db.get(Printer, payload.printer_id)
+    hold_reason = await resolve_hold_reason(db, printer, attributed_user) if printer else None
     job = Job(
         printer_id=payload.printer_id,
         cups_job_id=payload.cups_job_id,
@@ -62,6 +74,7 @@ async def create_job(payload: JobCreate, db: AsyncSession = Depends(get_db)):
         document_name=payload.document_name,
         copy_count=payload.copy_count,
         status="forwarding",
+        hold_reason=hold_reason,
     )
     db.add(job)
     await db.commit()

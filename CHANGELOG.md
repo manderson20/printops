@@ -5,6 +5,24 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.14.0] - 2026-07-06
+
+- **Per-printer, per-user page quotas.** Cap how many pages a user can
+  print at a specific printer over a period you choose (daily/weekly/
+  monthly/quarterly/yearly), configurable on each printer's own detail
+  page. A user already at or over their limit gets their next job held
+  instead of forwarded — release requires an admin (new "Quota Holds"
+  admin page), not the submitter's own PIN. Off by default org-wide
+  (Settings → Quotas) until you turn it on, even if printers already have
+  limits configured.
+- **LDAP address-book relay for copiers.** Lets office copiers do
+  scan-to-email address-book lookups against PrintOps over LDAP instead of
+  each one holding its own direct connection to Google Workspace — served
+  entirely from the Google Workspace roster PrintOps already syncs, no
+  live Google call per search. New `infra/ldap-relay/` service (its own
+  process), Settings → LDAP Relay for the org-wide switch/base DN, and a
+  per-printer bind-credential panel. Off by default.
+
 ## [0.13.0] - 2026-07-06
 
 - **Insights is now the landing page.** Signing in (Google SSO or the local

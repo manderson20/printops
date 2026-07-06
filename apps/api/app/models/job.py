@@ -46,17 +46,29 @@ class Job(Base, TimestampMixin):
 
     # received -> forwarding -> forwarded | failed | cancelled
     #          -> held -> forwarding -> forwarded | failed | cancelled
-    # "held" is set by the CUPS backend script instead of forwarding, only
-    # for a printer with Printer.release_required — see app/routers/release.py
-    # (the public kiosk API that resolves a PIN and releases it) and
-    # app/printers/release.py (the actual delivery once released). A held
-    # job also reaches "cancelled" if it's never released before
-    # held_expires_at (app/main.py's background purge loop).
+    # "held" is set by the CUPS backend script instead of forwarding, for a
+    # printer with Printer.release_required OR a user over their page quota
+    # (app/quotas/service.py) — see hold_reason below for which, and
+    # app/routers/release.py (the public kiosk API that resolves a PIN and
+    # releases it) and app/printers/release.py (the actual delivery once
+    # released). A held job also reaches "cancelled" if it's never released
+    # before held_expires_at (app/main.py's background purge loop).
     # "cancelled" from "forwarding" is set by an admin action
     # (app/routers/jobs.py:cancel_job or app/routers/printers.py:purge_jobs)
     # — only reachable from "forwarding"/"held", since forwarded/failed jobs
     # are already terminal.
     status: Mapped[str] = mapped_column(default="received", server_default="received")
+    # Why status="held" — "pin_release" (Printer.release_required, releasable
+    # by the submitter's own PIN at the kiosk) or "quota" (over a
+    # PrinterUserQuota limit, releasable only by an admin — see
+    # app/routers/quota_holds.py). None until the job is actually held.
+    # Decided once, at create_job time (app/quotas/service.py:resolve_hold_reason),
+    # even though the CUPS backend script doesn't act on it (spool + PATCH
+    # status="held") until slightly later in the same request — see
+    # infra/cups/backends/printops. The self-service PIN kiosk
+    # (app/routers/release.py) filters to hold_reason="pin_release" only, so
+    # a quota hold can never be released there.
+    hold_reason: Mapped[str | None] = mapped_column(default=None)
     error_message: Mapped[str | None] = mapped_column(default=None)
 
     # Physical sheets printed (CUPS job-media-sheets-completed, read from the

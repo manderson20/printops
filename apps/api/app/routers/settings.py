@@ -18,6 +18,7 @@ from app.integrations.google_workspace import (
 from app.integrations.google_workspace import run_sync as run_google_workspace_sync
 from app.integrations.mosyle import MosyleClient, MosyleError
 from app.integrations.mosyle import run_sync as run_mosyle_sync
+from app.ldap_relay.service import get_or_create_ldap_relay_settings
 from app.models.classguard import ClassGuardSettings
 from app.models.google_sso import GoogleSsoSettings
 from app.models.google_workspace import GoogleWorkspaceSettings, GoogleWorkspaceUser
@@ -26,6 +27,7 @@ from app.models.release import PrintReleaseSettings
 from app.models.report import ReportFormulaSettings
 from app.models.snmp import SnmpDefaultsSettings
 from app.printers.snmp_counters import get_or_create_snmp_defaults
+from app.quotas.service import get_or_create_quota_settings
 from app.schemas.classguard import ClassGuardSettingsOut, ClassGuardSettingsUpdate, ClassGuardTestRequest, ClassGuardTestResult
 from app.schemas.google_sso import GoogleSsoSettingsOut, GoogleSsoSettingsUpdate
 from app.schemas.google_workspace import (
@@ -34,8 +36,10 @@ from app.schemas.google_workspace import (
     GoogleWorkspaceTestResult,
     GoogleWorkspaceUserOut,
 )
+from app.schemas.ldap_relay import LdapRelaySettingsOut, LdapRelaySettingsUpdate
 from app.schemas.mosyle import MosyleSettingsOut, MosyleSettingsUpdate, MosyleTestResult
 from app.schemas.release import PrintReleaseSettingsOut, PrintReleaseSettingsUpdate
+from app.schemas.quota import QuotaSettingsOut, QuotaSettingsUpdate
 from app.schemas.report import ReportFormulaSettingsOut, ReportFormulaSettingsUpdate
 from app.schemas.snmp import SnmpDefaultsOut, SnmpDefaultsUpdate
 
@@ -604,3 +608,57 @@ async def update_print_release_settings(
     await db.commit()
     await db.refresh(settings)
     return PrintReleaseSettingsOut(hold_expiry_hours=settings.hold_expiry_hours)
+
+
+@router.get("/quotas", response_model=QuotaSettingsOut)
+async def get_quota_settings(db: AsyncSession = Depends(get_db)):
+    settings = await get_or_create_quota_settings(db)
+    return QuotaSettingsOut(enabled=settings.enabled)
+
+
+@router.put(
+    "/quotas",
+    response_model=QuotaSettingsOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def update_quota_settings(payload: QuotaSettingsUpdate, db: AsyncSession = Depends(get_db)):
+    """Org-wide kill switch for page-quota enforcement — off by default, so
+    configuring PrinterUserQuota rows on a printer never starts holding
+    jobs until an admin explicitly opts in here (see
+    app/quotas/service.py:resolve_hold_reason)."""
+    settings = await get_or_create_quota_settings(db)
+    if payload.enabled is not None:
+        settings.enabled = payload.enabled
+    await db.commit()
+    await db.refresh(settings)
+    return QuotaSettingsOut(enabled=settings.enabled)
+
+
+@router.get("/ldap", response_model=LdapRelaySettingsOut)
+async def get_ldap_relay_settings(db: AsyncSession = Depends(get_db)):
+    settings = await get_or_create_ldap_relay_settings(db)
+    return LdapRelaySettingsOut(enabled=settings.enabled, base_dn=settings.base_dn, port=settings.port)
+
+
+@router.put(
+    "/ldap",
+    response_model=LdapRelaySettingsOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def update_ldap_relay_settings(
+    payload: LdapRelaySettingsUpdate, db: AsyncSession = Depends(get_db)
+):
+    """Org-wide kill switch + shared base DN for the LDAP address-book
+    relay (infra/ldap-relay/) — off by default, so configuring per-printer
+    bind credentials never actually serves anything until an admin opts in
+    here (see app/routers/internal.py's ldap_bind/ldap_search)."""
+    settings = await get_or_create_ldap_relay_settings(db)
+    if payload.enabled is not None:
+        settings.enabled = payload.enabled
+    if payload.base_dn is not None:
+        settings.base_dn = payload.base_dn
+    if payload.port is not None:
+        settings.port = payload.port
+    await db.commit()
+    await db.refresh(settings)
+    return LdapRelaySettingsOut(enabled=settings.enabled, base_dn=settings.base_dn, port=settings.port)

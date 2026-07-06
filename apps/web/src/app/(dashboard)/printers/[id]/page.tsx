@@ -29,7 +29,9 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { LdapAddressBookCard } from "./LdapAddressBook";
 import { PrintReleaseCard } from "./PrintRelease";
+import { QuotasCard } from "./Quotas";
 import { SnmpCountersCard } from "./SnmpCounters";
 import { TonerCartridgesCard } from "./TonerCartridges";
 import { UsageHistoryCard } from "./UsageHistory";
@@ -76,7 +78,10 @@ export default function PrinterDetailPage() {
         setState({ phase: "ok", printer });
         setForm(
           Object.fromEntries(
-            EDITABLE_FIELDS.map(([field]) => [field, (printer as never)[field] ?? ""]),
+            EDITABLE_FIELDS.map(([field]) => [
+              field,
+              (printer as never)[field] ?? "",
+            ]),
           ),
         );
         setAirprintEnabled(printer.airprint_enabled);
@@ -84,7 +89,8 @@ export default function PrinterDetailPage() {
       .catch((error: unknown) =>
         setState({
           phase: "error",
-          message: error instanceof Error ? error.message : "Failed to load printer",
+          message:
+            error instanceof Error ? error.message : "Failed to load printer",
         }),
       );
     listJobs({ printer_id: params.id, limit: 5 })
@@ -98,17 +104,25 @@ export default function PrinterDetailPage() {
   async function handleCopy(field: string, value: string) {
     await navigator.clipboard.writeText(value);
     setCopiedField(field);
-    setTimeout(() => setCopiedField((current) => (current === field ? null : current)), 1500);
+    setTimeout(
+      () => setCopiedField((current) => (current === field ? null : current)),
+      1500,
+    );
   }
 
   async function handleSave() {
     setSaving(true);
     setActionError(null);
     try {
-      const printer = await updatePrinter(params.id, { ...form, airprint_enabled: airprintEnabled });
+      const printer = await updatePrinter(params.id, {
+        ...form,
+        airprint_enabled: airprintEnabled,
+      });
       setState({ phase: "ok", printer });
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : "Failed to save changes");
+      setActionError(
+        err instanceof ApiError ? err.message : "Failed to save changes",
+      );
     } finally {
       setSaving(false);
     }
@@ -121,7 +135,9 @@ export default function PrinterDetailPage() {
       const printer = await rediscoverPrinter(params.id);
       setState({ phase: "ok", printer });
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : "Rediscovery failed");
+      setActionError(
+        err instanceof ApiError ? err.message : "Rediscovery failed",
+      );
     } finally {
       setRediscovering(false);
     }
@@ -134,7 +150,9 @@ export default function PrinterDetailPage() {
       const printer = await resyncQueue(params.id);
       setState({ phase: "ok", printer });
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : "Queue resync failed");
+      setActionError(
+        err instanceof ApiError ? err.message : "Queue resync failed",
+      );
     } finally {
       setResyncing(false);
     }
@@ -153,14 +171,19 @@ export default function PrinterDetailPage() {
       const printer = await checkPrinterStatus(params.id);
       setState({ phase: "ok", printer });
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : "Status check failed");
+      setActionError(
+        err instanceof ApiError ? err.message : "Status check failed",
+      );
     } finally {
       setCheckingStatus(false);
     }
   }
 
   async function handlePurgeQueue() {
-    if (!confirm("Cancel every job queued on this printer? This can't be undone.")) return;
+    if (
+      !confirm("Cancel every job queued on this printer? This can't be undone.")
+    )
+      return;
     setPurging(true);
     setActionError(null);
     setPurgeResult(null);
@@ -171,10 +194,15 @@ export default function PrinterDetailPage() {
           ? "No PrintOps-tracked jobs were pending — the CUPS queue has been cleared."
           : `Cancelled ${result.cancelled_count} pending job${result.cancelled_count === 1 ? "" : "s"}.`,
       );
-      const refreshed = await listJobs({ printer_id: params.id, limit: 5 }).catch(() => null);
+      const refreshed = await listJobs({
+        printer_id: params.id,
+        limit: 5,
+      }).catch(() => null);
       if (refreshed) setJobs(refreshed);
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : "Queue purge failed");
+      setActionError(
+        err instanceof ApiError ? err.message : "Queue purge failed",
+      );
     } finally {
       setPurging(false);
     }
@@ -193,7 +221,9 @@ export default function PrinterDetailPage() {
   return (
     <div className="flex w-full max-w-2xl flex-col gap-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">{printer.name}</h1>
+        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">
+          {printer.name}
+        </h1>
         {isAdmin && (
           <Button variant="danger" onClick={handleDelete}>
             Delete
@@ -204,7 +234,11 @@ export default function PrinterDetailPage() {
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <CardTitle>Status</CardTitle>
-          <Button variant="secondary" onClick={handleCheckStatus} disabled={checkingStatus}>
+          <Button
+            variant="secondary"
+            onClick={handleCheckStatus}
+            disabled={checkingStatus}
+          >
             {checkingStatus ? "Checking…" : "Check Now"}
           </Button>
         </div>
@@ -219,7 +253,9 @@ export default function PrinterDetailPage() {
                 </span>
               </div>
               {printer.status_message && (
-                <p className="text-zinc-600 dark:text-zinc-400">{printer.status_message}</p>
+                <p className="text-zinc-600 dark:text-zinc-400">
+                  {printer.status_message}
+                </p>
               )}
               {printer.status_reasons && printer.status_reasons.length > 0 && (
                 <div className="flex flex-wrap gap-1">
@@ -243,7 +279,9 @@ export default function PrinterDetailPage() {
               <Input
                 value={form[field] ?? ""}
                 disabled={!isAdmin}
-                onChange={(e) => setForm((prev) => ({ ...prev, [field]: e.target.value }))}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, [field]: e.target.value }))
+                }
               />
             </Field>
           ))}
@@ -261,9 +299,9 @@ export default function PrinterDetailPage() {
             Discoverable via AirPrint (Bonjour)
             <br />
             <span className="text-xs text-zinc-500">
-              Off = hidden from automatic discovery on Macs/iPads; only devices explicitly
-              configured (e.g. via MDM) can print to it. Recommended off for printers
-              handling confidential documents.
+              Off = hidden from automatic discovery on Macs/iPads; only devices
+              explicitly configured (e.g. via MDM) can print to it. Recommended
+              off for printers handling confidential documents.
             </span>
           </span>
         </label>
@@ -280,25 +318,32 @@ export default function PrinterDetailPage() {
         <div className="mb-1 flex items-center justify-between">
           <CardTitle>Connection Info</CardTitle>
           {isAdmin && (
-            <Button variant="secondary" onClick={handleResync} disabled={resyncing}>
+            <Button
+              variant="secondary"
+              onClick={handleResync}
+              disabled={resyncing}
+            >
               {resyncing ? "Resyncing…" : "Resync Queue"}
             </Button>
           )}
         </div>
         <p className="mb-4 text-xs text-zinc-500">
-          For manually adding this printer&apos;s PrintOps queue in an MDM tool (e.g. Mosyle).
-          This points at the PrintOps server, not the printer itself — clients print through
-          the proxy.
+          For manually adding this printer&apos;s PrintOps queue in an MDM tool
+          (e.g. Mosyle). This points at the PrintOps server, not the printer
+          itself — clients print through the proxy.
         </p>
 
         {printer.queue_sync_error && (
           <div className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
             <p className="font-medium">CUPS queue is out of sync.</p>
-            <p className="mt-1 text-amber-800 dark:text-amber-300">{printer.queue_sync_error}</p>
             <p className="mt-1 text-amber-800 dark:text-amber-300">
-              This printer won&apos;t accept jobs until this is fixed. Common cause: the printer
-              was unreachable when PrintOps last tried to sync the queue — check connectivity,
-              then click Resync Queue above.
+              {printer.queue_sync_error}
+            </p>
+            <p className="mt-1 text-amber-800 dark:text-amber-300">
+              This printer won&apos;t accept jobs until this is fixed. Common
+              cause: the printer was unreachable when PrintOps last tried to
+              sync the queue — check connectivity, then click Resync Queue
+              above.
             </p>
           </div>
         )}
@@ -317,10 +362,18 @@ export default function PrinterDetailPage() {
                 className="flex items-center justify-between gap-3 border-t border-black/[.08] pt-2 first:border-t-0 first:pt-0 dark:border-white/[.1]"
               >
                 <div className="flex flex-col">
-                  <span className="text-xs font-medium text-zinc-500">{label}</span>
-                  <code className="text-zinc-800 dark:text-zinc-200">{value}</code>
+                  <span className="text-xs font-medium text-zinc-500">
+                    {label}
+                  </span>
+                  <code className="text-zinc-800 dark:text-zinc-200">
+                    {value}
+                  </code>
                 </div>
-                <Button variant="secondary" className="!px-3 !py-1 text-xs" onClick={() => handleCopy(label, value)}>
+                <Button
+                  variant="secondary"
+                  className="!px-3 !py-1 text-xs"
+                  onClick={() => handleCopy(label, value)}
+                >
                   {copiedField === label ? "Copied" : "Copy"}
                 </Button>
               </div>
@@ -333,7 +386,11 @@ export default function PrinterDetailPage() {
         <div className="mb-4 flex items-center justify-between">
           <CardTitle>Discovered Capabilities</CardTitle>
           {isAdmin && (
-            <Button variant="secondary" onClick={handleRediscover} disabled={rediscovering}>
+            <Button
+              variant="secondary"
+              onClick={handleRediscover}
+              disabled={rediscovering}
+            >
               {rediscovering ? "Probing…" : "Rediscover"}
             </Button>
           )}
@@ -341,12 +398,16 @@ export default function PrinterDetailPage() {
 
         {printer.capabilities_error && (
           <div className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-            <p className="font-medium">Printer saved, but capabilities couldn&apos;t be detected.</p>
-            <p className="mt-1 text-amber-800 dark:text-amber-300">{printer.capabilities_error}</p>
+            <p className="font-medium">
+              Printer saved, but capabilities couldn&apos;t be detected.
+            </p>
             <p className="mt-1 text-amber-800 dark:text-amber-300">
-              Common cause: IPP is disabled on the device by default (true for most Canon,
-              and many other, printers) — enable it in the printer&apos;s own admin page, then
-              click Rediscover below.
+              {printer.capabilities_error}
+            </p>
+            <p className="mt-1 text-amber-800 dark:text-amber-300">
+              Common cause: IPP is disabled on the device by default (true for
+              most Canon, and many other, printers) — enable it in the
+              printer&apos;s own admin page, then click Rediscover below.
             </p>
           </div>
         )}
@@ -378,16 +439,27 @@ export default function PrinterDetailPage() {
             </dl>
             {printer.capabilities_detected_at && (
               <p className="text-xs text-zinc-400">
-                Last probed {new Date(printer.capabilities_detected_at).toLocaleString()}
+                Last probed{" "}
+                {new Date(printer.capabilities_detected_at).toLocaleString()}
               </p>
             )}
           </div>
         )}
       </Card>
 
-      <TonerCartridgesCard printerId={printer.id} colorSupported={!!caps?.color_supported} />
+      <TonerCartridgesCard
+        printerId={printer.id}
+        colorSupported={!!caps?.color_supported}
+      />
 
       <PrintReleaseCard
+        printer={printer}
+        onUpdate={(updated) => setState({ phase: "ok", printer: updated })}
+      />
+
+      <QuotasCard printerId={printer.id} />
+
+      <LdapAddressBookCard
         printer={printer}
         onUpdate={(updated) => setState({ phase: "ok", printer: updated })}
       />
@@ -397,7 +469,10 @@ export default function PrinterDetailPage() {
         onUpdate={(updated) => setState({ phase: "ok", printer: updated })}
       />
 
-      <UsageHistoryCard printerId={printer.id} confidence={printer.page_count_confidence} />
+      <UsageHistoryCard
+        printerId={printer.id}
+        confidence={printer.page_count_confidence}
+      />
 
       <Card>
         <div className="mb-4 flex items-center justify-between">
@@ -423,7 +498,9 @@ export default function PrinterDetailPage() {
         </div>
 
         {purgeResult && (
-          <p className="mb-3 text-xs text-emerald-700 dark:text-emerald-400">{purgeResult}</p>
+          <p className="mb-3 text-xs text-emerald-700 dark:text-emerald-400">
+            {purgeResult}
+          </p>
         )}
 
         {jobs === null && <Spinner label="Loading jobs…" />}
@@ -446,7 +523,8 @@ export default function PrinterDetailPage() {
                       <Badge tone={attribution.tone}>{attribution.label}</Badge>
                     </span>
                     <span className="text-xs text-zinc-400">
-                      {new Date(job.created_at).toLocaleString()} · {formatBytes(job.file_size_bytes)}
+                      {new Date(job.created_at).toLocaleString()} ·{" "}
+                      {formatBytes(job.file_size_bytes)}
                     </span>
                   </div>
                   <Badge tone={info.tone}>{info.label}</Badge>
