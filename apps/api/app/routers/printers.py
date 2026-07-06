@@ -88,7 +88,10 @@ async def _apply_queue_sync(printer: Printer, db: AsyncSession) -> None:
 
 
 @router.post(
-    "", response_model=PrinterOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_role("admin"))]
+    "",
+    response_model=PrinterOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("admin"))],
 )
 async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_db)):
     printer = Printer(
@@ -133,7 +136,9 @@ async def get_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     return await _get_printer_or_404(printer_id, db)
 
 
-@router.patch("/{printer_id}", response_model=PrinterOut, dependencies=[Depends(require_role("admin"))])
+@router.patch(
+    "/{printer_id}", response_model=PrinterOut, dependencies=[Depends(require_role("admin"))]
+)
 async def update_printer(
     printer_id: UUID, payload: PrinterUpdate, db: AsyncSession = Depends(get_db)
 ):
@@ -161,7 +166,9 @@ async def update_printer(
     if snmp_community is not _not_provided:
         printer.snmp_community_encrypted = encrypt(snmp_community) if snmp_community else None
     if ldap_bind_password is not _not_provided:
-        printer.ldap_bind_password_hash = hash_password(ldap_bind_password) if ldap_bind_password else None
+        printer.ldap_bind_password_hash = (
+            hash_password(ldap_bind_password) if ldap_bind_password else None
+        )
     # First time release is turned on for this printer, it needs a token to
     # exist at all — generated here rather than requiring a separate manual
     # step before the toggle does anything useful. Regenerating an existing
@@ -176,7 +183,9 @@ async def update_printer(
 
 
 @router.delete(
-    "/{printer_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_role("admin"))]
+    "/{printer_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role("admin"))],
 )
 async def delete_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     printer = await _get_printer_or_404(printer_id, db)
@@ -188,7 +197,11 @@ async def delete_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
 
-@router.post("/{printer_id}/discover", response_model=PrinterOut, dependencies=[Depends(require_role("admin"))])
+@router.post(
+    "/{printer_id}/discover",
+    response_model=PrinterOut,
+    dependencies=[Depends(require_role("admin"))],
+)
 async def discover_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     printer = await _get_printer_or_404(printer_id, db)
     await refresh_printer_capabilities(printer)
@@ -197,7 +210,11 @@ async def discover_printer(printer_id: UUID, db: AsyncSession = Depends(get_db))
     return printer
 
 
-@router.post("/{printer_id}/resync-queue", response_model=PrinterOut, dependencies=[Depends(require_role("admin"))])
+@router.post(
+    "/{printer_id}/resync-queue",
+    response_model=PrinterOut,
+    dependencies=[Depends(require_role("admin"))],
+)
 async def resync_queue(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     """Manually retries the CUPS queue sync — e.g. after fixing whatever
     caused queue_sync_error, without needing another printer edit."""
@@ -252,9 +269,7 @@ async def check_counters(printer_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{printer_id}/counter-history", response_model=list[DailyCounterDeltaOut])
-async def counter_history(
-    printer_id: UUID, days: int = 30, db: AsyncSession = Depends(get_db)
-):
+async def counter_history(printer_id: UUID, days: int = 30, db: AsyncSession = Depends(get_db)):
     """Per-day usage deltas computed from the SNMP counter reading
     history (app/printers/counter_history.py) — powers the printer
     detail page's usage-over-time chart. Read-only telemetry, open to
@@ -386,7 +401,11 @@ async def update_toner_cartridges(
 
 async def _quota_out(db: AsyncSession, quota: PrinterUserQuota) -> PrinterUserQuotaOut:
     start, end = period_bounds(quota.period, datetime.now(UTC))
-    pages_used = await get_pages_used(db, quota.printer_id, quota.user_email, start, end) if quota.user_email else 0
+    pages_used = (
+        await get_pages_used(db, quota.printer_id, quota.user_email, start, end)
+        if quota.user_email
+        else 0
+    )
     return PrinterUserQuotaOut(
         id=quota.id,
         printer_id=quota.printer_id,
@@ -440,7 +459,9 @@ async def create_printer_quota(
     existing = await db.execute(
         select(PrinterUserQuota).where(
             PrinterUserQuota.printer_id == printer_id,
-            PrinterUserQuota.user_email == email if email is not None else PrinterUserQuota.user_email.is_(None),
+            PrinterUserQuota.user_email == email
+            if email is not None
+            else PrinterUserQuota.user_email.is_(None),
         )
     )
     if existing.scalar_one_or_none() is not None:
@@ -452,7 +473,10 @@ async def create_printer_quota(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
     quota = PrinterUserQuota(
-        printer_id=printer_id, user_email=email, period=payload.period, page_limit=payload.page_limit
+        printer_id=printer_id,
+        user_email=email,
+        period=payload.period,
+        page_limit=payload.page_limit,
     )
     db.add(quota)
     await db.commit()
@@ -466,7 +490,10 @@ async def create_printer_quota(
     dependencies=[Depends(require_role("admin"))],
 )
 async def update_printer_quota(
-    printer_id: UUID, quota_id: UUID, payload: PrinterUserQuotaUpdate, db: AsyncSession = Depends(get_db)
+    printer_id: UUID,
+    quota_id: UUID,
+    payload: PrinterUserQuotaUpdate,
+    db: AsyncSession = Depends(get_db),
 ):
     quota = await db.get(PrinterUserQuota, quota_id)
     if quota is None or quota.printer_id != printer_id:
@@ -485,7 +512,9 @@ async def update_printer_quota(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_role("admin"))],
 )
-async def delete_printer_quota(printer_id: UUID, quota_id: UUID, db: AsyncSession = Depends(get_db)):
+async def delete_printer_quota(
+    printer_id: UUID, quota_id: UUID, db: AsyncSession = Depends(get_db)
+):
     quota = await db.get(PrinterUserQuota, quota_id)
     if quota is None or quota.printer_id != printer_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quota not found")

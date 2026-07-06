@@ -11,7 +11,6 @@ from app.db import get_db
 from app.main import app
 from app.models.base import Base
 from app.models.google_workspace import GoogleWorkspaceUser
-from app.models.job import Job
 from app.models.printer import Printer
 
 
@@ -72,7 +71,9 @@ async def printer_id(db_session_factory):
 
 def _make_job(client, printer_id, backend_headers, submitted_by):
     create = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id, "submitted_by": submitted_by}, headers=backend_headers
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": submitted_by},
+        headers=backend_headers,
     )
     return create.json()["id"]
 

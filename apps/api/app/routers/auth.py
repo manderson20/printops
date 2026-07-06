@@ -119,10 +119,18 @@ async def google_callback(
     their email is in sso.initial_admin_emails, existing users' role is
     never touched here (only the Users admin page changes it)."""
     sso = await _get_google_sso_settings(db)
-    if not sso or not sso.enabled or not sso.client_id or not sso.client_secret_encrypted or not sso.redirect_base_url:
+    if (
+        not sso
+        or not sso.enabled
+        or not sso.client_id
+        or not sso.client_secret_encrypted
+        or not sso.redirect_base_url
+    ):
         return _fail("Google sign-in is not configured.")
 
-    state_ok = state and printops_oauth_state and secrets.compare_digest(state, printops_oauth_state)
+    state_ok = (
+        state and printops_oauth_state and secrets.compare_digest(state, printops_oauth_state)
+    )
     if not state_ok:
         return _fail("Login expired or invalid — please try again.")
     if not code:

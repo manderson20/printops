@@ -48,9 +48,7 @@ async def test_falls_back_to_ipp_1_1_after_version_rejection():
     factory, calls = _make_ipp_factory(responses)
 
     with patch("app.printers.ipp_client.IPP", side_effect=factory):
-        result = await _get_printer_attributes(
-            "10.10.2.88", 631, False, 5, None, ["printer-state"]
-        )
+        result = await _get_printer_attributes("10.10.2.88", 631, False, 5, None, ["printer-state"])
 
     assert result.raw_attributes == {"printer-state": 3}
     assert result.resolved_path == DEFAULT_CANDIDATE_PATHS[0]
@@ -71,9 +69,7 @@ async def test_non_version_error_moves_to_next_path_not_next_version():
     factory, calls = _make_ipp_factory(responses)
 
     with patch("app.printers.ipp_client.IPP", side_effect=factory):
-        result = await _get_printer_attributes(
-            "10.0.0.1", 631, False, 5, None, ["printer-state"]
-        )
+        result = await _get_printer_attributes("10.0.0.1", 631, False, 5, None, ["printer-state"])
 
     assert result.resolved_path == DEFAULT_CANDIDATE_PATHS[1]
     assert len(calls) == 2  # did not retry the first path at 1.1

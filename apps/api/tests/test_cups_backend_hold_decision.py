@@ -32,13 +32,17 @@ def backend_module():
 @pytest.fixture
 def argv_and_env(monkeypatch):
     monkeypatch.setattr(
-        sys, "argv", ["printops", "42", "matt", "Report.pdf", "1", "job-uuid=urn:uuid:x", "/tmp/doc.pdf"]
+        sys,
+        "argv",
+        ["printops", "42", "matt", "Report.pdf", "1", "job-uuid=urn:uuid:x", "/tmp/doc.pdf"],
     )
     monkeypatch.setenv("DEVICE_URI", "printops://11111111-1111-1111-1111-111111111111")
     monkeypatch.setenv("PRINTER", "printops-test")
 
 
-def test_hold_reason_set_spools_and_never_calls_real_backend(backend_module, argv_and_env, monkeypatch):
+def test_hold_reason_set_spools_and_never_calls_real_backend(
+    backend_module, argv_and_env, monkeypatch
+):
     monkeypatch.setattr(backend_module, "load_backend_token", lambda: "test-token")
     monkeypatch.setattr(backend_module, "os", backend_module.os)
     monkeypatch.setattr(backend_module.os.path, "getsize", lambda _path: 123)
@@ -93,7 +97,12 @@ def test_no_hold_reason_proceeds_to_real_backend(backend_module, argv_and_env, m
         patch.object(
             backend_module,
             "get_job_completion_attributes",
-            return_value={"page_count": None, "color_mode": None, "duplex": None, "paper_size": None},
+            return_value={
+                "page_count": None,
+                "color_mode": None,
+                "duplex": None,
+                "paper_size": None,
+            },
         ),
     ):
         exit_code = backend_module.main()

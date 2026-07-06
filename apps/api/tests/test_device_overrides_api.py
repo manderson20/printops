@@ -84,8 +84,16 @@ async def seeded_mosyle_device(db_session_factory):
 @pytest_asyncio.fixture
 async def seeded_roster(db_session_factory):
     async with db_session_factory() as session:
-        session.add(GoogleWorkspaceUser(email="matt.anderson@example.com", name="Matt Anderson", synced_at=datetime.now(UTC)))
-        session.add(GoogleWorkspaceUser(email="matt.jones@example.com", name="Matt Jones", synced_at=datetime.now(UTC)))
+        session.add(
+            GoogleWorkspaceUser(
+                email="matt.anderson@example.com", name="Matt Anderson", synced_at=datetime.now(UTC)
+            )
+        )
+        session.add(
+            GoogleWorkspaceUser(
+                email="matt.jones@example.com", name="Matt Jones", synced_at=datetime.now(UTC)
+            )
+        )
         await session.commit()
 
 

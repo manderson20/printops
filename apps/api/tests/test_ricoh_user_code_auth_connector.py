@@ -14,7 +14,10 @@ RICOH_SYS_DESCR_OUTPUT = '.1.3.6.1.2.1.1.1.0 = STRING: "RICOH MP C3004"\n'
 
 def _device(**overrides) -> MfpDevice:
     defaults = dict(
-        name="Copy Room Ricoh", vendor="ricoh", connector_type="ricoh_user_code_auth", ip_address="10.0.0.60"
+        name="Copy Room Ricoh",
+        vendor="ricoh",
+        connector_type="ricoh_user_code_auth",
+        ip_address="10.0.0.60",
     )
     defaults.update(overrides)
     return MfpDevice(**defaults)
@@ -59,7 +62,9 @@ async def test_get_meter_snapshot_falls_back_to_standard_total_only():
 @pytest.mark.asyncio
 async def test_test_connection_forces_ricoh_profile():
     connector = RicohUserCodeAuthConnector()
-    with patch("app.printers.snmp_counters._run_snmp", return_value=RICOH_SYS_DESCR_OUTPUT) as mock_run:
+    with patch(
+        "app.printers.snmp_counters._run_snmp", return_value=RICOH_SYS_DESCR_OUTPUT
+    ) as mock_run:
         result = await connector.test_connection(_device())
     assert result.ok is True
     assert mock_run.call_count == 1
@@ -85,7 +90,11 @@ async def test_import_accounting_file_uses_same_csv_pipeline_as_generic():
     template = CopierImportTemplate(
         name="t",
         vendor="ricoh",
-        column_mapping={"identity_value": "User Code", "occurred_at": "Date", "page_count": "Pages"},
+        column_mapping={
+            "identity_value": "User Code",
+            "occurred_at": "Date",
+            "page_count": "Pages",
+        },
         identity_type="user_code",
         delimiter=",",
     )

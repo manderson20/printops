@@ -77,7 +77,9 @@ class MfpDevice(Base, TimestampMixin):
     # until secure print release actually extends to copiers.
     cap_secure_print_release: Mapped[bool | None] = mapped_column(default=None)
 
-    capabilities_source: Mapped[str | None] = mapped_column(default=None)  # manual | connector_reported
+    capabilities_source: Mapped[str | None] = mapped_column(
+        default=None
+    )  # manual | connector_reported
     capabilities_detected_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
