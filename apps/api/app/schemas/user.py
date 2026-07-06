@@ -8,6 +8,8 @@ Role = Literal["admin", "viewer"]
 
 
 class UserAccountOut(BaseModel):
+    model_config = {"from_attributes": True}
+
     id: uuid.UUID
     email: str
     name: str | None
@@ -19,3 +21,10 @@ class UserAccountOut(BaseModel):
 class UserAccountUpdate(BaseModel):
     role: Role | None = None
     is_active: bool | None = None
+
+
+class UserAccountPage(BaseModel):
+    items: list[UserAccountOut]
+    total: int
+    page: int
+    page_size: int

@@ -946,8 +946,24 @@ export type UserAccount = {
   last_login_at: string | null;
 };
 
-export async function listUsers(): Promise<UserAccount[]> {
-  const response = await authorizedFetch("/api/v1/users");
+export type UserAccountPage = {
+  items: UserAccount[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export async function listUsers(params?: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+}): Promise<UserAccountPage> {
+  const query = new URLSearchParams();
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.pageSize) query.set("page_size", String(params.pageSize));
+  if (params?.search) query.set("search", params.search);
+  const qs = query.toString();
+  const response = await authorizedFetch(`/api/v1/users${qs ? `?${qs}` : ""}`);
   return response.json();
 }
 
@@ -1015,8 +1031,24 @@ export type AttributionAlias = {
   backfilled_job_count: number;
 };
 
-export async function listAttributionAliases(): Promise<AttributionAlias[]> {
-  const response = await authorizedFetch("/api/v1/attribution-aliases");
+export type AttributionAliasPage = {
+  items: AttributionAlias[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export async function listAttributionAliases(params?: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+}): Promise<AttributionAliasPage> {
+  const query = new URLSearchParams();
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.pageSize) query.set("page_size", String(params.pageSize));
+  if (params?.search) query.set("search", params.search);
+  const qs = query.toString();
+  const response = await authorizedFetch(`/api/v1/attribution-aliases${qs ? `?${qs}` : ""}`);
   return response.json();
 }
 

@@ -196,7 +196,7 @@ def test_google_callback_relogin_preserves_promoted_role(client, google_settings
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert me.json()["role"] == "viewer"
 
-    users = client.get("/api/v1/users", headers=auth_headers).json()
+    users = client.get("/api/v1/users", headers=auth_headers).json()["items"]
     user_id = next(u["id"] for u in users if u["email"] == "someone@example.org")
     first_login_at = next(u["last_login_at"] for u in users if u["id"] == user_id)
     client.patch(f"/api/v1/users/{user_id}", headers=auth_headers, json={"role": "admin"})
@@ -212,6 +212,6 @@ def test_google_callback_relogin_preserves_promoted_role(client, google_settings
     me2 = client.get("/auth/me", headers={"Authorization": f"Bearer {token2}"})
     assert me2.json()["role"] == "admin"
 
-    users_after = client.get("/api/v1/users", headers=auth_headers).json()
+    users_after = client.get("/api/v1/users", headers=auth_headers).json()["items"]
     second_login_at = next(u["last_login_at"] for u in users_after if u["id"] == user_id)
     assert second_login_at != first_login_at

@@ -19,3 +19,10 @@ class AttributionAliasOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     backfilled_job_count: int = 0
+
+
+class AttributionAliasPage(BaseModel):
+    items: list[AttributionAliasOut]
+    total: int
+    page: int
+    page_size: int

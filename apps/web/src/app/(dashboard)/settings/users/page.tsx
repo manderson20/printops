@@ -1,36 +1,31 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { ApiError, listUsers, updateUser, type Role, type UserAccount } from "@/lib/api";
-import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
+import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+
+const PAGE_SIZE = 50;
 
 type LoadState =
   | { phase: "loading" }
-  | { phase: "ok"; users: UserAccount[] }
+  | { phase: "ok"; users: UserAccount[]; total: number }
   | { phase: "error"; message: string };
 
-export default function UsersPage() {
-  const router = useRouter();
-  const currentUser = useCurrentUser();
+export default function UsersSettingsPage() {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [rowError, setRowError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (currentUser === null) {
-      router.replace("/login");
-    } else if (currentUser && currentUser.role !== "admin") {
-      router.replace("/printers");
-    }
-  }, [currentUser, router]);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
 
   function load() {
-    listUsers()
-      .then((users) => setState({ phase: "ok", users }))
+    listUsers({ page, pageSize: PAGE_SIZE, search: search || undefined })
+      .then((result) => setState({ phase: "ok", users: result.items, total: result.total }))
       .catch((error: unknown) =>
         setState({
           phase: "error",
@@ -39,10 +34,13 @@ export default function UsersPage() {
       );
   }
 
-  useEffect(() => {
-    if (currentUser?.role === "admin") load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser]);
+  useEffect(load, [page, search]);
+
+  function handleSearchSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setPage(1);
+    setSearch(searchInput.trim());
+  }
 
   async function handleRoleChange(user: UserAccount, role: Role) {
     setRowError(null);
@@ -64,19 +62,42 @@ export default function UsersPage() {
     }
   }
 
-  if (currentUser === undefined || currentUser?.role !== "admin") {
-    return <Spinner label="Loading…" />;
-  }
+  const totalPages = state.phase === "ok" ? Math.max(1, Math.ceil(state.total / PAGE_SIZE)) : 1;
 
   return (
-    <div className="flex w-full max-w-4xl flex-col gap-6">
+    <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Users</h1>
+        <h2 className="text-lg font-semibold text-black dark:text-zinc-50">Users</h2>
         <p className="mt-1 text-sm text-zinc-500">
           Accounts provisioned via Google SSO. New sign-ins default to Viewer unless their email is
           on the initial-admin allowlist — promote/demote here.
         </p>
       </div>
+
+      <form onSubmit={handleSearchSubmit} className="flex items-center gap-2">
+        <Input
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Search by name or email…"
+          className="max-w-xs"
+        />
+        <Button type="submit" variant="secondary">
+          Search
+        </Button>
+        {search && (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              setSearchInput("");
+              setSearch("");
+              setPage(1);
+            }}
+          >
+            Clear
+          </Button>
+        )}
+      </form>
 
       {state.phase === "loading" && <Spinner label="Loading users…" />}
       {state.phase === "error" && <ErrorState>{state.message}</ErrorState>}
@@ -90,7 +111,9 @@ export default function UsersPage() {
           )}
           {state.users.length === 0 ? (
             <div className="p-6">
-              <EmptyState>No one has signed in with Google yet.</EmptyState>
+              <EmptyState>
+                {search ? "No accounts match that search." : "No one has signed in with Google yet."}
+              </EmptyState>
             </div>
           ) : (
             <table className="w-full text-left text-sm">
@@ -138,6 +161,29 @@ export default function UsersPage() {
               </tbody>
             </table>
           )}
+
+          <div className="flex items-center justify-between border-t border-black/[.08] px-4 py-3 text-sm text-zinc-500 dark:border-white/[.145]">
+            <span>
+              {state.total.toLocaleString()} account{state.total === 1 ? "" : "s"}
+              {totalPages > 1 && ` — page ${page} of ${totalPages}`}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
         </Card>
       )}
     </div>

@@ -29,7 +29,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           { href: "/usage", label: "Usage" },
           { href: "/devices", label: "Devices" },
           { href: "/mfp-devices", label: "Copiers" },
-          { href: "/users", label: "Users" },
+          { href: "/settings", label: "Settings" },
           { href: "/updates", label: "Updates" },
         ]
       : NAV_LINKS;
