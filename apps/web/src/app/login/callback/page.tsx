@@ -23,7 +23,7 @@ export default function LoginCallbackPage() {
 
     if (token) {
       setToken(token);
-      router.replace("/printers");
+      router.replace("/insights");
     } else {
       setError(errorMessage ?? "Sign-in failed.");
     }

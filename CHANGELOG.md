@@ -5,6 +5,23 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.13.0] - 2026-07-06
+
+- **Insights is now the landing page.** Signing in (Google SSO or the local
+  admin account) goes straight to Print Insights instead of the printer
+  list, and it's the first link in the nav.
+- **Redesigned Insights filters.** Moved from a fixed left sidebar into a
+  collapsible bar at the top of the page, so charts and tables get the
+  full page width instead of sharing it with a filter column.
+- **Print Summary actually looks like a report now.** The left nav and
+  filter panel no longer leak into the printed output; a compact one-line
+  filter summary and a PrintOps-branded header (logo + generated
+  timestamp) replace them, and charts render at full width instead of
+  the narrow on-screen size they were stuck at before.
+- **Report Formulas moved to Settings → Insights**, out of the bottom of
+  the Insights report page itself — the report page now only shows
+  report content, not admin configuration.
+
 ## [0.12.0] - 2026-07-06
 
 - **Consolidated Settings section.** User accounts, attribution aliases, and

@@ -33,3 +33,25 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Printed reports (Insights "Print Summary") always render in light mode
+   with source colors intact, regardless of OS dark-mode or the browser's
+   default print stripping of backgrounds/accents. */
+@media print {
+  :root {
+    --background: #ffffff;
+    --foreground: #171717;
+    --accent: #1d5fad;
+    --accent-hover: #184d8c;
+    --accent-foreground: #ffffff;
+  }
+
+  @page {
+    margin: 0.5in;
+  }
+
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
