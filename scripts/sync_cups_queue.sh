@@ -60,6 +60,31 @@ fi
 sudo cupsenable "$QUEUE_NAME"
 sudo cupsaccept "$QUEUE_NAME"
 
+# CUPS's own driverless-PPD generation (or, on this box, at least one past
+# manual misconfiguration — confirmed live on 4 color copiers) can leave a
+# genuinely color-capable printer defaulting to print-color-mode=monochrome.
+# Apps that explicitly request a color mode (Chrome) are unaffected either
+# way, but apps that submit a job without an explicit color option (Word,
+# Adobe, confirmed live) silently inherit whatever this queue's default is —
+# so a color printer defaulting to monochrome here means those apps print
+# monochrome despite the user picking Color in their print dialog. Force the
+# default to color for any printer that actually supports it, rather than
+# leaving it to chance.
+COLOR_SUPPORTED=$(ipptool -X "ipp://localhost/printers/$QUEUE_NAME" /dev/stdin <<IPPTOOL_EOF 2>/dev/null | grep -A1 "<key>color-supported</key>" | grep -c "<true" || true
+{
+    OPERATION Get-Printer-Attributes
+    GROUP operation-attributes-tag
+    ATTR charset attributes-charset utf-8
+    ATTR language attributes-natural-language en
+    ATTR uri printer-uri ipp://localhost/printers/$QUEUE_NAME
+    ATTR keyword requested-attributes color-supported
+}
+IPPTOOL_EOF
+)
+if [ "$COLOR_SUPPORTED" -ge 1 ]; then
+    sudo lpadmin -p "$QUEUE_NAME" -o print-color-mode-default=color
+fi
+
 # cupsd.conf's global ErrorPolicy is retry-job, which keeps retrying the
 # SAME failed job rather than skipping to the next one — a single bad job
 # (corrupt file, printer momentarily rejecting it, etc.) then jams every
