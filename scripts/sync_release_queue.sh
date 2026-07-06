@@ -57,6 +57,26 @@ sudo lpadmin -p "$QUEUE_NAME" -o printer-is-shared=false -E
 sudo cupsenable "$QUEUE_NAME"
 sudo cupsaccept "$QUEUE_NAME"
 
+# Same as the client-facing queue — force color-capable printers to default
+# to color rather than whatever driverless-PPD generation happened to land
+# on (confirmed live: 4 color copiers on this box had a stored
+# print-color-mode=monochrome default despite being genuine color devices).
+# See scripts/sync_cups_queue.sh's matching block for the full reasoning.
+COLOR_SUPPORTED=$(ipptool -X "ipp://localhost/printers/$QUEUE_NAME" /dev/stdin <<IPPTOOL_EOF 2>/dev/null | grep -A1 "<key>color-supported</key>" | grep -c "<true" || true
+{
+    OPERATION Get-Printer-Attributes
+    GROUP operation-attributes-tag
+    ATTR charset attributes-charset utf-8
+    ATTR language attributes-natural-language en
+    ATTR uri printer-uri ipp://localhost/printers/$QUEUE_NAME
+    ATTR keyword requested-attributes color-supported
+}
+IPPTOOL_EOF
+)
+if [ "$COLOR_SUPPORTED" -ge 1 ]; then
+    sudo lpadmin -p "$QUEUE_NAME" -o print-color-mode-default=color
+fi
+
 # Same as the client-facing queue — abort just the failing job instead of
 # cupsd's default retry-job, which would otherwise jam every other
 # released job behind it on this same internal delivery queue. See that
