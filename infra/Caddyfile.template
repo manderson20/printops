@@ -1,0 +1,27 @@
+{
+	email __LETSENCRYPT_EMAIL__
+}
+
+__PRINTOPS_DOMAIN__ {
+	handle /api/* {
+		reverse_proxy localhost:8000
+	}
+	handle /auth/* {
+		reverse_proxy localhost:8000
+	}
+	handle /healthz {
+		reverse_proxy localhost:8000
+	}
+	handle /docs* {
+		reverse_proxy localhost:8000
+	}
+	handle /redoc* {
+		reverse_proxy localhost:8000
+	}
+	handle /openapi.json {
+		reverse_proxy localhost:8000
+	}
+	handle {
+		reverse_proxy localhost:3000
+	}
+}
