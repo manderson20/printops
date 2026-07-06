@@ -189,9 +189,7 @@ def test_check_status_rediscovers_capabilities_on_reconnect(
         raise PrinterProbeError("Could not reach an IPP printer at 10.0.0.8:631: timed out")
 
     monkeypatch.setattr(printer_status, "probe_printer_state", offline_state)
-    still_offline = client.post(
-        f"/api/v1/printers/{printer_id}/check-status", headers=auth_headers
-    )
+    still_offline = client.post(f"/api/v1/printers/{printer_id}/check-status", headers=auth_headers)
     assert still_offline.json()["status"] == "offline"
     assert still_offline.json()["capabilities"] is None
 
@@ -209,9 +207,7 @@ def test_check_status_rediscovers_capabilities_on_reconnect(
     monkeypatch.setattr(printer_status, "probe_printer_state", now_online_state)
     monkeypatch.setattr(printer_discovery, "probe_printer", now_online_capabilities)
 
-    reconnected = client.post(
-        f"/api/v1/printers/{printer_id}/check-status", headers=auth_headers
-    )
+    reconnected = client.post(f"/api/v1/printers/{printer_id}/check-status", headers=auth_headers)
     assert reconnected.json()["status"] == "online"
     assert reconnected.json()["model"] == "Swapped-In Model"
     assert len(probe_calls) == 1
@@ -256,7 +252,9 @@ def test_test_print_success(client, auth_headers, mock_failed_probe, monkeypatch
     assert "request id" in response.json()["message"]
 
 
-def test_test_print_translates_missing_queue_error(client, auth_headers, mock_failed_probe, monkeypatch):
+def test_test_print_translates_missing_queue_error(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
     from app.printers.test_print import TestPrintError
 
     create = client.post(
@@ -294,9 +292,7 @@ def test_mdm_connection_info(client, auth_headers, mock_failed_probe):
 
 
 def test_mdm_connection_requires_auth(client):
-    response = client.get(
-        "/api/v1/printers/00000000-0000-0000-0000-000000000000/mdm-connection"
-    )
+    response = client.get("/api/v1/printers/00000000-0000-0000-0000-000000000000/mdm-connection")
     assert response.status_code == 401
 
 
@@ -315,7 +311,9 @@ def test_create_printer_syncs_queue(client, auth_headers, mock_failed_probe, mon
     assert body["queue_sync_error"] is None
 
 
-def test_create_printer_records_queue_sync_error(client, auth_headers, mock_failed_probe, monkeypatch):
+def test_create_printer_records_queue_sync_error(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
     from app.printers.queue_sync import QueueSyncError
 
     def fake_sync_queue(printer_id):
@@ -363,7 +361,9 @@ def test_update_printer_resyncs_only_on_queue_affecting_fields(
 
 def test_delete_printer_removes_queue(client, auth_headers, mock_failed_probe, monkeypatch):
     calls = []
-    monkeypatch.setattr(printers_router, "remove_queue", lambda printer_id: calls.append(printer_id))
+    monkeypatch.setattr(
+        printers_router, "remove_queue", lambda printer_id: calls.append(printer_id)
+    )
 
     create = client.post(
         "/api/v1/printers",
@@ -711,9 +711,7 @@ def test_check_counters_records_a_reading_on_success(
     client.post(f"/api/v1/printers/{printer_id}/check-counters", headers=auth_headers)
     client.post(f"/api/v1/printers/{printer_id}/check-counters", headers=auth_headers)
 
-    history = client.get(
-        f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers
-    )
+    history = client.get(f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers)
     assert history.status_code == 200
     # Two readings a day apart, both inside the default 30-day window —
     # two buckets. Yesterday's has no earlier reading to diff against
@@ -744,9 +742,7 @@ def test_check_counters_does_not_record_a_reading_on_failure(
     response = client.post(f"/api/v1/printers/{printer_id}/check-counters", headers=auth_headers)
     assert response.status_code == 200
 
-    history = client.get(
-        f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers
-    )
+    history = client.get(f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers)
     assert history.json() == []
 
 
@@ -758,9 +754,7 @@ def test_counter_history_defaults_to_30_days(client, auth_headers, mock_failed_p
     )
     printer_id = create.json()["id"]
 
-    response = client.get(
-        f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers
-    )
+    response = client.get(f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers)
     assert response.status_code == 200
     assert response.json() == []
 

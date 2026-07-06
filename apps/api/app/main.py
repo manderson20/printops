@@ -40,10 +40,12 @@ from app.routers import (
     quota_holds,
     release,
     reports,
-    settings as settings_router,
     staff_copier_identities,
     updates,
     users,
+)
+from app.routers import (
+    settings as settings_router,
 )
 
 settings = get_settings()
@@ -159,9 +161,7 @@ async def _counter_reading_purge_loop() -> None:
                 defaults = await get_or_create_snmp_defaults(db)
                 cutoff = datetime.now(UTC) - timedelta(days=defaults.retention_days)
                 await db.execute(
-                    delete(PrinterCounterReading).where(
-                        PrinterCounterReading.recorded_at < cutoff
-                    )
+                    delete(PrinterCounterReading).where(PrinterCounterReading.recorded_at < cutoff)
                 )
                 await db.commit()
         except Exception:
@@ -234,10 +234,15 @@ async def _failed_job_purge_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tasks = [
-        asyncio.create_task(_make_device_sync_loop("Mosyle", MosyleSettings, run_mosyle_sync, MosyleError)()),
+        asyncio.create_task(
+            _make_device_sync_loop("Mosyle", MosyleSettings, run_mosyle_sync, MosyleError)()
+        ),
         asyncio.create_task(
             _make_device_sync_loop(
-                "Google Workspace", GoogleWorkspaceSettings, run_google_workspace_sync, GoogleWorkspaceError
+                "Google Workspace",
+                GoogleWorkspaceSettings,
+                run_google_workspace_sync,
+                GoogleWorkspaceError,
             )()
         ),
         asyncio.create_task(_printer_status_poll_loop()),
@@ -293,5 +298,7 @@ app.include_router(
     tags=["staff-copier-identities"],
 )
 app.include_router(copier_imports.router, prefix="/api/v1/copier-imports", tags=["copier-imports"])
-app.include_router(copier_unmapped.router, prefix="/api/v1/copier-unmapped", tags=["copier-unmapped"])
+app.include_router(
+    copier_unmapped.router, prefix="/api/v1/copier-unmapped", tags=["copier-unmapped"]
+)
 app.include_router(quota_holds.router, prefix="/api/v1/quota-holds", tags=["quota-holds"])

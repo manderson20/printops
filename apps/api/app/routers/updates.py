@@ -75,7 +75,9 @@ async def schedule_update(
     db: AsyncSession = Depends(get_db),
     current_user: UserOut = Depends(require_role("admin")),
 ):
-    result = await db.execute(select(UpdateSchedule).where(UpdateSchedule.status.in_(ACTIVE_STATUSES)))
+    result = await db.execute(
+        select(UpdateSchedule).where(UpdateSchedule.status.in_(ACTIVE_STATUSES))
+    )
     existing = result.scalar_one_or_none()
     if existing is not None:
         if existing.status == "in_progress":
@@ -133,7 +135,9 @@ async def update_status(db: AsyncSession = Depends(get_db)):
 
 
 @router.post(
-    "/complete", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verify_backend_token)]
+    "/complete",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(verify_backend_token)],
 )
 async def complete_update(payload: UpdateCompleteIn, db: AsyncSession = Depends(get_db)):
     """Called by the same update-watcher, once when it starts running

@@ -5,7 +5,11 @@ from app.models.copier_import import CopierImportBatch, CopierImportTemplate
 from app.models.copier_usage import CopierUsageRecord
 from app.models.device_override import DeviceUserOverride
 from app.models.google_sso import GoogleSsoSettings
-from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceSettings, GoogleWorkspaceUser
+from app.models.google_workspace import (
+    GoogleWorkspaceDevice,
+    GoogleWorkspaceSettings,
+    GoogleWorkspaceUser,
+)
 from app.models.job import Job
 from app.models.ldap_relay import LdapRelaySettings
 from app.models.mfp_device import MfpDevice
@@ -44,6 +48,7 @@ __all__ = [
     "QuotaSettings",
     "ReportFormulaSettings",
     "ReportSnapshot",
+    "SnmpDefaultsSettings",
     "StaffCopierIdentity",
     "UpdateSchedule",
     "User",

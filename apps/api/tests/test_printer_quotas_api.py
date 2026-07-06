@@ -95,7 +95,9 @@ def test_create_duplicate_user_row_conflicts(client, auth_headers, printer_id):
     payload = {"user_email": "manderson@brookfieldr3.org", "period": "monthly", "page_limit": 50}
     first = client.post(f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers, json=payload)
     assert first.status_code == 201
-    second = client.post(f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers, json=payload)
+    second = client.post(
+        f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers, json=payload
+    )
     assert second.status_code == 409
 
 
@@ -103,7 +105,9 @@ def test_create_duplicate_default_row_conflicts(client, auth_headers, printer_id
     payload = {"user_email": None, "period": "monthly", "page_limit": 50}
     first = client.post(f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers, json=payload)
     assert first.status_code == 201
-    second = client.post(f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers, json=payload)
+    second = client.post(
+        f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers, json=payload
+    )
     assert second.status_code == 409
 
 
@@ -150,7 +154,9 @@ def test_update_and_delete(client, auth_headers, printer_id):
     assert updated.status_code == 200
     assert updated.json()["page_limit"] == 75
 
-    deleted = client.delete(f"/api/v1/printers/{printer_id}/quotas/{quota_id}", headers=auth_headers)
+    deleted = client.delete(
+        f"/api/v1/printers/{printer_id}/quotas/{quota_id}", headers=auth_headers
+    )
     assert deleted.status_code == 204
 
     listing = client.get(f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers)
