@@ -65,7 +65,9 @@ def test_version_requires_auth(client):
 def test_check_for_update_reports_available(client, auth_headers, monkeypatch):
     monkeypatch.setattr("app.routers.updates.get_current_version", lambda: "1.0.0")
     monkeypatch.setattr("app.routers.updates.get_latest_version", lambda: "1.1.0")
-    monkeypatch.setattr("app.routers.updates.get_changelog_section", lambda v: f"## [{v}]\n- new stuff")
+    monkeypatch.setattr(
+        "app.routers.updates.get_changelog_section", lambda v: f"## [{v}]\n- new stuff"
+    )
 
     response = client.get("/api/v1/updates/check", headers=auth_headers)
     assert response.status_code == 200
@@ -78,7 +80,9 @@ def test_check_for_update_reports_available(client, auth_headers, monkeypatch):
     }
 
 
-def test_check_for_update_reports_up_to_date_without_fetching_changelog(client, auth_headers, monkeypatch):
+def test_check_for_update_reports_up_to_date_without_fetching_changelog(
+    client, auth_headers, monkeypatch
+):
     monkeypatch.setattr("app.routers.updates.get_current_version", lambda: "1.0.0")
     monkeypatch.setattr("app.routers.updates.get_latest_version", lambda: "1.0.0")
 

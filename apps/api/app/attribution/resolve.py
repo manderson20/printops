@@ -8,7 +8,11 @@ from app.integrations.classguard import ClassGuardError, client_from_settings, g
 from app.integrations.mosyle import normalize_mac as normalize_mac_mosyle
 from app.models.attribution_alias import AttributionAlias
 from app.models.device_override import DeviceUserOverride
-from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceSettings, GoogleWorkspaceUser
+from app.models.google_workspace import (
+    GoogleWorkspaceDevice,
+    GoogleWorkspaceSettings,
+    GoogleWorkspaceUser,
+)
 from app.models.mosyle import MosyleDevice, MosyleSettings
 
 logger = logging.getLogger(__name__)
@@ -58,7 +62,9 @@ def _looks_like_email(value: str) -> bool:
 
 async def _find_roster_user_by_email(db: AsyncSession, email: str) -> GoogleWorkspaceUser | None:
     result = await db.execute(
-        select(GoogleWorkspaceUser).where(func.lower(GoogleWorkspaceUser.email) == email.strip().lower())
+        select(GoogleWorkspaceUser).where(
+            func.lower(GoogleWorkspaceUser.email) == email.strip().lower()
+        )
     )
     return result.scalar_one_or_none()
 
@@ -77,7 +83,9 @@ async def _find_attribution_alias(db: AsyncSession, value: str) -> AttributionAl
     return result.scalar_one_or_none()
 
 
-async def _find_roster_user_by_local_part(db: AsyncSession, username: str) -> GoogleWorkspaceUser | None:
+async def _find_roster_user_by_local_part(
+    db: AsyncSession, username: str
+) -> GoogleWorkspaceUser | None:
     """Best-effort reconciliation for a Mosyle-reported username that
     doesn't show up verbatim as a roster email — Mosyle's own `username`
     field is often just the mailbox local part (e.g. "jdoe"), distinct
@@ -139,7 +147,9 @@ async def resolve_user(
     source_host (or None), independent of whether that MAC resolved to a
     user — callers persist it on the Job row so a later admin override
     can backfill this specific job (see app/routers/device_overrides.py)."""
-    cups_user_clean = cups_user if cups_user and cups_user.strip().lower() not in GENERIC_CUPS_USERS else None
+    cups_user_clean = (
+        cups_user if cups_user and cups_user.strip().lower() not in GENERIC_CUPS_USERS else None
+    )
 
     if cups_user_clean and _looks_like_email(cups_user_clean):
         alias = await _find_attribution_alias(db, cups_user_clean)
@@ -157,7 +167,9 @@ async def resolve_user(
         mac = normalize_mac_mosyle(raw_mac) if raw_mac else None
 
     if mac:
-        result = await db.execute(select(DeviceUserOverride).where(DeviceUserOverride.mac_address == mac))
+        result = await db.execute(
+            select(DeviceUserOverride).where(DeviceUserOverride.mac_address == mac)
+        )
         override = result.scalar_one_or_none()
         if override:
             return override.resolved_email, "override", mac
@@ -188,7 +200,9 @@ async def resolve_user(
                     return device.user_email, "mosyle", mac
 
         if await _integration_enabled(db, GoogleWorkspaceSettings):
-            result = await db.execute(select(GoogleWorkspaceDevice).where(GoogleWorkspaceDevice.mac_address == mac))
+            result = await db.execute(
+                select(GoogleWorkspaceDevice).where(GoogleWorkspaceDevice.mac_address == mac)
+            )
             device = result.scalar_one_or_none()
             if device and device.user_email:
                 return device.user_email, "google_workspace", mac

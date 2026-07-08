@@ -12,9 +12,7 @@ def test_healthz():
 
 
 def test_auth_round_trip():
-    login_response = client.post(
-        "/auth/login", json={"username": "admin", "password": "changeme"}
-    )
+    login_response = client.post("/auth/login", json={"username": "admin", "password": "changeme"})
     assert login_response.status_code == 200
     token = login_response.json()["access_token"]
 

@@ -142,7 +142,9 @@ def test_google_callback_creates_viewer_by_default(client, google_settings, monk
 
 
 def test_google_callback_allowlisted_email_becomes_admin(client, google_settings, monkeypatch):
-    _stub_google(monkeypatch, claims={**GOOGLE_CLAIMS, "sub": "google-sub-boss", "email": "boss@example.org"})
+    _stub_google(
+        monkeypatch, claims={**GOOGLE_CLAIMS, "sub": "google-sub-boss", "email": "boss@example.org"}
+    )
     state = _do_google_login(client)
     response = client.get(
         "/auth/google/callback",
@@ -183,7 +185,9 @@ def test_google_callback_rejects_bad_state(client, google_settings, monkeypatch)
     assert "error=" in location
 
 
-def test_google_callback_relogin_preserves_promoted_role(client, google_settings, monkeypatch, auth_headers):
+def test_google_callback_relogin_preserves_promoted_role(
+    client, google_settings, monkeypatch, auth_headers
+):
     _stub_google(monkeypatch)
     state = _do_google_login(client)
     first = client.get(

@@ -45,7 +45,9 @@ class ClassGuardClient:
         try:
             data = response.json()
         except ValueError as exc:
-            raise ClassGuardError(f"ClassGuard returned non-JSON response: {response.text[:300]}") from exc
+            raise ClassGuardError(
+                f"ClassGuard returned non-JSON response: {response.text[:300]}"
+            ) from exc
 
         mac = data.get("mac_address")
         if not mac:
