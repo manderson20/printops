@@ -399,8 +399,13 @@ def test_cost_breakdown_uses_real_cartridge_rate(
         json=[{"color": "black", "cost": 20.0, "yield_pages": 1000}],  # $0.02/page
     )
     _make_job(
-        client, printer_id, backend_headers, "alice@example.org", 10,
-        color_mode="monochrome", duplex=False,
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        10,
+        color_mode="monochrome",
+        duplex=False,
     )
 
     response = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers)
@@ -421,8 +426,13 @@ def test_cost_breakdown_falls_back_without_cartridges(
         json={"cost_per_page_mono": 0.05},
     )
     _make_job(
-        client, printer_id, backend_headers, "alice@example.org", 4,
-        color_mode="monochrome", duplex=False,
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        4,
+        color_mode="monochrome",
+        duplex=False,
     )
 
     response = client.get("/api/v1/reports/cost-breakdown?group_by=printer", headers=admin_headers)
