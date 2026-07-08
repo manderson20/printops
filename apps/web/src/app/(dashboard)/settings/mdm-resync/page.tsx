@@ -4,14 +4,10 @@ import { useState } from "react";
 import { buildMdmResyncScript } from "@/lib/mdmResyncScript";
 import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
-import { Field, Input } from "@/components/ui/Field";
 
 export default function MdmResyncSettingsPage() {
-  const defaultHost = typeof window !== "undefined" ? window.location.hostname : "";
-  const [host, setHost] = useState(defaultHost);
   const [copied, setCopied] = useState(false);
-
-  const script = buildMdmResyncScript(host);
+  const script = buildMdmResyncScript();
 
   function handleCopy() {
     navigator.clipboard.writeText(script).then(() => {
@@ -35,21 +31,18 @@ export default function MdmResyncSettingsPage() {
 
       <Card>
         <CardTitle className="mb-1">How it works</CardTitle>
-        <p className="mb-4 text-xs text-zinc-500">
+        <p className="text-xs text-zinc-500">
           The script below re-probes each PrintOps-managed queue already configured on a Mac and
           refreshes its driver info in place — it never removes a queue, so the default printer,
           any app&apos;s saved printer preference, and jobs on other queues are all left alone. It
-          skips a queue with a job pending right now, and does nothing at all if this PrintOps
-          server isn&apos;t reachable when it runs. No credentials are embedded — it only talks
-          IPP to the printer&apos;s own already-shared queue, the same thing printing to it does.
+          finds PrintOps-managed queues purely by their device-uri (no server hostname needs
+          configuring anywhere — the same script works unmodified on any PrintOps install, and
+          isn&apos;t thrown off by an MDM printer profile that points at the server by IP instead
+          of hostname, or vice versa). It skips a queue outright, untouched, if that queue&apos;s
+          own server isn&apos;t reachable right now, or if it has a job pending. No credentials
+          are embedded — it only talks IPP to the printer&apos;s own already-shared queue, the
+          same thing printing to it does.
         </p>
-        <Field label="This PrintOps server's hostname">
-          <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="printops.example.org" />
-          <span className="text-xs text-zinc-500">
-            Prefilled from the address you&apos;re viewing this page at. Only change it if
-            client Macs reach this server at a different hostname.
-          </span>
-        </Field>
       </Card>
 
       <Card>
