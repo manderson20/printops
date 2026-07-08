@@ -53,8 +53,8 @@ SETUP_NOTES = (
     "PrintOps: from Command Center RX, export the Job Accounting Report / "
     "user count list, then use Accounting Imports here to bring in the CSV. "
     "Map each staff member's account code or login name under Staff Copier "
-    "Identities (identity type \"Department ID\" for Job Accounting, "
-    "\"Vendor User ID\" for User Login) so the import can resolve it to a "
+    'Identities (identity type "Department ID" for Job Accounting, '
+    '"Vendor User ID" for User Login) so the import can resolve it to a '
     "real person."
 )
 

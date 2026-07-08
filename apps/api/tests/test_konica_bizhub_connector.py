@@ -19,7 +19,10 @@ KONICA_SYS_DESCR_OUTPUT = '.1.3.6.1.2.1.1.1.0 = STRING: "KONICA MINOLTA bizhub 7
 
 def _device(**overrides) -> MfpDevice:
     defaults = dict(
-        name="Copy Room Konica", vendor="konica_minolta", connector_type="konica_bizhub", ip_address="10.0.0.30"
+        name="Copy Room Konica",
+        vendor="konica_minolta",
+        connector_type="konica_bizhub",
+        ip_address="10.0.0.30",
     )
     defaults.update(overrides)
     return MfpDevice(**defaults)
@@ -66,7 +69,9 @@ async def test_get_meter_snapshot_reuses_verified_konica_snmp_breakdown_and_stay
 @pytest.mark.asyncio
 async def test_test_connection_forces_konica_profile_no_sysdescr_autodetect():
     connector = KonicaBizhubConnector()
-    with patch("app.printers.snmp_counters._run_snmp", return_value=KONICA_SYS_DESCR_OUTPUT) as mock_run:
+    with patch(
+        "app.printers.snmp_counters._run_snmp", return_value=KONICA_SYS_DESCR_OUTPUT
+    ) as mock_run:
         result = await connector.test_connection(_device())
     assert result.ok is True
     assert mock_run.call_count == 1
@@ -92,7 +97,11 @@ async def test_import_accounting_file_uses_same_csv_pipeline_as_generic():
     template = CopierImportTemplate(
         name="t",
         vendor="konica_minolta",
-        column_mapping={"identity_value": "Account Name", "occurred_at": "Date", "page_count": "Pages"},
+        column_mapping={
+            "identity_value": "Account Name",
+            "occurred_at": "Date",
+            "page_count": "Pages",
+        },
         identity_type="department_id",
         delimiter=",",
     )

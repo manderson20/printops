@@ -86,7 +86,9 @@ async def set_device_override(
             ),
         )
 
-    result = await db.execute(select(DeviceUserOverride).where(DeviceUserOverride.mac_address == mac))
+    result = await db.execute(
+        select(DeviceUserOverride).where(DeviceUserOverride.mac_address == mac)
+    )
     override = result.scalar_one_or_none()
     if override is None:
         override = DeviceUserOverride(mac_address=mac, resolved_email=email, note=payload.note)
@@ -116,9 +118,13 @@ async def set_device_override(
 @router.delete("/{mac_address}/override", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_device_override(mac_address: str, db: AsyncSession = Depends(get_db)):
     mac = normalize_mac(mac_address)
-    result = await db.execute(select(DeviceUserOverride).where(DeviceUserOverride.mac_address == mac))
+    result = await db.execute(
+        select(DeviceUserOverride).where(DeviceUserOverride.mac_address == mac)
+    )
     override = result.scalar_one_or_none()
     if override is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No override set for this device.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No override set for this device."
+        )
     await db.delete(override)
     await db.commit()

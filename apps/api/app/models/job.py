@@ -31,7 +31,9 @@ class Job(Base, TimestampMixin):
     # correction, app/models/device_override.py), or "unresolved" (fell
     # through every strategy — submitted_by is either the raw CUPS value or
     # "unknown").
-    attribution_method: Mapped[str] = mapped_column(default="unresolved", server_default="unresolved")
+    attribution_method: Mapped[str] = mapped_column(
+        default="unresolved", server_default="unresolved"
+    )
 
     # The MAC address resolved for this job's source IP (via ClassGuard),
     # if any — independent of whether that MAC actually resolved to a user.

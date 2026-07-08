@@ -75,7 +75,7 @@ export default function IntegrationsPage() {
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Integrations</h1>
         <p className="mt-1 text-sm text-zinc-500">
           Third-party systems PrintOps connects to — device/user attribution, identity, and more
-          as they're added.
+          as they&rsquo;re added.
         </p>
       </div>
 

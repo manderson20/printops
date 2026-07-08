@@ -1,10 +1,10 @@
+from datetime import UTC, datetime
+
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
-
-from datetime import UTC, datetime
 
 from app.core.config import get_settings
 from app.db import get_db
@@ -114,9 +114,7 @@ def test_create_and_update_job(client, printer_id, backend_headers):
 
 
 def test_update_job_failure_path(client, printer_id, backend_headers):
-    create = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
-    )
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     job_id = create.json()["id"]
 
     updated = client.patch(
@@ -159,16 +157,22 @@ def test_list_jobs_requires_auth(client, printer_id, backend_headers):
     assert response.status_code == 401
 
 
-def test_list_jobs_returns_newest_first_with_printer_name(client, printer_id, backend_headers, auth_headers):
+def test_list_jobs_returns_newest_first_with_printer_name(
+    client, printer_id, backend_headers, auth_headers
+):
     # SQLite's server_default=func.now() only has second-level resolution, so
     # two jobs created back-to-back in a test can legitimately tie on
     # created_at — Postgres (production) has microsecond precision and won't.
     # Assert presence/shape here rather than tie-breaking order.
     first = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id, "submitted_by": "adele"}, headers=backend_headers
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "adele"},
+        headers=backend_headers,
     )
     second = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id, "submitted_by": "bob"}, headers=backend_headers
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "bob"},
+        headers=backend_headers,
     )
 
     response = client.get("/api/v1/jobs", headers=auth_headers)
@@ -233,9 +237,7 @@ def test_create_job_without_submitted_by_is_unresolved(client, printer_id, backe
 
 
 def test_update_job_records_page_count(client, printer_id, backend_headers):
-    create = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
-    )
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     job_id = create.json()["id"]
 
     updated = client.patch(
@@ -248,9 +250,7 @@ def test_update_job_records_page_count(client, printer_id, backend_headers):
 
 
 def test_update_job_without_page_count_stays_null(client, printer_id, backend_headers):
-    create = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
-    )
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     job_id = create.json()["id"]
 
     updated = client.patch(
@@ -265,9 +265,7 @@ def test_update_job_without_page_count_stays_null(client, printer_id, backend_he
 def test_update_job_held_records_spool_path_and_computes_expiry(
     client, printer_id, backend_headers
 ):
-    create = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
-    )
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     job_id = create.json()["id"]
 
     updated = client.patch(
@@ -296,9 +294,7 @@ def test_update_job_held_uses_configured_expiry_window(
     )
     assert settings.status_code == 200
 
-    create = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
-    )
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     job_id = create.json()["id"]
 
     updated = client.patch(
@@ -323,9 +319,7 @@ def test_create_job_no_hold_reason_by_default(client, printer_id, backend_header
     assert create.json()["status"] == "forwarding"
 
 
-async def test_create_job_hold_reason_pin_release(
-    client, backend_headers, db_session_factory
-):
+async def test_create_job_hold_reason_pin_release(client, backend_headers, db_session_factory):
     async with db_session_factory() as session:
         printer = Printer(name="Release Printer", ip_address="10.0.0.10", release_required=True)
         session.add(printer)
@@ -415,7 +409,9 @@ async def test_job_usage_aggregates_per_user(
 ):
     async with db_session_factory() as session:
         session.add(
-            GoogleWorkspaceUser(email="adele@example.com", name="Adele", synced_at=datetime.now(UTC))
+            GoogleWorkspaceUser(
+                email="adele@example.com", name="Adele", synced_at=datetime.now(UTC)
+            )
         )
         session.add(
             GoogleWorkspaceUser(email="bob@example.com", name="Bob", synced_at=datetime.now(UTC))
@@ -429,12 +425,20 @@ async def test_job_usage_aggregates_per_user(
 
     adele_job_1 = client.post(
         "/api/v1/jobs",
-        json={"printer_id": printer_id, "submitted_by": "adele@example.com", "file_size_bytes": 1000},
+        json={
+            "printer_id": printer_id,
+            "submitted_by": "adele@example.com",
+            "file_size_bytes": 1000,
+        },
         headers=backend_headers,
     ).json()
     adele_job_2 = client.post(
         "/api/v1/jobs",
-        json={"printer_id": printer_id, "submitted_by": "adele@example.com", "file_size_bytes": 2000},
+        json={
+            "printer_id": printer_id,
+            "submitted_by": "adele@example.com",
+            "file_size_bytes": 2000,
+        },
         headers=backend_headers,
     ).json()
     bob_job = client.post(
@@ -549,7 +553,5 @@ def test_job_usage_forbidden_for_viewer(client, printer_id, backend_headers, mon
     )
     viewer_token = callback.headers["location"].split("token=", 1)[1]
 
-    response = client.get(
-        "/api/v1/jobs/usage", headers={"Authorization": f"Bearer {viewer_token}"}
-    )
+    response = client.get("/api/v1/jobs/usage", headers={"Authorization": f"Bearer {viewer_token}"})
     assert response.status_code == 403

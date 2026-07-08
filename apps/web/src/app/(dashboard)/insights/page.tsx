@@ -324,9 +324,22 @@ export default function InsightsPage() {
     ],
   );
 
+  // Reset to "loading" the instant any of this report's inputs change,
+  // computed during render rather than via an effect + setState — see
+  // useCurrentUser.ts for the same pattern and why (avoids a render or two
+  // of stale prior-filter data before the new fetch resolves). Bundled into
+  // one JSON key since there are several independent inputs here.
+  const loadKey = JSON.stringify([filters, granularity, periodLabel, preset, range]);
+  const [prevLoadKey, setPrevLoadKey] = useState(loadKey);
+  if (loadKey !== prevLoadKey) {
+    setPrevLoadKey(loadKey);
+    if (!(preset === "custom" && !range)) {
+      setState({ phase: "loading" });
+    }
+  }
+
   useEffect(() => {
     if (preset === "custom" && !range) return;
-    setState({ phase: "loading" });
     Promise.all([
       getReportSummary(filters),
       getReportTimeline(granularity, filters),

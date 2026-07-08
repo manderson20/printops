@@ -9,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt
 from app.models.attribution_alias import AttributionAlias
-from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceSettings, GoogleWorkspaceUser
+from app.models.google_workspace import (
+    GoogleWorkspaceDevice,
+    GoogleWorkspaceSettings,
+    GoogleWorkspaceUser,
+)
 from app.models.job import Job
 from app.models.staff_copier_identity import StaffCopierIdentity
 
@@ -51,7 +55,7 @@ def extract_employee_id(user: dict) -> str | None:
 
 
 def normalize_org_unit_path(path: str) -> str:
-    """"/Employees", "/Employees/", " /Employees " all mean the same OU —
+    """ "/Employees", "/Employees/", " /Employees " all mean the same OU —
     normalize to a leading slash, no trailing slash, so a saved setting
     and a value read back off a synced user compare consistently."""
     trimmed = path.strip()
@@ -94,7 +98,9 @@ class GoogleWorkspaceClient:
     Device records already embed the assigned user (`recentUsers[].email`)
     directly — no separate per-user API call needed, same as Mosyle."""
 
-    def __init__(self, service_account_json: str, admin_email: str, customer_id: str = "my_customer"):
+    def __init__(
+        self, service_account_json: str, admin_email: str, customer_id: str = "my_customer"
+    ):
         try:
             self._key_data = json.loads(service_account_json)
         except ValueError as exc:
@@ -137,7 +143,9 @@ class GoogleWorkspaceClient:
             )
         access_token = response.json().get("access_token")
         if not access_token:
-            raise GoogleWorkspaceError("Google token exchange succeeded but returned no access_token.")
+            raise GoogleWorkspaceError(
+                "Google token exchange succeeded but returned no access_token."
+            )
         return access_token
 
     async def list_chromeos_devices(self) -> list[dict]:
@@ -156,11 +164,14 @@ class GoogleWorkspaceClient:
                         params=params,
                     )
                 except httpx.HTTPError as exc:
-                    raise GoogleWorkspaceError(f"Could not reach Google's Directory API: {exc}") from exc
+                    raise GoogleWorkspaceError(
+                        f"Could not reach Google's Directory API: {exc}"
+                    ) from exc
 
                 if response.status_code != 200:
                     raise GoogleWorkspaceError(
-                        f"Google Directory API returned HTTP {response.status_code}: {response.text[:300]}"
+                        f"Google Directory API returned HTTP {response.status_code}: "
+                        f"{response.text[:300]}"
                     )
                 try:
                     data = response.json()
@@ -203,11 +214,14 @@ class GoogleWorkspaceClient:
                         params=params,
                     )
                 except httpx.HTTPError as exc:
-                    raise GoogleWorkspaceError(f"Could not reach Google's Directory API: {exc}") from exc
+                    raise GoogleWorkspaceError(
+                        f"Could not reach Google's Directory API: {exc}"
+                    ) from exc
 
                 if response.status_code != 200:
                     raise GoogleWorkspaceError(
-                        f"Google Directory API returned HTTP {response.status_code}: {response.text[:300]}"
+                        f"Google Directory API returned HTTP {response.status_code}: "
+                        f"{response.text[:300]}"
                     )
                 try:
                     data = response.json()
@@ -230,7 +244,9 @@ async def get_settings(db: AsyncSession) -> GoogleWorkspaceSettings | None:
 
 def _client_from_settings(settings: GoogleWorkspaceSettings) -> GoogleWorkspaceClient:
     if not settings.service_account_json_encrypted or not settings.admin_email:
-        raise GoogleWorkspaceError("Google Workspace service account JSON / admin email are not configured.")
+        raise GoogleWorkspaceError(
+            "Google Workspace service account JSON / admin email are not configured."
+        )
     return GoogleWorkspaceClient(
         service_account_json=decrypt(settings.service_account_json_encrypted),
         admin_email=settings.admin_email,
@@ -315,13 +331,17 @@ async def _refresh_google_sourced_aliases(db: AsyncSession, users: list[dict]) -
             if not key:
                 continue
             if key in new_aliases and new_aliases[key] != email.lower():
-                ambiguous.add(key)  # same alias claimed by two different accounts — drop, don't guess
+                ambiguous.add(
+                    key
+                )  # same alias claimed by two different accounts — drop, don't guess
             else:
                 new_aliases[key] = email.lower()
     for key in ambiguous:
         new_aliases.pop(key, None)
 
-    manual_result = await db.execute(select(AttributionAlias.alias).where(AttributionAlias.source == "manual"))
+    manual_result = await db.execute(
+        select(AttributionAlias.alias).where(AttributionAlias.source == "manual")
+    )
     manual_aliases = {row[0].lower() for row in manual_result.all()}
     new_aliases = {k: v for k, v in new_aliases.items() if k not in manual_aliases}
 
@@ -333,9 +353,15 @@ async def _refresh_google_sourced_aliases(db: AsyncSession, users: list[dict]) -
     old_aliases = {alias: resolved_email for alias, resolved_email in old_result.all()}
     changed = {k: v for k, v in new_aliases.items() if old_aliases.get(k) != v}
 
-    await db.execute(delete(AttributionAlias).where(AttributionAlias.source == "google_workspace_sync"))
+    await db.execute(
+        delete(AttributionAlias).where(AttributionAlias.source == "google_workspace_sync")
+    )
     for alias, resolved_email in new_aliases.items():
-        db.add(AttributionAlias(alias=alias, resolved_email=resolved_email, source="google_workspace_sync"))
+        db.add(
+            AttributionAlias(
+                alias=alias, resolved_email=resolved_email, source="google_workspace_sync"
+            )
+        )
 
     for alias, resolved_email in changed.items():
         await db.execute(
@@ -346,7 +372,9 @@ async def _refresh_google_sourced_aliases(db: AsyncSession, users: list[dict]) -
 
 
 async def _refresh_google_sourced_copier_identities(
-    db: AsyncSession, users_with_employee_id: list[tuple[str, str]], settings: GoogleWorkspaceSettings
+    db: AsyncSession,
+    users_with_employee_id: list[tuple[str, str]],
+    settings: GoogleWorkspaceSettings,
 ) -> None:
     """Mirrors GoogleWorkspaceUser.employee_id into a StaffCopierIdentity
     (app/models/staff_copier_identity.py) when an admin has opted in
@@ -359,7 +387,9 @@ async def _refresh_google_sourced_copier_identities(
     identity_type = settings.auto_copier_identity_type
 
     if not settings.auto_create_copier_identity_from_employee_id:
-        await db.execute(delete(StaffCopierIdentity).where(StaffCopierIdentity.source == "google_workspace_sync"))
+        await db.execute(
+            delete(StaffCopierIdentity).where(StaffCopierIdentity.source == "google_workspace_sync")
+        )
         return
 
     manual_result = await db.execute(
@@ -371,7 +401,9 @@ async def _refresh_google_sourced_copier_identities(
     )
     manual_claims = {value: email for value, email in manual_result.all()}
 
-    await db.execute(delete(StaffCopierIdentity).where(StaffCopierIdentity.source == "google_workspace_sync"))
+    await db.execute(
+        delete(StaffCopierIdentity).where(StaffCopierIdentity.source == "google_workspace_sync")
+    )
     for email, employee_id in users_with_employee_id:
         claimed_by = manual_claims.get(employee_id)
         if claimed_by and claimed_by.lower() != email.lower():
