@@ -21,7 +21,13 @@ schedules an update.
   reconnecting from offline to online now also retries the CUPS queue sync,
   not just the capability/status refresh it already did, so a printer gets
   its real driverless PPD as soon as it's actually reachable instead of
-  needing someone to notice and click "Resync Queue" manually.
+  needing someone to notice and click "Resync Queue" manually. Also closed
+  a related gap in both sync scripts: a transient `-m everywhere` failure
+  used to unconditionally reapply the generic fallback PPD even when a
+  queue already had a real, working one from an earlier successful sync —
+  a resync retry (including the new automatic one above) could have
+  regressed an already-fine printer. The generic fallback is now only
+  applied when a queue has never had a real PPD to begin with.
 
 ## [0.15.2] - 2026-07-06
 
