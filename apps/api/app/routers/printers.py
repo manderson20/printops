@@ -242,10 +242,11 @@ async def regenerate_release_token(printer_id: UUID, db: AsyncSession = Depends(
 @router.post("/{printer_id}/check-status", response_model=PrinterOut)
 async def check_status(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     """Manually refreshes a printer's online/error/offline status on demand
-    — same underlying probe (and same offline->online rediscovery trigger)
-    as the 60s background loop (app/main.py), just triggered immediately
-    instead of waiting for the next cycle. Read-only telemetry, so open to
-    any logged-in user (not admin-gated) like GET."""
+    — same underlying probe (and same offline->online rediscovery trigger,
+    which as of the queue-sync fix below can also re-run the CUPS queue
+    sync) as the 60s background loop (app/main.py), just triggered
+    immediately instead of waiting for the next cycle. Open to any
+    logged-in user (not admin-gated) like GET, same as before."""
     printer = await _get_printer_or_404(printer_id, db)
     await refresh_printer_status_and_rediscover(printer)
     await db.commit()
