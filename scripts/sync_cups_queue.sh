@@ -33,6 +33,18 @@ REAL_URI="${REAL_SCHEME}://${REAL_IP}:${REAL_PORT}${REAL_PATH}"
 # uniqueness, with the human name set separately via printer-info (-D).
 QUEUE_NAME="printops-${PRINTER_ID}"
 
+# This queue may already have a real, accurate PPD from a prior successful
+# sync — e.g. this same script running again after the printer reconnects
+# (app/printers/status.py's offline->online trigger), or an unrelated edit
+# that happened to re-trigger a sync while the printer was momentarily slow.
+# Recorded *before* attempting -m everywhere below, so a failure this time
+# doesn't wrongly downgrade an already-working queue.
+PPD_FILE="/etc/cups/ppd/${QUEUE_NAME}.ppd"
+HAD_REAL_PPD=false
+if [ -f "$PPD_FILE" ] && ! sudo grep -q '^\*NickName: "Generic IPP Everywhere Printer"' "$PPD_FILE"; then
+    HAD_REAL_PPD=true
+fi
+
 # Step 1: probe the REAL printer once via `-m everywhere` so CUPS builds an
 # accurate driverless PPD (correct document-format/pdl advertisement, needed
 # for AirPrint clients to recognize this as a usable destination) from what
@@ -48,9 +60,21 @@ QUEUE_NAME="printops-${PRINTER_ID}"
 # Python-level timeout (queue_sync.py) with nothing to show for it —
 # loses precise media-size/capability advertisement for that one queue,
 # but the printer actually becomes usable instead of stuck unsynced.
+#
+# That fallback is only safe to apply when there's nothing to lose, though
+# (confirmed live: MS - Cletus Copier's monochrome engine got dithered,
+# pixelated output the whole time its queue ran on this generic PPD's
+# RGB-default, color-advertising PPD). If this queue already had a real PPD
+# from a prior successful probe, a transient failure this time around
+# should leave that working config alone rather than regress it.
 if ! timeout 30 sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m everywhere -D "$PRINTER_NAME"; then
-    echo "WARNING: -m everywhere failed/timed out for $REAL_URI — falling back to a generic IPP Everywhere PPD (reduced capability accuracy for this printer)." >&2
-    sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m "drv:///cupsfilters.drv/pwgrast.ppd" -D "$PRINTER_NAME"
+    if [ "$HAD_REAL_PPD" = true ]; then
+        echo "WARNING: -m everywhere failed/timed out for $REAL_URI — keeping this queue's existing real PPD from a prior successful sync instead of regressing it to the generic fallback." >&2
+        sudo lpadmin -p "$QUEUE_NAME" -D "$PRINTER_NAME"
+    else
+        echo "WARNING: -m everywhere failed/timed out for $REAL_URI — falling back to a generic IPP Everywhere PPD (reduced capability accuracy for this printer)." >&2
+        sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m "drv:///cupsfilters.drv/pwgrast.ppd" -D "$PRINTER_NAME"
+    fi
 fi
 
 # The generic-PPD fallback above can leave a newly-created queue disabled/

@@ -88,8 +88,8 @@ async def _printer_status_poll_loop() -> None:
     unreachable printer can't stall/skip the rest of the cycle; a cycle-level
     failure (e.g. DB down) just logs and retries next interval.
 
-    Also re-runs capability discovery whenever a printer transitions into
-    "online" from anything else — see
+    Also re-runs capability discovery and the CUPS queue sync whenever a
+    printer transitions into "online" from anything else — see
     refresh_printer_status_and_rediscover's docstring."""
     while True:
         try:

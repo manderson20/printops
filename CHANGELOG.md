@@ -5,6 +5,30 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.15.3] - 2026-07-08
+
+- **Fixed pixelated, slightly-dark print output on a printer that was
+  offline when its queue was first created.** MS - Cletus Copier (a Konica
+  Minolta bizhub 651i, monochrome only) had its CUPS queue built while it
+  was unreachable, so the `-m everywhere` probe in `sync_cups_queue.sh`
+  timed out and fell back to CUPS's generic PWG-Raster PPD — which
+  advertises RGB color support and a continuous-tone default regardless of
+  the real device. Every job was then dithered down to black-only on the
+  print engine, showing up as pixelated text and a Color option in print
+  dialogs the printer doesn't actually have. Manually resyncing that queue
+  fixed it directly (confirmed with a physical test print). To keep this
+  from silently recurring on any other printer added while offline:
+  reconnecting from offline to online now also retries the CUPS queue sync,
+  not just the capability/status refresh it already did, so a printer gets
+  its real driverless PPD as soon as it's actually reachable instead of
+  needing someone to notice and click "Resync Queue" manually. Also closed
+  a related gap in both sync scripts: a transient `-m everywhere` failure
+  used to unconditionally reapply the generic fallback PPD even when a
+  queue already had a real, working one from an earlier successful sync —
+  a resync retry (including the new automatic one above) could have
+  regressed an already-fine printer. The generic fallback is now only
+  applied when a queue has never had a real PPD to begin with.
+
 ## [0.15.2] - 2026-07-06
 
 - **Fixed color copiers silently defaulting to grayscale for some apps.**
