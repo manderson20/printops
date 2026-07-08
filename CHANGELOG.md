@@ -5,6 +5,22 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.16.0] - 2026-07-08
+
+- **New Settings tab: MDM Printer Resync.** A Mac only checks a printer's
+  capabilities once, when it's first added — it never re-verifies against
+  the server afterward, so a server-side fix (like the Cletus PPD repair
+  above) doesn't reach Macs that already have the printer configured. This
+  tab generates a self-contained shell script, prefilled with this
+  install's own hostname, to push out via Mosyle's Custom Command Profiles
+  (scheduled from Mosyle itself, not the script). It re-probes each
+  PrintOps-managed queue already on the Mac in place — never deleting and
+  recreating one — so the default printer, any app's saved printer
+  preference, and jobs on other queues are all left alone. It skips a
+  queue with a job pending right now, and exits untouched if this
+  PrintOps server isn't reachable when it runs. No credentials are
+  embedded in the script at all.
+
 ## [0.15.3] - 2026-07-08
 
 - **Fixed pixelated, slightly-dark print output on a printer that was

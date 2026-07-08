@@ -13,6 +13,7 @@ const SETTINGS_NAV = [
   { href: "/settings/insights", label: "Insights" },
   { href: "/settings/quotas", label: "Quotas" },
   { href: "/settings/ldap", label: "LDAP Relay" },
+  { href: "/settings/mdm-resync", label: "MDM Printer Resync" },
 ] as const;
 
 export default function SettingsLayout({ children }: { children: ReactNode }) {
