@@ -5,6 +5,24 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.16.1] - 2026-07-08
+
+- **Fixed the MDM Printer Resync script silently matching zero queues.**
+  It required a printer queue's device-uri to contain the exact hostname
+  string typed into the settings page — if an MDM's printer profile
+  pointed at the server by IP address while the page had a DNS name (or
+  vice versa), nothing matched, with no error at all: the script ran,
+  reported success, and touched nothing. Confirmed live on MS - Cletus
+  Copier, whose Mac-side queue was never actually refreshed by an earlier
+  run, still showing its original stale capabilities (3x5 default paper
+  size, a color option in Word) despite the script "completing." It now
+  identifies PrintOps-managed queues purely by their device-uri path (an
+  unmistakable signature no other queue would have) and reads each one's
+  own host straight out of its own already-configured URI — no server
+  hostname needs to be typed in or match anything, so the same script
+  works unmodified on any PrintOps install regardless of how an MDM
+  profile happens to address the server.
+
 ## [0.16.0] - 2026-07-08
 
 - **New Settings tab: MDM Printer Resync.** A Mac only checks a printer's
