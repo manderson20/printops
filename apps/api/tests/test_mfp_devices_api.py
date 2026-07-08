@@ -123,7 +123,9 @@ def test_test_connection_honest_about_unsupported_connector(client, auth_headers
 
     response = client.post(f"/api/v1/mfp-devices/{device_id}/test-connection", headers=auth_headers)
     assert response.status_code == 400
-    assert "doesn't support" in response.json()["detail"] or "can't test" in response.json()["detail"]
+    assert (
+        "doesn't support" in response.json()["detail"] or "can't test" in response.json()["detail"]
+    )
 
 
 def test_check_meter_rejects_non_snmp_connector(client, auth_headers):

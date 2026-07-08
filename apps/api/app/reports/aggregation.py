@@ -209,15 +209,20 @@ class LeaderboardEntry:
 async def get_printer_leaderboard(
     db: AsyncSession, filters: ReportFilters, limit: int = 10
 ) -> list[LeaderboardEntry]:
-    stmt = _apply_filters(
-        select(
-            Job.printer_id,
-            Printer.name,
-            func.count(Job.id).label("job_count"),
-            func.sum(func.coalesce(Job.page_count, 0)).label("total_pages"),
-        ),
-        filters,
-    ).group_by(Job.printer_id, Printer.name).order_by(func.count(Job.id).desc()).limit(limit)
+    stmt = (
+        _apply_filters(
+            select(
+                Job.printer_id,
+                Printer.name,
+                func.count(Job.id).label("job_count"),
+                func.sum(func.coalesce(Job.page_count, 0)).label("total_pages"),
+            ),
+            filters,
+        )
+        .group_by(Job.printer_id, Printer.name)
+        .order_by(func.count(Job.id).desc())
+        .limit(limit)
+    )
     rows = (await db.execute(stmt)).all()
     return [
         LeaderboardEntry(
@@ -233,16 +238,20 @@ async def get_printer_leaderboard(
 async def get_user_leaderboard(
     db: AsyncSession, filters: ReportFilters, limit: int = 10
 ) -> list[LeaderboardEntry]:
-    stmt = _apply_filters(
-        select(
-            Job.submitted_by,
-            func.count(Job.id).label("job_count"),
-            func.sum(func.coalesce(Job.page_count, 0)).label("total_pages"),
-        ),
-        filters,
-    ).where(Job.submitted_by.is_not(None)).group_by(Job.submitted_by).order_by(
-        func.count(Job.id).desc()
-    ).limit(limit)
+    stmt = (
+        _apply_filters(
+            select(
+                Job.submitted_by,
+                func.count(Job.id).label("job_count"),
+                func.sum(func.coalesce(Job.page_count, 0)).label("total_pages"),
+            ),
+            filters,
+        )
+        .where(Job.submitted_by.is_not(None))
+        .group_by(Job.submitted_by)
+        .order_by(func.count(Job.id).desc())
+        .limit(limit)
+    )
     rows = (await db.execute(stmt)).all()
     return [
         LeaderboardEntry(
@@ -313,9 +322,9 @@ async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[Co
 async def get_raw_rows_for_export(db: AsyncSession, filters: ReportFilters):
     """Filtered job rows joined with printer name, for CSV export — one row
     per job, newest first."""
-    stmt = _apply_filters(
-        select(Job, Printer.name.label("printer_name")), filters
-    ).order_by(Job.created_at.desc())
+    stmt = _apply_filters(select(Job, Printer.name.label("printer_name")), filters).order_by(
+        Job.created_at.desc()
+    )
     return (await db.execute(stmt)).all()
 
 
@@ -356,7 +365,9 @@ class CopyTotals:
     copy_pages: int = 0
 
 
-async def get_copier_usage_totals(db: AsyncSession, filters: ReportFilters) -> dict[str, CopyTotals]:
+async def get_copier_usage_totals(
+    db: AsyncSession, filters: ReportFilters
+) -> dict[str, CopyTotals]:
     """staff_email -> aggregated copy totals — the copier-side mirror of
     get_user_leaderboard, over CopierUsageRecord instead of Job. Excludes
     unmapped rows (staff_email is null) entirely; see
@@ -443,7 +454,10 @@ async def _get_all_user_print_totals(
     rows = (await db.execute(stmt)).all()
     return {
         r.submitted_by: LeaderboardEntry(
-            key=r.submitted_by, label=r.submitted_by, job_count=r.job_count, total_pages=r.total_pages or 0
+            key=r.submitted_by,
+            label=r.submitted_by,
+            job_count=r.job_count,
+            total_pages=r.total_pages or 0,
         )
         for r in rows
     }

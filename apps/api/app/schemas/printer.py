@@ -78,9 +78,9 @@ class PrinterUpdate(BaseModel):
     # since Pydantic's Literal validation rejects it before that logic runs.
     snmp_version: Literal["v1", "v2c", ""] | None = None
     snmp_community: str | None = None
-    snmp_vendor_profile: Literal[
-        "canon", "konica_minolta", "hp", "lexmark", "kyocera", "generic", ""
-    ] | None = None
+    snmp_vendor_profile: (
+        Literal["canon", "konica_minolta", "hp", "lexmark", "kyocera", "generic", ""] | None
+    ) = None
 
     ldap_enabled: bool | None = None
     ldap_bind_username: str | None = None

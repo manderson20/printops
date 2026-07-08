@@ -118,9 +118,7 @@ async def test_summary_filters_by_building(session, sample_jobs):
 
 
 async def test_summary_filters_by_date_range(session, sample_jobs):
-    summary = await get_summary(
-        session, ReportFilters(start=_dt(2026, 3, 4), end=_dt(2026, 3, 6))
-    )
+    summary = await get_summary(session, ReportFilters(start=_dt(2026, 3, 4), end=_dt(2026, 3, 6)))
     assert summary.total_jobs == 2
     assert summary.total_pages == 12
 

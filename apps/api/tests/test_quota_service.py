@@ -78,7 +78,9 @@ async def test_get_effective_quota_prefers_specific_over_default(session_factory
     printer = await _make_printer(session_factory)
     async with session_factory() as session:
         session.add(
-            PrinterUserQuota(printer_id=printer.id, user_email=None, period="monthly", page_limit=100)
+            PrinterUserQuota(
+                printer_id=printer.id, user_email=None, period="monthly", page_limit=100
+            )
         )
         session.add(
             PrinterUserQuota(
@@ -156,7 +158,10 @@ async def test_resolve_hold_reason_quota_when_enabled_and_over_limit(session_fac
     async with session_factory() as session:
         session.add(
             PrinterUserQuota(
-                printer_id=printer.id, user_email="matt@example.org", period="monthly", page_limit=50
+                printer_id=printer.id,
+                user_email="matt@example.org",
+                period="monthly",
+                page_limit=50,
             )
         )
         session.add(QuotaSettings(enabled=True))
@@ -174,7 +179,10 @@ async def test_resolve_hold_reason_none_when_under_limit(session_factory):
     async with session_factory() as session:
         session.add(
             PrinterUserQuota(
-                printer_id=printer.id, user_email="matt@example.org", period="monthly", page_limit=50
+                printer_id=printer.id,
+                user_email="matt@example.org",
+                period="monthly",
+                page_limit=50,
             )
         )
         session.add(QuotaSettings(enabled=True))

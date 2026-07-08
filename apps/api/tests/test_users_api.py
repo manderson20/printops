@@ -106,7 +106,9 @@ def test_admin_can_patch_user_role(client, admin_headers, viewer_headers):
     users = client.get("/api/v1/users", headers=admin_headers).json()["items"]
     user_id = next(u["id"] for u in users if u["email"] == "viewer@example.org")
 
-    response = client.patch(f"/api/v1/users/{user_id}", headers=admin_headers, json={"role": "admin"})
+    response = client.patch(
+        f"/api/v1/users/{user_id}", headers=admin_headers, json={"role": "admin"}
+    )
     assert response.status_code == 200
     assert response.json()["role"] == "admin"
 
@@ -120,12 +122,16 @@ def test_viewer_cannot_patch_users(client, admin_headers, viewer_headers):
     users = client.get("/api/v1/users", headers=admin_headers).json()["items"]
     user_id = next(u["id"] for u in users if u["email"] == "viewer@example.org")
 
-    response = client.patch(f"/api/v1/users/{user_id}", headers=viewer_headers, json={"role": "admin"})
+    response = client.patch(
+        f"/api/v1/users/{user_id}", headers=viewer_headers, json={"role": "admin"}
+    )
     assert response.status_code == 403
 
 
 def test_list_users_pagination(client, admin_headers, viewer_headers):
-    response = client.get("/api/v1/users", headers=admin_headers, params={"page": 1, "page_size": 1})
+    response = client.get(
+        "/api/v1/users", headers=admin_headers, params={"page": 1, "page_size": 1}
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["page_size"] == 1
@@ -134,7 +140,9 @@ def test_list_users_pagination(client, admin_headers, viewer_headers):
 
 
 def test_list_users_search(client, admin_headers, viewer_headers):
-    response = client.get("/api/v1/users", headers=admin_headers, params={"search": "viewer@example"})
+    response = client.get(
+        "/api/v1/users", headers=admin_headers, params={"search": "viewer@example"}
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 1

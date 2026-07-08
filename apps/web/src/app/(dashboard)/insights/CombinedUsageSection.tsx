@@ -33,9 +33,18 @@ type LoadState =
 export function CombinedUsageSection({ filters }: { filters: ReportFilters }) {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [exporting, setExporting] = useState(false);
+  const [prevFilters, setPrevFilters] = useState(filters);
+
+  // Reset to "loading" the instant filters change, computed during render
+  // rather than via an effect + setState — see useCurrentUser.ts for the
+  // same pattern and why (avoids a render or two of stale prior-filter data
+  // before the new fetch resolves).
+  if (filters !== prevFilters) {
+    setPrevFilters(filters);
+    setState({ phase: "loading" });
+  }
 
   useEffect(() => {
-    setState({ phase: "loading" });
     Promise.all([
       getCombinedReportSummary(filters),
       getCombinedUserLeaderboard(filters, 10),

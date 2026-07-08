@@ -56,7 +56,7 @@ SETUP_NOTES = (
     "into PrintOps: from Web Image Monitor, export the User Counter report, "
     "then use Accounting Imports here to bring in the CSV. Map each staff "
     "member's user code under Staff Copier Identities (identity type "
-    "\"Department ID\" or \"User Code\") so the import can resolve it to a "
+    '"Department ID" or "User Code") so the import can resolve it to a '
     "real person."
 )
 

@@ -45,7 +45,9 @@ async def get_ldap_relay_settings_internal(db: AsyncSession = Depends(get_db)):
     response — same data as the admin-facing GET /api/v1/settings/ldap,
     just reachable via the backend-token trust boundary instead of a JWT."""
     settings = await get_or_create_ldap_relay_settings(db)
-    return LdapRelaySettingsOut(enabled=settings.enabled, base_dn=settings.base_dn, port=settings.port)
+    return LdapRelaySettingsOut(
+        enabled=settings.enabled, base_dn=settings.base_dn, port=settings.port
+    )
 
 
 @router.post("/ldap/bind", response_model=LdapBindResult)
