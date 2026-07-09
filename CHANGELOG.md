@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.16.2] - 2026-07-09
+
+- **Bounded the MDM Printer Resync script's `-m everywhere` probe with a
+  timeout.** The server-side sync script has always bounded this same
+  probe to 30s (confirmed live: some printers hang on it entirely), but
+  the client-side script omitted that protection — a single unresponsive
+  printer could hang the whole script indefinitely, unattended, across
+  the fleet. macOS doesn't ship GNU coreutils' `timeout(1)`, so this uses
+  a portable background-job watchdog instead; verified it actually kills
+  a simulated hung probe and moves on rather than stalling.
+
 ## [0.16.1] - 2026-07-08
 
 - **Fixed the MDM Printer Resync script silently matching zero queues.**
