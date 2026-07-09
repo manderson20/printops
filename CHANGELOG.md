@@ -5,6 +5,19 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.24.1] - 2026-07-09
+
+- **Fixed Untracked Copy Activity showing zero on the day it's enabled**,
+  even with clear SNMP counter growth all day. The report computes its
+  window as `max(filters.start, enabled_at)`, so on the enablement day
+  itself the boundary reading it needs (a reading strictly before the
+  window, but not before `enabled_at`) is impossible to find no matter
+  what data exists — not a real gap in polling, an empty query range by
+  construction — so the whole day's activity was silently dropped
+  instead of just the pre-enablement portion. Confirmed live: this
+  recovered 2,234 measured copies and 104 estimated pages for today that
+  weren't showing.
+
 ## [0.24.0] - 2026-07-09
 
 - **New: Toner Cartridge Model field on each printer's Toner Cartridges

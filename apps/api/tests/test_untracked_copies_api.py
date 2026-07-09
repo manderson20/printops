@@ -188,6 +188,33 @@ async def test_summary_measured_copies_from_verified_printer(
     ]
 
 
+async def test_summary_counts_todays_copies_when_enabled_earlier_today(
+    client, admin_headers, db_session_factory
+):
+    """Regression test: an admin enabling the feature this morning, then
+    checking Insights this afternoon, must see today's copies — not zero.
+    All readings fall on the same single calendar day as enabled_at (no
+    prior-day reading in range to serve as an implicit boundary), which is
+    exactly the case that silently returned 0 before this was fixed: the
+    report computes window_start=max(filters.start, enabled_at), so on the
+    enablement day itself, window_start and boundary_floor collapse to the
+    same instant and a boundary reading becomes impossible to find by
+    construction, not because of a real data gap."""
+    enabled_at = datetime.now(UTC) - timedelta(hours=8)
+    await _enable_since(db_session_factory, enabled_at)
+
+    printer_id = await _make_printer(db_session_factory, "best_effort")
+    first_poll_after_enable = enabled_at + timedelta(minutes=30)
+    now = datetime.now(UTC)
+    await _make_reading(db_session_factory, printer_id, first_poll_after_enable, 1000, 400, 600)
+    await _make_reading(db_session_factory, printer_id, now, 3096, 2043, 653)
+
+    response = client.get("/api/v1/reports/untracked-copies", headers=admin_headers)
+    body = response.json()
+    assert body["measured_copies"] == 1643  # 2043 - 400, not 0
+    assert body["printers"][0]["measured_copies"] == 1643
+
+
 async def test_summary_lists_each_contributing_printer_sorted_by_total(
     client, admin_headers, db_session_factory
 ):
