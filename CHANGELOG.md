@@ -5,6 +5,13 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.18.1] - 2026-07-09
+
+- **The Insights "Leaderboard & Cost" panel (Users view) now shows names
+  instead of email addresses**, same roster-name-with-local-part-fallback
+  resolution just added to the Combined Leaderboard, reused here for the
+  per-user cost breakdown.
+
 ## [0.18.0] - 2026-07-09
 
 - **Combined Leaderboard now shows names, a duplex/color breakdown, and

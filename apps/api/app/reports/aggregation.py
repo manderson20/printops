@@ -484,7 +484,7 @@ async def _get_all_user_print_totals(
     }
 
 
-async def _resolve_display_names(db: AsyncSession, emails: set[str]) -> dict[str, str]:
+async def resolve_display_names(db: AsyncSession, emails: set[str]) -> dict[str, str]:
     """email -> best display label: the synced Google Workspace name if
     known, else the email's local-part (before @) as a readable stand-in
     for someone not in the roster yet (e.g. before an attribution alias
@@ -512,7 +512,7 @@ async def get_combined_user_leaderboard(
         entry.copy_pages = copy_entry.copy_pages
         entry.total_pages += copy_entry.copy_pages
 
-    display_names = await _resolve_display_names(db, set(merged.keys()))
+    display_names = await resolve_display_names(db, set(merged.keys()))
     for email, entry in merged.items():
         entry.label = display_names.get(email, email)
 
