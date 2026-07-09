@@ -246,11 +246,20 @@ def main() -> int:
             sys.stderr.write(f"ERROR: printops backend: could not spool held document: {exc}\n")
             return 1
         try:
+            held_file_size = os.path.getsize(held_path)
+        except OSError:
+            held_file_size = file_size
+        try:
             api_request(
                 token,
                 "PATCH",
                 f"/api/v1/jobs/{job_record_id}",
-                {"status": "held", "held_file_path": held_path, "held_job_options": job_options},
+                {
+                    "status": "held",
+                    "held_file_path": held_path,
+                    "held_job_options": job_options,
+                    "file_size_bytes": held_file_size,
+                },
             )
         except (urllib.error.URLError, urllib.error.HTTPError) as exc:
             # Unlike the best-effort PATCHes below: without this recorded,
@@ -279,10 +288,30 @@ def main() -> int:
     # subprocess's default close_fds=True closes those before exec, so the
     # real backend was polling a dead fd and spinning forever (EBADF loop)
     # instead of ever opening the connection to the printer.
-    result = subprocess.run(
-        real_argv, env=child_env, stdin=None if filename else sys.stdin, close_fds=False
-    )
-    exit_code = result.returncode
+    if filename:
+        exit_code = subprocess.run(real_argv, env=child_env, close_fds=False).returncode
+    else:
+        # No filename means CUPS handed the document over via stdin instead
+        # of a temp file — proxy it through to the real backend ourselves
+        # (rather than the simpler stdin=sys.stdin fd handoff) so we can
+        # count bytes as they stream past, the only way to learn this job's
+        # size in this path. Same blocking/backpressure semantics as a
+        # shell pipe: our writes just block until the child drains, no
+        # deadlock risk since we never read the child's own stdout/stderr.
+        proc = subprocess.Popen(real_argv, env=child_env, stdin=subprocess.PIPE, close_fds=False)
+        file_size = 0
+        try:
+            while True:
+                chunk = sys.stdin.buffer.read(262144)
+                if not chunk:
+                    break
+                proc.stdin.write(chunk)
+                file_size += len(chunk)
+        except OSError:
+            pass  # child exited early (e.g. auth failure) — its own exit code reports the failure
+        finally:
+            proc.stdin.close()
+        exit_code = proc.wait()
 
     completion_attrs = {"page_count": None, "color_mode": None, "duplex": None, "paper_size": None}
     if exit_code == 0:
@@ -297,6 +326,7 @@ def main() -> int:
             {
                 "status": "forwarded" if exit_code == 0 else "failed",
                 "error_message": None if exit_code == 0 else f"ipp backend exited {exit_code}",
+                "file_size_bytes": file_size,
                 **completion_attrs,
             },
         )
