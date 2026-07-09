@@ -846,12 +846,20 @@ export default function InsightsPage() {
                 label="CO₂"
                 value={`${(state.data.summary.co2_grams / 1000).toFixed(1)} kg`}
               />
+              <StatCard
+                label="Mono cost"
+                value={formatCurrency(state.data.summary.estimated_cost_mono)}
+              />
+              <StatCard
+                label="Color cost"
+                value={formatCurrency(state.data.summary.estimated_cost_color)}
+              />
+              <StatCard
+                label="Paper cost"
+                value={formatCurrency(state.data.summary.estimated_cost_paper)}
+              />
             </div>
             <p className="mt-3 text-xs text-zinc-500">
-              Mono cost {formatCurrency(state.data.summary.estimated_cost_mono)}{" "}
-              · Color cost{" "}
-              {formatCurrency(state.data.summary.estimated_cost_color)} · Paper
-              cost {formatCurrency(state.data.summary.estimated_cost_paper)}.
               Toner cost uses each printer&rsquo;s real cartridge cost/yield
               when configured (see the printer&rsquo;s Toner Cartridges panel),
               falling back to the flat rates below otherwise.

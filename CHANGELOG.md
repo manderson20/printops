@@ -5,6 +5,14 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.18.2] - 2026-07-09
+
+- **Fixed Mono/Color/Paper cost on Insights' Environmental & Cost Impact
+  section.** These three were squeezed into a fine-print sentence below
+  the stat tiles instead of getting their own tiles like Sheets of Paper,
+  Duplex Sheets Saved, Trees, and CO₂ — now consistent with the rest of
+  that section.
+
 ## [0.18.1] - 2026-07-09
 
 - **The Insights "Leaderboard & Cost" panel (Users view) now shows names
