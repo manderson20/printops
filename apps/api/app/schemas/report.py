@@ -57,6 +57,12 @@ class CombinedLeaderboardEntryOut(BaseModel):
     print_pages: int
     copy_pages: int
     total_pages: int
+    color_pages: int
+    mono_pages: int
+    duplex_pages: int
+    simplex_pages: int
+    # Print-only — walk-up copy usage has no cost model.
+    estimated_cost: float
 
 
 class PeakTimesOut(BaseModel):
