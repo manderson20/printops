@@ -5,6 +5,14 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.24.0] - 2026-07-09
+
+- **New: Toner Cartridge Model field on each printer's Toner Cartridges
+  card.** Reference-only (e.g. "TN-227") so an admin can look up which
+  cartridge to order without hunting through a spreadsheet — PrintOps
+  doesn't use it for anything itself. Saved alongside the existing
+  per-color cost/yield rows in the same card.
+
 ## [0.23.1] - 2026-07-09
 
 - **Fixed the PrintOps logo missing from the printed/exported Insights
