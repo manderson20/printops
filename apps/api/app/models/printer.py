@@ -132,6 +132,23 @@ class Printer(Base, TimestampMixin):
     ldap_bind_username: Mapped[str | None] = mapped_column(unique=True, default=None)
     ldap_bind_password_hash: Mapped[str | None] = mapped_column(default=None)
 
+    # Reference-only storage for this printer's own web admin UI login and
+    # scan-to-email config — PrintOps never uses these to actually log into
+    # or configure anything, it's just a secure place to look them up
+    # instead of a spreadsheet. Some printers' web UI needs a username +
+    # password, others (a bare password prompt) don't have a username
+    # concept at all — web_login_username is nullable to fit both.
+    # Passwords are encrypted (app/core/crypto.py), not hashed like
+    # ldap_bind_password_hash: an admin needs to retrieve the real value
+    # later, not just verify an attempt against it, so a one-way hash
+    # can't be used here — same reasoning as snmp_community_encrypted.
+    # scan_email_address is the "from" address the scanner uses for
+    # scan-to-email — not a secret, plaintext like ldap_bind_username.
+    web_login_username: Mapped[str | None] = mapped_column(default=None)
+    web_login_password_encrypted: Mapped[str | None] = mapped_column(default=None)
+    scan_email_address: Mapped[str | None] = mapped_column(default=None)
+    scan_password_encrypted: Mapped[str | None] = mapped_column(default=None)
+
     @property
     def has_snmp_community(self) -> bool:
         """Masks snmp_community_encrypted for PrinterOut — a plain property
@@ -145,3 +162,27 @@ class Printer(Base, TimestampMixin):
         """Masks ldap_bind_password_hash for PrinterOut — same masking
         pattern as has_snmp_community above."""
         return bool(self.ldap_bind_password_hash)
+
+    @property
+    def has_web_login_password(self) -> bool:
+        return bool(self.web_login_password_encrypted)
+
+    @property
+    def has_scan_password(self) -> bool:
+        return bool(self.scan_password_encrypted)
+
+    @property
+    def web_login_password(self) -> None:
+        """Always None at the ORM layer — unlike has_web_login_password
+        above, the real decrypted value is deliberately never resolved
+        automatically. GET /printers/{id} (routers/printers.py) attaches
+        it explicitly, and only for an admin requester; every other read
+        path (including GET /printers, the list endpoint) leaves this at
+        its safe None default."""
+        return None
+
+    @property
+    def scan_password(self) -> None:
+        """Same deliberate never-auto-resolved pattern as
+        web_login_password above."""
+        return None

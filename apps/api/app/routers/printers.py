@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.core.config import Settings, get_settings
-from app.core.crypto import encrypt
+from app.core.crypto import decrypt, encrypt
 from app.core.security import hash_password
 from app.db import get_db
 from app.deps import get_current_user, require_role
@@ -134,8 +134,23 @@ async def list_printers(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{printer_id}", response_model=PrinterOut)
-async def get_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
-    return await _get_printer_or_404(printer_id, db)
+async def get_printer(
+    printer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+):
+    printer = await _get_printer_or_404(printer_id, db)
+    out = PrinterOut.model_validate(printer)
+    # Reference-only credentials (app/models/printer.py) -- the only place
+    # the real decrypted values are ever attached, and only for an admin;
+    # everywhere else (including list_printers) they stay at their safe
+    # None default.
+    if current_user.role == "admin":
+        if printer.web_login_password_encrypted:
+            out.web_login_password = decrypt(printer.web_login_password_encrypted)
+        if printer.scan_password_encrypted:
+            out.scan_password = decrypt(printer.scan_password_encrypted)
+    return out
 
 
 @router.patch(
@@ -163,10 +178,21 @@ async def update_printer(
     _not_provided = object()
     snmp_community = updates.pop("snmp_community", _not_provided)
     ldap_bind_password = updates.pop("ldap_bind_password", _not_provided)
+    # web_login_password/scan_password are read-only properties on Printer
+    # (see its docstring) — must be popped before the generic setattr loop
+    # below, same as the other two secrets, or setattr raises on them.
+    web_login_password = updates.pop("web_login_password", _not_provided)
+    scan_password = updates.pop("scan_password", _not_provided)
     for field, value in updates.items():
         setattr(printer, field, value)
     if snmp_community is not _not_provided:
         printer.snmp_community_encrypted = encrypt(snmp_community) if snmp_community else None
+    if web_login_password is not _not_provided:
+        printer.web_login_password_encrypted = (
+            encrypt(web_login_password) if web_login_password else None
+        )
+    if scan_password is not _not_provided:
+        printer.scan_password_encrypted = encrypt(scan_password) if scan_password else None
     if ldap_bind_password is not _not_provided:
         printer.ldap_bind_password_hash = (
             hash_password(ldap_bind_password) if ldap_bind_password else None
