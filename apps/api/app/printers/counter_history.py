@@ -1,6 +1,9 @@
 """Turns append-only PrinterCounterReading rows
-(app/printers/snmp_counters.py:record_reading) into daily usage deltas
-for a per-printer usage-over-time chart.
+(app/printers/snmp_counters.py:record_reading) into daily usage deltas —
+for a per-printer usage-over-time chart (get_daily_deltas), and for the
+Untracked Copy Activity report (app/reports/untracked_copies.py:
+get_daily_deltas_range), which needs an explicit date range instead of a
+"last N days from now" window.
 
 Deliberately separate from app/reports/aggregation.py — that module sums
 *additive* per-job facts into buckets (each Job contributes its own
@@ -56,42 +59,17 @@ def _field_delta(
     return delta
 
 
-async def get_daily_deltas(
-    db: AsyncSession, printer_id: UUID, days: int
+def _diff_readings(
+    readings: list[PrinterCounterReading],
+    boundary: PrinterCounterReading | None,
+    printer_id: UUID,
 ) -> list[DailyCounterDelta]:
-    """Buckets PrinterCounterReading rows for `printer_id` by calendar day
-    (UTC, matching app/reports/aggregation.py's _bucket_key convention)
-    and returns one delta per day that has a reading within the last
-    `days` days, diffing each day's last reading against the previous
-    day's — or a boundary reading fetched from just before the window,
-    so the first day in the window gets a real delta instead of always
-    being null. A day with no reading at all is omitted from the result
-    entirely (not zero) — SNMP being unreachable for a day shouldn't
-    look like "zero pages printed."""
-    now = datetime.now(UTC)
-    window_start = now - timedelta(days=days)
-
-    boundary_result = await db.execute(
-        select(PrinterCounterReading)
-        .where(
-            PrinterCounterReading.printer_id == printer_id,
-            PrinterCounterReading.recorded_at < window_start,
-        )
-        .order_by(PrinterCounterReading.recorded_at.desc())
-        .limit(1)
-    )
-    boundary = boundary_result.scalar_one_or_none()
-
-    window_result = await db.execute(
-        select(PrinterCounterReading)
-        .where(
-            PrinterCounterReading.printer_id == printer_id,
-            PrinterCounterReading.recorded_at >= window_start,
-        )
-        .order_by(PrinterCounterReading.recorded_at.asc())
-    )
-    readings = window_result.scalars().all()
-
+    """Shared by get_daily_deltas and get_daily_deltas_range: given a
+    boundary reading (the last one before the window, or None) and every
+    reading within the window (ascending order), returns one delta per
+    day that has a reading — a day with no reading at all is omitted
+    entirely (not zero), since SNMP being unreachable for a day shouldn't
+    look like "zero pages produced"."""
     # Later same-day readings overwrite earlier ones, leaving each day's
     # last reading — ascending order guarantees that.
     last_per_day: dict[date, PrinterCounterReading] = {}
@@ -127,3 +105,59 @@ async def get_daily_deltas(
         )
         previous = current
     return deltas
+
+
+async def get_daily_deltas_range(
+    db: AsyncSession,
+    printer_id: UUID,
+    start: datetime,
+    end: datetime,
+    boundary_floor: datetime | None = None,
+) -> list[DailyCounterDelta]:
+    """Same diffing logic as get_daily_deltas, but an explicit [start, end)
+    range instead of "last N days from now" — for callers (like the
+    Untracked Copy Activity report) that need to align with an arbitrary,
+    already-computed date range rather than a lookback window.
+
+    boundary_floor additionally constrains which reading can serve as the
+    diffing baseline for the first day in the window — without it, that
+    baseline is simply the last reading before `start`, which could
+    predate `start` by an arbitrary amount. The Untracked Copy Activity
+    report passes its enabled_at here specifically so the very first
+    tracked day's delta can never partially reflect activity from before
+    the feature was turned on (it's left null/unavailable instead, same
+    as "no boundary reading at all" already behaves)."""
+    boundary_stmt = select(PrinterCounterReading).where(
+        PrinterCounterReading.printer_id == printer_id,
+        PrinterCounterReading.recorded_at < start,
+    )
+    if boundary_floor is not None:
+        boundary_stmt = boundary_stmt.where(PrinterCounterReading.recorded_at >= boundary_floor)
+    boundary_result = await db.execute(
+        boundary_stmt.order_by(PrinterCounterReading.recorded_at.desc()).limit(1)
+    )
+    boundary = boundary_result.scalar_one_or_none()
+
+    window_result = await db.execute(
+        select(PrinterCounterReading)
+        .where(
+            PrinterCounterReading.printer_id == printer_id,
+            PrinterCounterReading.recorded_at >= start,
+            PrinterCounterReading.recorded_at < end,
+        )
+        .order_by(PrinterCounterReading.recorded_at.asc())
+    )
+    readings = window_result.scalars().all()
+    return _diff_readings(readings, boundary, printer_id)
+
+
+async def get_daily_deltas(
+    db: AsyncSession, printer_id: UUID, days: int
+) -> list[DailyCounterDelta]:
+    """Buckets PrinterCounterReading rows for `printer_id` by calendar day
+    (UTC, matching app/reports/aggregation.py's _bucket_key convention)
+    and returns one delta per day that has a reading within the last
+    `days` days — see get_daily_deltas_range for the underlying logic."""
+    now = datetime.now(UTC)
+    window_start = now - timedelta(days=days)
+    return await get_daily_deltas_range(db, printer_id, window_start, now)

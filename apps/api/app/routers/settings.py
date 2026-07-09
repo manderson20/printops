@@ -28,6 +28,7 @@ from app.models.report import ReportFormulaSettings
 from app.models.snmp import SnmpDefaultsSettings
 from app.printers.snmp_counters import get_or_create_snmp_defaults
 from app.quotas.service import get_or_create_quota_settings
+from app.reports.untracked_copies import get_or_create_untracked_copy_settings
 from app.schemas.classguard import (
     ClassGuardSettingsOut,
     ClassGuardSettingsUpdate,
@@ -47,6 +48,7 @@ from app.schemas.quota import QuotaSettingsOut, QuotaSettingsUpdate
 from app.schemas.release import PrintReleaseSettingsOut, PrintReleaseSettingsUpdate
 from app.schemas.report import ReportFormulaSettingsOut, ReportFormulaSettingsUpdate
 from app.schemas.snmp import SnmpDefaultsOut, SnmpDefaultsUpdate
+from app.schemas.untracked_copies import UntrackedCopySettingsOut, UntrackedCopySettingsUpdate
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -610,6 +612,34 @@ async def update_report_formula_settings(
     await db.commit()
     await db.refresh(settings)
     return _report_formula_settings_out(settings)
+
+
+@router.get("/untracked-copies", response_model=UntrackedCopySettingsOut)
+async def get_untracked_copy_settings(db: AsyncSession = Depends(get_db)):
+    settings = await get_or_create_untracked_copy_settings(db)
+    return UntrackedCopySettingsOut(enabled=settings.enabled, enabled_at=settings.enabled_at)
+
+
+@router.put(
+    "/untracked-copies",
+    response_model=UntrackedCopySettingsOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def update_untracked_copy_settings(
+    payload: UntrackedCopySettingsUpdate, db: AsyncSession = Depends(get_db)
+):
+    """A False -> True transition re-stamps enabled_at to now — see
+    UntrackedCopySettings' docstring (app/models/untracked_copies.py) for
+    why this must never reach back before the moment it's actually on."""
+    settings = await get_or_create_untracked_copy_settings(db)
+    if payload.enabled is not None:
+        if payload.enabled and not settings.enabled:
+            settings.enabled_at = datetime.now(UTC)
+        settings.enabled = payload.enabled
+
+    await db.commit()
+    await db.refresh(settings)
+    return UntrackedCopySettingsOut(enabled=settings.enabled, enabled_at=settings.enabled_at)
 
 
 async def _get_or_create_print_release_settings(db: AsyncSession) -> PrintReleaseSettings:

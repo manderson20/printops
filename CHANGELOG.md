@@ -5,6 +5,22 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.19.0] - 2026-07-09
+
+- **New: Untracked Copy Activity on Insights.** Estimates walk-up copy
+  activity PrintOps otherwise has no visibility into (no badge/PIN
+  accounting set up), using each printer's own SNMP counters. For
+  printers with a real, vendor-broken-out copy counter (Canon, some
+  Konica Minolta), this is a direct measurement — "Unattributed Copies."
+  For printers with only a combined total counter, it's an estimate —
+  total counter growth minus pages PrintOps actually printed there
+  ("Estimated Untracked Activity"), sound specifically because PrintOps
+  is the only print path in this architecture. Never attributed to a
+  person, never double-counted against a printer already tracked via
+  walk-up copier accounting, and never backfilled — only counts from the
+  moment it's turned on (off by default, Settings → Insights), not
+  retroactively against existing SNMP history.
+
 ## [0.18.3] - 2026-07-09
 
 - **Split Insights' "Failed / cancelled" stat tile into two.** It showed
