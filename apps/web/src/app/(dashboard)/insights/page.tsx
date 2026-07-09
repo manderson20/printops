@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import {
   ApiError,
   createReportSnapshot,
@@ -12,6 +13,7 @@ import {
   getReportPeakTimes,
   getReportSummary,
   getReportTimeline,
+  getUntrackedCopySummary,
   listGoogleWorkspaceUsers,
   listPrinters,
   listReportSnapshots,
@@ -24,6 +26,7 @@ import {
   type ReportSnapshot,
   type ReportSummary,
   type TimelineBucket,
+  type UntrackedCopySummary,
 } from "@/lib/api";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Badge } from "@/components/ui/Badge";
@@ -165,6 +168,7 @@ type ReportData = {
   userCosts: CostEntry[];
   peakTimes: PeakTimes;
   funFacts: string[];
+  untrackedCopies: UntrackedCopySummary;
 };
 
 type LoadState =
@@ -347,9 +351,18 @@ export default function InsightsPage() {
       getCostBreakdown("user", filters),
       getReportPeakTimes(filters),
       getReportFunFacts(periodLabel, filters),
+      getUntrackedCopySummary(filters),
     ])
       .then(
-        ([summary, timeline, printerCosts, userCosts, peakTimes, funFacts]) =>
+        ([
+          summary,
+          timeline,
+          printerCosts,
+          userCosts,
+          peakTimes,
+          funFacts,
+          untrackedCopies,
+        ]) =>
           setState({
             phase: "ok",
             data: {
@@ -359,6 +372,7 @@ export default function InsightsPage() {
               userCosts,
               peakTimes,
               funFacts,
+              untrackedCopies,
             },
           }),
       )
@@ -868,6 +882,52 @@ export default function InsightsPage() {
               when configured (see the printer&rsquo;s Toner Cartridges panel),
               falling back to the flat rates below otherwise.
             </p>
+          </Card>
+
+          <Card>
+            <CardTitle className="mb-3">Untracked Copy Activity</CardTitle>
+            {state.data.untrackedCopies.tracking_since ? (
+              <>
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                  <StatCard
+                    label="Unattributed copies"
+                    value={state.data.untrackedCopies.measured_copies.toLocaleString()}
+                  />
+                  <StatCard
+                    label="Estimated untracked activity"
+                    value={state.data.untrackedCopies.estimated_untracked.toLocaleString()}
+                  />
+                </div>
+                <p className="mt-3 text-xs text-zinc-500">
+                  Walk-up copy activity PrintOps has no other visibility into,
+                  estimated from each printer&rsquo;s own SNMP counters — never
+                  attributed to a person, and never counted from before{" "}
+                  {new Date(
+                    state.data.untrackedCopies.tracking_since,
+                  ).toLocaleString()}{" "}
+                  (see Settings → Insights).
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-zinc-500">
+                Off by default.{" "}
+                {isAdmin ? (
+                  <>
+                    Turn it on in{" "}
+                    <Link
+                      href="/settings/insights"
+                      className="text-accent hover:underline"
+                    >
+                      Settings → Insights
+                    </Link>{" "}
+                    to start estimating walk-up copy activity PrintOps
+                    otherwise has no visibility into.
+                  </>
+                ) : (
+                  "An admin can turn this on in Settings to estimate walk-up copy activity PrintOps otherwise has no visibility into."
+                )}
+              </p>
+            )}
           </Card>
 
           <CombinedUsageSection filters={filters} />

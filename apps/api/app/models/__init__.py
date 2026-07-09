@@ -21,6 +21,7 @@ from app.models.release_bypass import PrinterReleaseBypass
 from app.models.report import PrinterTonerCartridge, ReportFormulaSettings, ReportSnapshot
 from app.models.snmp import PrinterCounterReading, SnmpDefaultsSettings
 from app.models.staff_copier_identity import StaffCopierIdentity
+from app.models.untracked_copies import UntrackedCopySettings
 from app.models.update_schedule import UpdateSchedule
 from app.models.user import User
 
@@ -52,6 +53,7 @@ __all__ = [
     "ReportSnapshot",
     "SnmpDefaultsSettings",
     "StaffCopierIdentity",
+    "UntrackedCopySettings",
     "UpdateSchedule",
     "User",
 ]
