@@ -14,6 +14,19 @@ schedules an update.
   panel gains a "Devices" toggle alongside Printers/Users so cost and
   volume can be broken out per device, not just per person.
 
+## [0.20.0] - 2026-07-09
+
+- **New: reference-only web login and scan-to-email credentials per
+  printer.** A new "Reference Credentials" section on each printer's
+  detail page stores its own web admin UI login (username is optional —
+  some printers only prompt for a password) and scan-to-email setup (the
+  "from" address plus its scan password). PrintOps never uses these to
+  log into or configure anything itself — it's just secure storage so an
+  admin can look a password up later instead of hunting through a
+  spreadsheet. Passwords are encrypted at rest and only ever shown in
+  plaintext to an admin viewing that specific printer's own page — never
+  on the printer list, and never to a Viewer role at all.
+
 ## [0.19.1] - 2026-07-09
 
 - **Untracked Copy Activity now lists each contributing copier

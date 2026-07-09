@@ -89,6 +89,16 @@ class PrinterUpdate(BaseModel):
     # ldap_bind_password_hash on write (see routers/printers.py).
     ldap_bind_password: str | None = None
 
+    # Reference-only credential storage — see Printer's docstring
+    # (app/models/printer.py). web_login_password/scan_password are
+    # write-only like snmp_community above (never echoed back on write;
+    # GET /printers/{id} attaches the real decrypted value separately,
+    # admin-only — see PrinterOut).
+    web_login_username: str | None = None
+    web_login_password: str | None = None
+    scan_email_address: str | None = None
+    scan_password: str | None = None
+
 
 class PrinterConnectionOut(BaseModel):
     """Minimal connection + capability summary for the CUPS backend script and
@@ -161,6 +171,18 @@ class PrinterOut(BaseModel):
     ldap_enabled: bool
     ldap_bind_username: str | None
     has_ldap_bind_password: bool
+
+    # Reference-only credential storage (app/models/printer.py). The
+    # plaintext password fields are always None here except on
+    # GET /printers/{id} for an admin requester (routers/printers.py) --
+    # never on the list endpoint, never for a viewer. has_* booleans are
+    # always safe to show anyone, same as has_snmp_community above.
+    web_login_username: str | None
+    has_web_login_password: bool
+    web_login_password: str | None = None
+    scan_email_address: str | None
+    has_scan_password: bool
+    scan_password: str | None = None
 
     page_count_total: int | None
     page_count_copy: int | None
