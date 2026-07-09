@@ -1468,10 +1468,18 @@ export async function getCostBreakdown(
   return response.json();
 }
 
+export type UntrackedCopyPrinterEntry = {
+  printer_id: string;
+  printer_name: string;
+  measured_copies: number;
+  estimated_untracked: number;
+};
+
 export type UntrackedCopySummary = {
   measured_copies: number;
   estimated_untracked: number;
   tracking_since: string | null;
+  printers: UntrackedCopyPrinterEntry[];
 };
 
 export async function getUntrackedCopySummary(

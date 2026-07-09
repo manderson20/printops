@@ -29,7 +29,7 @@ actually turned it on (see the model's docstring,
 app/models/untracked_copies.py)."""
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 
 from sqlalchemy import select
@@ -58,10 +58,19 @@ async def get_or_create_untracked_copy_settings(db: AsyncSession) -> UntrackedCo
 
 
 @dataclass
+class UntrackedCopyPrinterEntry:
+    printer_id: str
+    printer_name: str
+    measured_copies: int = 0
+    estimated_untracked: int = 0
+
+
+@dataclass
 class UntrackedCopySummary:
     measured_copies: int = 0
     estimated_untracked: int = 0
     tracking_since: datetime | None = None
+    printers: list[UntrackedCopyPrinterEntry] = field(default_factory=list)
 
 
 async def _eligible_printers(db: AsyncSession, filters: ReportFilters) -> list[Printer]:
@@ -132,18 +141,30 @@ async def get_untracked_copy_summary(
 
     summary = UntrackedCopySummary(tracking_since=enabled_at)
     for printer in await _eligible_printers(db, filters):
+        if printer.page_count_confidence not in (*MEASURED_CONFIDENCE, ESTIMATED_CONFIDENCE):
+            continue  # no copy-relevant SNMP data at all -- nothing to report
+
         deltas = await get_daily_deltas_range(
             db, printer.id, window_start, window_end, boundary_floor=enabled_at
         )
+        entry = UntrackedCopyPrinterEntry(printer_id=str(printer.id), printer_name=printer.name)
 
         if printer.page_count_confidence in MEASURED_CONFIDENCE:
-            summary.measured_copies += sum(d.copy_delta or 0 for d in deltas)
+            entry.measured_copies = sum(d.copy_delta or 0 for d in deltas)
         elif printer.page_count_confidence == ESTIMATED_CONFIDENCE:
             printed_by_day = await _daily_print_pages(db, printer.id, window_start, window_end)
             for d in deltas:
                 if d.total_delta is None:
                     continue
                 printed = printed_by_day.get(d.bucket_start, 0)
-                summary.estimated_untracked += max(d.total_delta - printed, 0)
+                entry.estimated_untracked += max(d.total_delta - printed, 0)
 
+        summary.measured_copies += entry.measured_copies
+        summary.estimated_untracked += entry.estimated_untracked
+        if entry.measured_copies or entry.estimated_untracked:
+            summary.printers.append(entry)
+
+    summary.printers.sort(
+        key=lambda e: e.measured_copies + e.estimated_untracked, reverse=True
+    )
     return summary
