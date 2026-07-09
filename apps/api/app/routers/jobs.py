@@ -112,6 +112,8 @@ async def update_job(job_id: UUID, payload: JobUpdate, db: AsyncSession = Depend
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     job.status = payload.status
     job.error_message = payload.error_message
+    if payload.file_size_bytes is not None:
+        job.file_size_bytes = payload.file_size_bytes
     job.page_count = payload.page_count
     job.color_mode = payload.color_mode
     job.duplex = payload.duplex
