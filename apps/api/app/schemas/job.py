@@ -21,6 +21,10 @@ class JobCreate(BaseModel):
 class JobUpdate(BaseModel):
     status: str
     error_message: str | None = None
+    # Known at creation time when CUPS hands the backend a filename; only
+    # knowable here, after the fact, when CUPS instead piped the document
+    # over stdin — see infra/cups/backends/printops.
+    file_size_bytes: int | None = None
     # Physical sheets printed (CUPS job-media-sheets-completed), reported
     # best-effort by the CUPS backend script — see infra/cups/backends/printops.
     page_count: int | None = None
