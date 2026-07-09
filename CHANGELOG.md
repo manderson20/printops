@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.21.0] - 2026-07-09
+
+- **New: iPad AirPrint MDM Profile panel on each printer's detail page.**
+  iPadOS can't use the same "paste one IPP URI" queue setup as macOS — it
+  needs an AirPrint payload (Host, Resource Path, Port, Force TLS) pushed
+  via an MDM profile (in Mosyle: Devices → Printer Management → Add
+  AirPrint). This panel shows exactly those four values, pre-filled from
+  the printer's own already-configured connection info, with a copy
+  button per field, so an admin can push a working iPad printer profile
+  without hand-deriving the resource path or guessing the TLS setting.
+
 ## [0.20.0] - 2026-07-09
 
 - **New: reference-only web login and scan-to-email credentials per
