@@ -1468,6 +1468,22 @@ export async function getCostBreakdown(
   return response.json();
 }
 
+export type UntrackedCopySummary = {
+  measured_copies: number;
+  estimated_untracked: number;
+  tracking_since: string | null;
+};
+
+export async function getUntrackedCopySummary(
+  filters?: ReportFilters,
+): Promise<UntrackedCopySummary> {
+  const qs = buildReportQuery(filters);
+  const response = await authorizedFetch(
+    `/api/v1/reports/untracked-copies${qs ? `?${qs}` : ""}`,
+  );
+  return response.json();
+}
+
 export type PeakTimes = {
   by_day_of_week: Record<string, number>;
   by_hour: Record<string, number>;
@@ -1646,6 +1662,26 @@ export async function updateReportFormulaSettings(
   const response = await authorizedFetch("/api/v1/settings/report-formulas", {
     method: "PUT",
     body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export type UntrackedCopySettings = {
+  enabled: boolean;
+  enabled_at: string | null;
+};
+
+export async function getUntrackedCopySettings(): Promise<UntrackedCopySettings> {
+  const response = await authorizedFetch("/api/v1/settings/untracked-copies");
+  return response.json();
+}
+
+export async function updateUntrackedCopySettings(
+  enabled: boolean,
+): Promise<UntrackedCopySettings> {
+  const response = await authorizedFetch("/api/v1/settings/untracked-copies", {
+    method: "PUT",
+    body: JSON.stringify({ enabled }),
   });
   return response.json();
 }

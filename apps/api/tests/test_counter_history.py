@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.models.base import Base
 from app.models.snmp import PrinterCounterReading
-from app.printers.counter_history import _field_delta, get_daily_deltas
+from app.printers.counter_history import _field_delta, get_daily_deltas, get_daily_deltas_range
 
 
 @pytest_asyncio.fixture
@@ -164,3 +164,33 @@ class TestGetDailyDeltas:
         today = max(d.bucket_start for d in deltas)
         today_delta = next(d for d in deltas if d.bucket_start == today)
         assert today_delta.total_delta == 100  # not the other printer's 999
+
+
+class TestGetDailyDeltasRange:
+    async def test_boundary_floor_excludes_earlier_boundary_reading(self, db_session):
+        """Without boundary_floor, the last reading before `start` (even
+        from days earlier) becomes the diffing baseline. With it, a
+        boundary reading older than the floor is ignored entirely, and
+        the first day in the window is left null instead of silently
+        diffing against pre-floor state — this is what keeps the
+        Untracked Copy Activity report from ever attributing pre-enable
+        activity to a post-enable day."""
+        printer_id = uuid.uuid4()
+        start = datetime.now(UTC)
+        old_boundary = start - timedelta(days=5)
+        floor = start - timedelta(hours=1)
+        in_window = start + timedelta(hours=1)
+
+        db_session.add(_reading(printer_id, old_boundary, 500))
+        db_session.add(_reading(printer_id, in_window, 600))
+        await db_session.commit()
+
+        without_floor = await get_daily_deltas_range(
+            db_session, printer_id, start, start + timedelta(days=1)
+        )
+        assert without_floor[0].total_delta == 100  # 600 - 500, using the old boundary
+
+        with_floor = await get_daily_deltas_range(
+            db_session, printer_id, start, start + timedelta(days=1), boundary_floor=floor
+        )
+        assert with_floor[0].total_delta is None  # old boundary is before the floor -> ignored

@@ -34,6 +34,7 @@ from app.reports.formulas import (
     job_cost,
 )
 from app.reports.fun_facts import generate_fun_facts
+from app.reports.untracked_copies import get_untracked_copy_summary
 from app.schemas.auth import UserOut
 from app.schemas.report import (
     CombinedLeaderboardEntryOut,
@@ -47,6 +48,7 @@ from app.schemas.report import (
     SummaryOut,
     TimelineBucketOut,
 )
+from app.schemas.untracked_copies import UntrackedCopySummaryOut
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -361,6 +363,22 @@ async def report_peak_times(
 ):
     peak = await get_peak_times(db, filters)
     return PeakTimesOut(by_day_of_week=peak.by_day_of_week, by_hour=peak.by_hour)
+
+
+@router.get("/untracked-copies", response_model=UntrackedCopySummaryOut)
+async def report_untracked_copies(
+    filters: ReportFilters = Depends(_report_filters), db: AsyncSession = Depends(get_db)
+):
+    """Estimated walk-up copy activity PrintOps otherwise has no
+    visibility into — see app/reports/untracked_copies.py's module
+    docstring for how measured vs. estimated is decided, and why it never
+    reaches back before the org-wide setting was enabled."""
+    summary = await get_untracked_copy_summary(db, filters)
+    return UntrackedCopySummaryOut(
+        measured_copies=summary.measured_copies,
+        estimated_untracked=summary.estimated_untracked,
+        tracking_since=summary.tracking_since,
+    )
 
 
 def _previous_period_filters(filters: ReportFilters) -> ReportFilters | None:
