@@ -379,6 +379,72 @@ export default function PrinterDetailPage() {
                 </Button>
               </div>
             ))}
+            <div className="flex items-center justify-between gap-3 border-t border-black/[.08] pt-2 dark:border-white/[.1]">
+              <div className="flex flex-col">
+                <span className="text-xs font-medium text-zinc-500">TLS</span>
+                <span className="text-zinc-800 dark:text-zinc-200">
+                  Off — the IPP URI above uses ipp://, not ipps://
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <CardTitle className="mb-1">iPad AirPrint MDM Profile</CardTitle>
+        <p className="mb-4 text-xs text-zinc-500">
+          iPadOS doesn&apos;t support &quot;paste one IPP URI&quot; like the macOS
+          queue above — it needs an AirPrint payload with these four fields
+          (in Mosyle: Devices → Printer Management → Add AirPrint). Cross-VLAN
+          Bonjour/mDNS discovery isn&apos;t reliable on this network, so this
+          MDM-pushed profile is the way to get a printer onto iPads at all,
+          same reason the macOS queue above bypasses discovery too.
+        </p>
+
+        {connection === null && <Spinner label="Loading connection info…" />}
+        {connection && (
+          <div className="flex flex-col gap-2 text-sm">
+            {[
+              ["Host Name or IP Address", connection.host],
+              ["Resource Path", connection.resource_path],
+              ["Port Number", String(connection.port)],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className="flex items-center justify-between gap-3 border-t border-black/[.08] pt-2 first:border-t-0 first:pt-0 dark:border-white/[.1]"
+              >
+                <div className="flex flex-col">
+                  <span className="text-xs font-medium text-zinc-500">
+                    {label}
+                  </span>
+                  <code className="text-zinc-800 dark:text-zinc-200">
+                    {value}
+                  </code>
+                </div>
+                <Button
+                  variant="secondary"
+                  className="!px-3 !py-1 text-xs"
+                  onClick={() => handleCopy(`AirPrint ${label}`, value)}
+                >
+                  {copiedField === `AirPrint ${label}` ? "Copied" : "Copy"}
+                </Button>
+              </div>
+            ))}
+            <div className="flex items-center justify-between gap-3 border-t border-black/[.08] pt-2 dark:border-white/[.1]">
+              <div className="flex flex-col">
+                <span className="text-xs font-medium text-zinc-500">
+                  Force TLS
+                </span>
+                <span className="text-zinc-800 dark:text-zinc-200">
+                  Leave unchecked
+                </span>
+              </div>
+            </div>
+            <p className="mt-1 text-xs text-zinc-500">
+              PrintOps serves this queue over plain IPP, not IPPS — same as
+              the macOS queue above, so Force TLS should stay off.
+            </p>
           </div>
         )}
       </Card>
