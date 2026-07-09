@@ -21,6 +21,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.copier_usage import CopierUsageRecord
+from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.job import Job
 from app.models.printer import Printer
 
@@ -428,23 +429,39 @@ class CombinedLeaderboardEntry:
     print_pages: int = 0
     copy_pages: int = 0
     total_pages: int = 0
+    color_pages: int = 0
+    mono_pages: int = 0
+    duplex_pages: int = 0
+    simplex_pages: int = 0
+    # Print-only — walk-up copy usage has no cost model (see
+    # get_copier_usage_totals). Left at 0.0 here; the combined-leaderboard
+    # router endpoint fills this in from the same cost accumulator
+    # report_cost_breakdown uses (app/routers/reports.py), since that
+    # depends on admin-configured formula settings this module doesn't
+    # have access to.
+    estimated_cost: float = 0.0
 
 
 async def _get_all_user_print_totals(
     db: AsyncSession, filters: ReportFilters
-) -> dict[str, LeaderboardEntry]:
-    """Same query as get_user_leaderboard, but with no limit — the
-    combined leaderboard below needs every user's print total before it
-    can rank by combined (print + copy) pages; get_user_leaderboard's own
-    limit would otherwise cut someone with modest print volume but heavy
-    copy volume before the copy side is even merged in, undercounting
-    them in the combined ranking."""
+) -> dict[str, CombinedLeaderboardEntry]:
+    """Same underlying query as get_user_leaderboard, but with no limit —
+    the combined leaderboard below needs every user's print total before
+    it can rank by combined (print + copy) pages; get_user_leaderboard's
+    own limit would otherwise cut someone with modest print volume but
+    heavy copy volume before the copy side is even merged in, undercounting
+    them in the combined ranking. Also broken down by color/duplex, same
+    CASE-WHEN-via-.filter() idiom as get_summary, just grouped by user."""
+    pages = func.coalesce(Job.page_count, 0)
     stmt = (
         _apply_filters(
             select(
                 Job.submitted_by,
-                func.count(Job.id).label("job_count"),
-                func.sum(func.coalesce(Job.page_count, 0)).label("total_pages"),
+                func.sum(pages).label("total_pages"),
+                func.sum(pages).filter(Job.color_mode == "color").label("color_pages"),
+                func.sum(pages).filter(Job.color_mode == "monochrome").label("mono_pages"),
+                func.sum(pages).filter(Job.duplex.is_(True)).label("duplex_pages"),
+                func.sum(pages).filter(Job.duplex.is_(False)).label("simplex_pages"),
             ),
             filters,
         )
@@ -453,31 +470,50 @@ async def _get_all_user_print_totals(
     )
     rows = (await db.execute(stmt)).all()
     return {
-        r.submitted_by: LeaderboardEntry(
+        r.submitted_by: CombinedLeaderboardEntry(
             key=r.submitted_by,
             label=r.submitted_by,
-            job_count=r.job_count,
+            print_pages=r.total_pages or 0,
             total_pages=r.total_pages or 0,
+            color_pages=r.color_pages or 0,
+            mono_pages=r.mono_pages or 0,
+            duplex_pages=r.duplex_pages or 0,
+            simplex_pages=r.simplex_pages or 0,
         )
         for r in rows
     }
 
 
+async def _resolve_display_names(db: AsyncSession, emails: set[str]) -> dict[str, str]:
+    """email -> best display label: the synced Google Workspace name if
+    known, else the email's local-part (before @) as a readable stand-in
+    for someone not in the roster yet (e.g. before an attribution alias
+    is merged) — same local-part idiom app/attribution/resolve.py uses on
+    the lookup side, applied here for display instead."""
+    if not emails:
+        return {}
+    result = await db.execute(
+        select(GoogleWorkspaceUser.email, GoogleWorkspaceUser.name).where(
+            GoogleWorkspaceUser.email.in_(emails)
+        )
+    )
+    names = dict(result.all())
+    return {email: names.get(email) or email.split("@", 1)[0] for email in emails}
+
+
 async def get_combined_user_leaderboard(
     db: AsyncSession, filters: ReportFilters, limit: int = 10
 ) -> list[CombinedLeaderboardEntry]:
-    print_totals = await _get_all_user_print_totals(db, filters)
+    merged = await _get_all_user_print_totals(db, filters)
     copy_totals = await get_copier_usage_totals(db, filters)
 
-    merged: dict[str, CombinedLeaderboardEntry] = {
-        email: CombinedLeaderboardEntry(
-            key=email, label=email, print_pages=entry.total_pages, total_pages=entry.total_pages
-        )
-        for email, entry in print_totals.items()
-    }
     for email, copy_entry in copy_totals.items():
         entry = merged.setdefault(email, CombinedLeaderboardEntry(key=email, label=email))
         entry.copy_pages = copy_entry.copy_pages
         entry.total_pages += copy_entry.copy_pages
+
+    display_names = await _resolve_display_names(db, set(merged.keys()))
+    for email, entry in merged.items():
+        entry.label = display_names.get(email, email)
 
     return sorted(merged.values(), key=lambda e: e.total_pages, reverse=True)[:limit]

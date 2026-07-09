@@ -291,6 +291,22 @@ async def report_combined_leaderboard(
     db: AsyncSession = Depends(get_db),
 ):
     entries = await get_combined_user_leaderboard(db, filters, limit=min(limit, 50))
+
+    # Print-only estimated cost, same real per-printer-toner-rate formula
+    # /cost-breakdown uses (job_cost, app/reports/formulas.py) — computed
+    # here rather than in aggregation.py's get_combined_user_leaderboard
+    # since it depends on admin-configured formula settings that live at
+    # this router layer, not in that lower-level aggregation module.
+    formula_settings = await _get_or_create_formula_settings(db)
+    fallback = _formula_values(formula_settings)
+    _, cost_by_user, _overall = await _compute_cost_accumulators(
+        db, filters, formula_settings.cost_per_sheet_paper, fallback
+    )
+    for entry in entries:
+        acc = cost_by_user.get(entry.key)
+        if acc is not None:
+            entry.estimated_cost = round(acc.total_cost, 2)
+
     return [CombinedLeaderboardEntryOut(**vars(e)) for e in entries]
 
 

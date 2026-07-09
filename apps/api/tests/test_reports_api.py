@@ -9,6 +9,7 @@ from app.db import get_db
 from app.main import app
 from app.models.base import Base
 from app.models.copier_usage import CopierUsageRecord
+from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.mfp_device import MfpDevice
 from app.models.printer import Printer
 
@@ -84,6 +85,14 @@ async def _make_copier_usage(db_session_factory, device_id, staff_email, page_co
                 raw_payload={},
             )
         )
+        await session.commit()
+
+
+async def _make_google_workspace_user(db_session_factory, email, name):
+    from datetime import UTC, datetime
+
+    async with db_session_factory() as session:
+        session.add(GoogleWorkspaceUser(email=email, name=name, synced_at=datetime.now(UTC)))
         await session.commit()
 
 
@@ -501,6 +510,58 @@ async def test_combined_leaderboard_ranks_by_combined_total(
     assert entries["jane.smith@district.org"]["total_pages"] == 1070
     # Jane's combined total (1070) now outranks the print-only leader (900).
     assert response.json()[0]["key"] == "jane.smith@district.org"
+
+
+async def test_combined_leaderboard_label_uses_roster_name_or_local_part(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 10)
+    _make_job(client, printer_id, backend_headers, "not.in.roster@district.org", 5)
+    await _make_google_workspace_user(db_session_factory, "jane.smith@district.org", "Jane Smith")
+
+    response = client.get("/api/v1/reports/combined-leaderboard", headers=admin_headers)
+    entries = {e["key"]: e for e in response.json()}
+    assert entries["jane.smith@district.org"]["label"] == "Jane Smith"
+    # No roster row (e.g. before an attribution alias is merged) -> local-part fallback.
+    assert entries["not.in.roster@district.org"]["label"] == "not.in.roster"
+
+
+async def test_combined_leaderboard_color_and_duplex_breakdown(
+    client, printer_id, backend_headers, admin_headers
+):
+    _make_job(
+        client, printer_id, backend_headers, "jane.smith@district.org", 6,
+        color_mode="color", duplex=True,
+    )
+    _make_job(
+        client, printer_id, backend_headers, "jane.smith@district.org", 4,
+        color_mode="monochrome", duplex=False,
+    )
+
+    response = client.get("/api/v1/reports/combined-leaderboard", headers=admin_headers)
+    entry = response.json()[0]
+    assert entry["color_pages"] == 6
+    assert entry["mono_pages"] == 4
+    assert entry["duplex_pages"] == 6
+    assert entry["simplex_pages"] == 4
+
+
+async def test_combined_leaderboard_estimated_cost(
+    client, printer_id, backend_headers, admin_headers
+):
+    client.put(
+        "/api/v1/settings/report-formulas",
+        headers=admin_headers,
+        json={"cost_per_page_mono": 0.05, "cost_per_page_color": 0.0, "cost_per_sheet_paper": 0.0},
+    )
+    _make_job(
+        client, printer_id, backend_headers, "jane.smith@district.org", 10,
+        color_mode="monochrome",
+    )
+
+    response = client.get("/api/v1/reports/combined-leaderboard", headers=admin_headers)
+    entry = response.json()[0]
+    assert entry["estimated_cost"] == round(10 * 0.05, 2)
 
 
 async def test_combined_export_csv_includes_totals(

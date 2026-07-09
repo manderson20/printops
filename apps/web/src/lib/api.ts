@@ -1538,6 +1538,12 @@ export type CombinedLeaderboardEntry = {
   print_pages: number;
   copy_pages: number;
   total_pages: number;
+  color_pages: number;
+  mono_pages: number;
+  duplex_pages: number;
+  simplex_pages: number;
+  // Print-only -- walk-up copy usage has no cost model.
+  estimated_cost: number;
 };
 
 export async function getCombinedUserLeaderboard(
