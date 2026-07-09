@@ -113,6 +113,16 @@ export type Printer = {
   ldap_enabled: boolean;
   ldap_bind_username: string | null;
   has_ldap_bind_password: boolean;
+  // Reference-only credential storage — see the Printer model's docstring.
+  // The plaintext password fields are only ever populated by GET
+  // /printers/{id} for an admin requester; null everywhere else
+  // (including the list endpoint, and always for a viewer).
+  web_login_username: string | null;
+  has_web_login_password: boolean;
+  web_login_password: string | null;
+  scan_email_address: string | null;
+  has_scan_password: boolean;
+  scan_password: string | null;
   page_count_total: number | null;
   page_count_copy: number | null;
   page_count_print: number | null;
@@ -161,6 +171,11 @@ export type PrinterUpdateInput = Partial<PrinterCreateInput> & {
   // "" clears the override, same convention as the SNMP fields above.
   ldap_bind_username?: string | null;
   ldap_bind_password?: string | null;
+  // "" clears the stored value, same convention as ldap_bind_password.
+  web_login_username?: string | null;
+  web_login_password?: string | null;
+  scan_email_address?: string | null;
+  scan_password?: string | null;
 };
 
 export async function listPrinters(): Promise<Printer[]> {

@@ -35,6 +35,7 @@ import { QuotasCard } from "./Quotas";
 import { SnmpCountersCard } from "./SnmpCounters";
 import { TonerCartridgesCard } from "./TonerCartridges";
 import { UsageHistoryCard } from "./UsageHistory";
+import { WebLoginCredentialsCard } from "./WebLoginCredentials";
 
 type LoadState =
   | { phase: "loading" }
@@ -460,6 +461,11 @@ export default function PrinterDetailPage() {
       <QuotasCard printerId={printer.id} />
 
       <LdapAddressBookCard
+        printer={printer}
+        onUpdate={(updated) => setState({ phase: "ok", printer: updated })}
+      />
+
+      <WebLoginCredentialsCard
         printer={printer}
         onUpdate={(updated) => setState({ phase: "ok", printer: updated })}
       />
