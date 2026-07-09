@@ -41,6 +41,9 @@ class Printer(Base, TimestampMixin):
     room: Mapped[str | None] = mapped_column(default=None)
     department: Mapped[str | None] = mapped_column(default=None)
     notes: Mapped[str | None] = mapped_column(default=None)
+    # Reference-only, e.g. "TN-227" — see PrinterCreate's docstring
+    # (app/schemas/printer.py). Not used by PrintOps for anything itself.
+    toner_cartridge_model: Mapped[str | None] = mapped_column(default=None)
 
     capabilities: Mapped[dict | None] = mapped_column(JSON, default=None)
     capabilities_raw: Mapped[dict | None] = mapped_column(JSON, default=None)

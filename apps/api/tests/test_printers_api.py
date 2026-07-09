@@ -166,6 +166,31 @@ def test_create_printer_offline_still_creates_record(client, auth_headers, mock_
     assert "Could not reach" in body["capabilities_error"]
 
 
+def test_toner_cartridge_model_set_at_create_and_edited_via_update(
+    client, auth_headers, mock_failed_probe
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={
+            "name": "Reference Printer",
+            "ip_address": "10.0.0.5",
+            "toner_cartridge_model": "TN-227",
+        },
+    )
+    assert create.status_code == 201
+    printer_id = create.json()["id"]
+    assert create.json()["toner_cartridge_model"] == "TN-227"
+
+    update = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"toner_cartridge_model": "TN-227XL"},
+    )
+    assert update.status_code == 200
+    assert update.json()["toner_cartridge_model"] == "TN-227XL"
+
+
 def test_list_get_update_delete(client, auth_headers, mock_successful_probe):
     create = client.post(
         "/api/v1/printers",

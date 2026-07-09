@@ -111,6 +111,7 @@ async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_
         room=payload.room,
         department=payload.department,
         notes=payload.notes,
+        toner_cartridge_model=payload.toner_cartridge_model,
         snmp_enabled=payload.snmp_enabled,
         snmp_port=payload.snmp_port,
         snmp_version=payload.snmp_version,

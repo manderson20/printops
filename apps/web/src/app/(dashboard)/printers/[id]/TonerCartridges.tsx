@@ -4,9 +4,11 @@ import { useEffect, useState } from "react";
 import {
   ApiError,
   getPrinterCartridges,
+  updatePrinter,
   updatePrinterCartridges,
   type Cartridge,
   type CartridgeColor,
+  type Printer,
 } from "@/lib/api";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Button } from "@/components/ui/Button";
@@ -30,17 +32,21 @@ function emptyRow(): Row {
 }
 
 export function TonerCartridgesCard({
-  printerId,
+  printer,
   colorSupported,
+  onUpdate,
 }: {
-  printerId: string;
+  printer: Printer;
   colorSupported: boolean;
+  onUpdate: (printer: Printer) => void;
 }) {
+  const printerId = printer.id;
   const isAdmin = useCurrentUser()?.role === "admin";
   const colors: CartridgeColor[] = colorSupported
     ? ["black", "cyan", "magenta", "yellow"]
     : ["black"];
   const [rows, setRows] = useState<RowsByColor | null>(null);
+  const [cartridgeModel, setCartridgeModel] = useState(printer.toner_cartridge_model ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -84,6 +90,10 @@ export function TonerCartridgesCard({
           yield_pages: Number(rows[color].yield_pages),
         }));
       await updatePrinterCartridges(printerId, cartridges);
+      const updatedPrinter = await updatePrinter(printerId, {
+        toner_cartridge_model: cartridgeModel || null,
+      });
+      onUpdate(updatedPrinter);
       setSaved(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to save cartridges");
@@ -105,6 +115,16 @@ export function TonerCartridgesCard({
 
       {rows !== null && (
         <div className="flex flex-col gap-3">
+          <label className="flex flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
+            Cartridge Model
+            <Input
+              type="text"
+              placeholder="e.g. TN-227"
+              disabled={!isAdmin}
+              value={cartridgeModel}
+              onChange={(e) => setCartridgeModel(e.target.value)}
+            />
+          </label>
           {colors.map((color) => (
             <div key={color} className="grid grid-cols-[5rem_1fr_1fr] items-end gap-3">
               <span className="text-sm font-medium text-black dark:text-zinc-50">
