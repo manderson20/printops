@@ -21,8 +21,9 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.copier_usage import CopierUsageRecord
-from app.models.google_workspace import GoogleWorkspaceUser
+from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceUser
 from app.models.job import Job
+from app.models.mosyle import MosyleDevice
 from app.models.printer import Printer
 
 TERMINAL_STATUSES = ("forwarded", "failed", "cancelled")
@@ -284,6 +285,7 @@ class CostRawRow:
     printer_id: UUID
     printer_name: str
     submitted_by: str | None
+    mac_address: str | None
     page_count: int
     color_mode: str | None
     duplex: bool | None
@@ -300,6 +302,7 @@ async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[Co
             Job.printer_id,
             Printer.name,
             Job.submitted_by,
+            Job.mac_address,
             Job.page_count,
             Job.color_mode,
             Job.duplex,
@@ -312,6 +315,7 @@ async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[Co
             printer_id=r.printer_id,
             printer_name=r.name,
             submitted_by=r.submitted_by,
+            mac_address=r.mac_address,
             page_count=r.page_count or 0,
             color_mode=r.color_mode,
             duplex=r.duplex,
@@ -499,6 +503,32 @@ async def resolve_display_names(db: AsyncSession, emails: set[str]) -> dict[str,
     )
     names = dict(result.all())
     return {email: names.get(email) or email.split("@", 1)[0] for email in emails}
+
+
+async def resolve_device_names(db: AsyncSession, macs: set[str]) -> dict[str, str]:
+    """mac_address -> best display label: the device's name from whichever
+    MDM roster has it (Mosyle for Mac/iPad, Google Workspace for
+    ChromeOS — both keyed by unique mac_address), falling back to the raw
+    MAC string itself for a device in neither roster yet. Never hides a
+    MAC outright — an admin can still act on it even unresolved, same
+    philosophy as resolve_display_names' local-part fallback above."""
+    if not macs:
+        return {}
+    mosyle_result = await db.execute(
+        select(MosyleDevice.mac_address, MosyleDevice.device_name).where(
+            MosyleDevice.mac_address.in_(macs)
+        )
+    )
+    names = {mac: name for mac, name in mosyle_result.all() if name}
+    remaining = macs - names.keys()
+    if remaining:
+        google_result = await db.execute(
+            select(GoogleWorkspaceDevice.mac_address, GoogleWorkspaceDevice.device_name).where(
+                GoogleWorkspaceDevice.mac_address.in_(remaining)
+            )
+        )
+        names.update({mac: name for mac, name in google_result.all() if name})
+    return {mac: names.get(mac, mac) for mac in macs}
 
 
 async def get_combined_user_leaderboard(
