@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime
 
 import pytest
@@ -11,6 +12,8 @@ from app.db import get_db
 from app.main import app
 from app.models.base import Base
 from app.models.google_workspace import GoogleWorkspaceUser
+from app.models.job import Job
+from app.models.mosyle import MosyleDevice
 from app.models.printer import Printer
 from app.printers import discovery as printer_discovery
 from app.printers.ipp_client import PrinterProbeError
@@ -200,6 +203,64 @@ def test_list_jobs_filters_by_printer(
     assert response.status_code == 200
     body = response.json()
     assert len(body) == 1
+
+
+async def test_list_jobs_resolves_device_name_from_mosyle(
+    client, printer_id, backend_headers, auth_headers, db_session_factory
+):
+    """mac_address isn't settable via the create API (it's only ever
+    populated server-side by the attribution pipeline via source_host/
+    ClassGuard) -- seeded directly here to test the reporting/resolution
+    layer (resolve_device_names) in isolation from that pipeline."""
+    create = client.post(
+        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
+    )
+    job_id = create.json()["id"]
+
+    async with db_session_factory() as session:
+        job = await session.get(Job, uuid.UUID(job_id))
+        job.mac_address = "AA:BB:CC:DD:EE:FF"
+        session.add(
+            MosyleDevice(
+                mac_address="AA:BB:CC:DD:EE:FF",
+                device_name="Jane's iPad",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    response = client.get("/api/v1/jobs", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["device_name"] == "Jane's iPad"
+
+
+async def test_list_jobs_falls_back_to_raw_mac_when_unresolved(
+    client, printer_id, backend_headers, auth_headers, db_session_factory
+):
+    create = client.post(
+        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
+    )
+    job_id = create.json()["id"]
+
+    async with db_session_factory() as session:
+        job = await session.get(Job, uuid.UUID(job_id))
+        job.mac_address = "AA:BB:CC:DD:EE:FF"
+        await session.commit()
+
+    response = client.get("/api/v1/jobs", headers=auth_headers)
+    body = response.json()
+    assert body[0]["device_name"] == "AA:BB:CC:DD:EE:FF"
+
+
+def test_list_jobs_device_name_none_when_no_mac(
+    client, printer_id, backend_headers, auth_headers
+):
+    client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
+
+    response = client.get("/api/v1/jobs", headers=auth_headers)
+    body = response.json()
+    assert body[0]["device_name"] is None
     assert body[0]["printer_id"] == printer_id
 
 

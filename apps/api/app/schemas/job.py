@@ -68,6 +68,11 @@ class JobOut(BaseModel):
 
 class JobListOut(JobOut):
     printer_name: str
+    # Resolved from Job.mac_address via app/reports/aggregation.py:
+    # resolve_device_names — the Mosyle/Google Workspace device name if
+    # known, the raw MAC if not resolved to a name yet, or None if this
+    # job never got a MAC at all (e.g. an unresolved/manual submission).
+    device_name: str | None = None
 
 
 class UserUsageOut(BaseModel):

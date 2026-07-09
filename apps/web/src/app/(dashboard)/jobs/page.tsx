@@ -198,6 +198,7 @@ function JobsList() {
                   Printer{sortIndicator("printer")}
                 </th>
                 <th className="px-4 py-3 font-medium">Submitted By</th>
+                <th className="px-4 py-3 font-medium">Device</th>
                 <th className="cursor-pointer select-none px-4 py-3 font-medium" onClick={() => toggleSort("status")}>
                   Status{sortIndicator("status")}
                 </th>
@@ -234,6 +235,9 @@ function JobsList() {
                         {job.submitted_by ?? "—"}
                         <Badge tone={attribution.tone}>{attribution.label}</Badge>
                       </div>
+                    </td>
+                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
+                      {job.device_name ?? "—"}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-1">
