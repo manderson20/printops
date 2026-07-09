@@ -95,6 +95,7 @@ export type Printer = {
   room: string | null;
   department: string | null;
   notes: string | null;
+  toner_cartridge_model: string | null;
   capabilities: Capabilities | null;
   capabilities_detected_at: string | null;
   capabilities_error: string | null;
@@ -156,6 +157,7 @@ export type PrinterCreateInput = {
   room?: string | null;
   department?: string | null;
   notes?: string | null;
+  toner_cartridge_model?: string | null;
 };
 
 export type PrinterUpdateInput = Partial<PrinterCreateInput> & {
