@@ -5,7 +5,7 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
-## [0.22.1] - 2026-07-09
+## [0.23.1] - 2026-07-09
 
 - **Fixed the PrintOps logo missing from the printed/exported Insights
   report.** The report header sits in a print-only block (hidden on
@@ -14,6 +14,18 @@ schedules an update.
   the logo was never visible on screen, it never finished loading before
   `window.print()` fired. Marked as a priority image so it loads
   immediately regardless of that hidden state.
+
+## [0.23.0] - 2026-07-09
+
+- **Jobs list now shows the document name, and Size is actually populated.**
+  The document name (already captured on every job) was never displayed.
+  Size was worse than undisplayed — it was almost always null: the CUPS
+  backend only measured a job's size when CUPS handed it a filename
+  directly; when CUPS instead piped the document over stdin (the common
+  case for filtered documents), size was never captured at all. The
+  backend now proxies stdin through to the real printer backend itself,
+  counting bytes as they stream past, so Size is populated for that path
+  too — both immediately-forwarded jobs and ones held for release/quota.
 
 ## [0.22.0] - 2026-07-09
 

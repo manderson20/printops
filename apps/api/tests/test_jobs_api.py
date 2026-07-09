@@ -116,6 +116,43 @@ def test_create_and_update_job(client, printer_id, backend_headers):
     assert updated.json()["error_message"] is None
 
 
+def test_update_job_learns_file_size_when_not_known_at_creation(
+    client, printer_id, backend_headers
+):
+    # No file_size_bytes at creation — the CUPS backend only learns this
+    # after the fact when a job arrives over stdin instead of a filename.
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
+    job_id = create.json()["id"]
+    assert create.json()["file_size_bytes"] is None
+
+    updated = client.patch(
+        f"/api/v1/jobs/{job_id}",
+        json={"status": "forwarded", "file_size_bytes": 54321},
+        headers=backend_headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["file_size_bytes"] == 54321
+
+
+def test_update_job_omitting_file_size_keeps_existing_value(
+    client, printer_id, backend_headers
+):
+    create = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "file_size_bytes": 999},
+        headers=backend_headers,
+    )
+    job_id = create.json()["id"]
+
+    updated = client.patch(
+        f"/api/v1/jobs/{job_id}",
+        json={"status": "forwarded"},
+        headers=backend_headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["file_size_bytes"] == 999
+
+
 def test_update_job_failure_path(client, printer_id, backend_headers):
     create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     job_id = create.json()["id"]
