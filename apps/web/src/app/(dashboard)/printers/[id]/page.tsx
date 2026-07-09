@@ -379,6 +379,14 @@ export default function PrinterDetailPage() {
                 </Button>
               </div>
             ))}
+            <div className="flex items-center justify-between gap-3 border-t border-black/[.08] pt-2 dark:border-white/[.1]">
+              <div className="flex flex-col">
+                <span className="text-xs font-medium text-zinc-500">TLS</span>
+                <span className="text-zinc-800 dark:text-zinc-200">
+                  Off — the IPP URI above uses ipp://, not ipps://
+                </span>
+              </div>
+            </div>
           </div>
         )}
       </Card>
