@@ -23,6 +23,7 @@ from app.reports.aggregation import (
     get_summary,
     get_timeline,
     get_user_leaderboard,
+    resolve_display_names,
 )
 from app.reports.formulas import (
     FormulaValues,
@@ -191,6 +192,14 @@ async def _compute_cost_accumulators(
             _accumulate(user_entry, row, cost)
 
         _accumulate(overall, row, cost)
+
+    # by_printer's labels are already real printer names; only by_user's
+    # (raw submitted_by email so far) benefit from the same roster-name
+    # resolution the Combined Leaderboard uses — see
+    # app/reports/aggregation.py:resolve_display_names.
+    display_names = await resolve_display_names(db, set(by_user.keys()))
+    for email, entry in by_user.items():
+        entry.label = display_names.get(email, email)
 
     return by_printer, by_user, overall
 
