@@ -178,6 +178,41 @@ async def test_summary_measured_copies_from_verified_printer(
     body = response.json()
     assert body["measured_copies"] == 30  # 430 - 400, direct from copy_delta
     assert body["estimated_untracked"] == 0
+    assert body["printers"] == [
+        {
+            "printer_id": str(printer_id),
+            "printer_name": "MFP",
+            "measured_copies": 30,
+            "estimated_untracked": 0,
+        }
+    ]
+
+
+async def test_summary_lists_each_contributing_printer_sorted_by_total(
+    client, admin_headers, db_session_factory
+):
+    await _enable_since(db_session_factory, datetime.now(UTC) - timedelta(days=10))
+    now = datetime.now(UTC)
+    yesterday = now - timedelta(days=1)
+
+    small = await _make_printer(db_session_factory, "verified", name="Small Copier")
+    await _make_reading(db_session_factory, small, yesterday, 1000, 400, 600)
+    await _make_reading(db_session_factory, small, now, 1010, 405, 605)  # +5
+
+    big = await _make_printer(db_session_factory, "verified", name="Big Copier")
+    await _make_reading(db_session_factory, big, yesterday, 2000, 800, 1200)
+    await _make_reading(db_session_factory, big, now, 2100, 850, 1250)  # +50
+
+    # A printer with no confidence-classified SNMP data at all contributes
+    # nothing and must not show up as a noisy "0" row.
+    await _make_printer(db_session_factory, None, name="No SNMP Data")
+
+    response = client.get("/api/v1/reports/untracked-copies", headers=admin_headers)
+    body = response.json()
+    assert body["measured_copies"] == 55  # 5 + 50
+    names_in_order = [p["printer_name"] for p in body["printers"]]
+    assert names_in_order == ["Big Copier", "Small Copier"]  # sorted, largest first
+    assert len(body["printers"]) == 2
 
 
 async def test_summary_estimated_from_unsupported_printer(

@@ -898,6 +898,37 @@ export default function InsightsPage() {
                     value={state.data.untrackedCopies.estimated_untracked.toLocaleString()}
                   />
                 </div>
+
+                {state.data.untrackedCopies.printers.length > 0 && (
+                  <table className="mt-4 w-full text-left text-sm">
+                    <thead className="text-xs uppercase tracking-wide text-zinc-500">
+                      <tr>
+                        <th className="py-2 font-medium">Copier</th>
+                        <th className="py-2 font-medium">Unattributed copies</th>
+                        <th className="py-2 font-medium">Estimated untracked</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {state.data.untrackedCopies.printers.map((entry) => (
+                        <tr
+                          key={entry.printer_id}
+                          className="border-t border-black/[.08] dark:border-white/[.1]"
+                        >
+                          <td className="py-2 text-black dark:text-zinc-50">
+                            {entry.printer_name}
+                          </td>
+                          <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                            {entry.measured_copies.toLocaleString()}
+                          </td>
+                          <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                            {entry.estimated_untracked.toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+
                 <p className="mt-3 text-xs text-zinc-500">
                   Walk-up copy activity PrintOps has no other visibility into,
                   estimated from each printer&rsquo;s own SNMP counters — never
