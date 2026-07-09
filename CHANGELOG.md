@@ -5,6 +5,13 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.18.3] - 2026-07-09
+
+- **Split Insights' "Failed / cancelled" stat tile into two.** It showed
+  both counts jammed into one value (e.g. "0 / 2"), reading like a
+  fraction rather than two independent counts — now separate "Failed
+  jobs" and "Cancelled jobs" tiles, matching every other stat in that row.
+
 ## [0.18.2] - 2026-07-09
 
 - **Fixed Mono/Color/Paper cost on Insights' Environmental & Cost Impact
