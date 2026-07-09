@@ -125,8 +125,28 @@ async def get_daily_deltas_range(
     predate `start` by an arbitrary amount. The Untracked Copy Activity
     report passes its enabled_at here specifically so the very first
     tracked day's delta can never partially reflect activity from before
-    the feature was turned on (it's left null/unavailable instead, same
-    as "no boundary reading at all" already behaves)."""
+    the feature was turned on.
+
+    When a printer's SNMP history predates enablement (the usual case),
+    `start` and `boundary_floor` are different points in time and a
+    boundary reading between them may or may not exist — if the poller
+    genuinely missed that gap, leaving the day null (rather than
+    guessing) is correct, and is exactly what `boundary is None` already
+    means.
+
+    But `get_untracked_copy_summary` computes `start = max(filters.start,
+    enabled_at)` — so on the very day a report covers the feature's own
+    enablement, `start` and `boundary_floor` collapse to the *same*
+    timestamp, making "a reading before start, but not before
+    boundary_floor" impossible to satisfy no matter what data exists —
+    not a missed poll, a query with an empty range by construction.
+    Falling back to null there would silently drop every reading from
+    enablement through day's end, not just the pre-enablement portion —
+    so specifically in that case (and only that case; a real gap between
+    a floor and an earlier start still leaves the day null as before),
+    the earliest in-window reading (the first one at/after enabled_at) is
+    promoted to serve as the baseline itself, same as if polling had
+    started fresh at that moment."""
     boundary_stmt = select(PrinterCounterReading).where(
         PrinterCounterReading.printer_id == printer_id,
         PrinterCounterReading.recorded_at < start,
@@ -147,7 +167,13 @@ async def get_daily_deltas_range(
         )
         .order_by(PrinterCounterReading.recorded_at.asc())
     )
-    readings = window_result.scalars().all()
+    readings = list(window_result.scalars().all())
+    # boundary_floor >= start means no reading could ever satisfy the
+    # boundary query above, regardless of data — an empty range by
+    # construction, not a real gap (see docstring).
+    if boundary is None and boundary_floor is not None and boundary_floor >= start and readings:
+        boundary = readings[0]
+        readings = readings[1:]
     return _diff_readings(readings, boundary, printer_id)
 
 
