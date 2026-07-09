@@ -5,6 +5,14 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.17.1] - 2026-07-09
+
+- **Print Release's default hold expiry is now 48 hours, up from 4.**
+  4 hours was too tight in practice — an unreleased held job is
+  cancelled and its spooled file deleted once this window passes.
+  Existing installs keep whatever they already have configured; this
+  only changes the starting default for a fresh setup.
+
 ## [0.17.0] - 2026-07-09
 
 - **Print Release bypass for specific staff, per printer.** When Print
