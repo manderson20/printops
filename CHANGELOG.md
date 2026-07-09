@@ -5,6 +5,18 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.17.0] - 2026-07-09
+
+- **Print Release bypass for specific staff, per printer.** When Print
+  Release is on for a printer, an admin can now name individual staff
+  (e.g. someone who sits right next to that copier) whose jobs print
+  immediately instead of being held for kiosk release — everyone else
+  at that printer still releases their own jobs normally. Configured on
+  the printer's own detail page, in the same section as the release
+  toggle and kiosk link. A bypassed user's job still goes through
+  ordinary page-quota holds if those are enabled — the bypass only skips
+  the release-required hold specifically, not every hold.
+
 ## [0.16.2] - 2026-07-09
 
 - **Bounded the MDM Printer Resync script's `-m everywhere` probe with a

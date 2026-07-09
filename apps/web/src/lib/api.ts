@@ -1745,6 +1745,45 @@ export async function deletePrinterQuota(
   });
 }
 
+export type PrinterReleaseBypass = {
+  id: string;
+  printer_id: string;
+  user_email: string;
+};
+
+export async function listPrinterReleaseBypasses(
+  printerId: string,
+): Promise<PrinterReleaseBypass[]> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/release-bypasses`,
+  );
+  return response.json();
+}
+
+export async function createPrinterReleaseBypass(
+  printerId: string,
+  userEmail: string,
+): Promise<PrinterReleaseBypass> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/release-bypasses`,
+    {
+      method: "POST",
+      body: JSON.stringify({ user_email: userEmail }),
+    },
+  );
+  return response.json();
+}
+
+export async function deletePrinterReleaseBypass(
+  printerId: string,
+  bypassId: string,
+): Promise<void> {
+  await authorizedFetch(
+    `/api/v1/printers/${printerId}/release-bypasses/${bypassId}`,
+    { method: "DELETE" },
+  );
+}
+
 export type QuotaSettings = {
   enabled: boolean;
 };
