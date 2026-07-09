@@ -153,6 +153,9 @@ export function CombinedUsageSection({ filters }: { filters: ReportFilters }) {
                 <th className="py-2 font-medium">Printed</th>
                 <th className="py-2 font-medium">Copied</th>
                 <th className="py-2 font-medium">Total</th>
+                <th className="py-2 font-medium">Duplex / Simplex</th>
+                <th className="py-2 font-medium">Color / Mono</th>
+                <th className="py-2 font-medium">Est. Cost</th>
               </tr>
             </thead>
             <tbody>
@@ -176,6 +179,17 @@ export function CombinedUsageSection({ filters }: { filters: ReportFilters }) {
                   </td>
                   <td className="py-2 font-medium text-black dark:text-zinc-50">
                     {entry.total_pages.toLocaleString()}
+                  </td>
+                  <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                    {entry.duplex_pages.toLocaleString()} /{" "}
+                    {entry.simplex_pages.toLocaleString()}
+                  </td>
+                  <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                    {entry.color_pages.toLocaleString()} /{" "}
+                    {entry.mono_pages.toLocaleString()}
+                  </td>
+                  <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                    ${entry.estimated_cost.toFixed(2)}
                   </td>
                 </tr>
               ))}
