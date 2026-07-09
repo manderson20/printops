@@ -17,6 +17,7 @@ from app.models.mosyle import MosyleDevice, MosyleSettings
 from app.models.printer import Printer
 from app.models.quota import PrinterUserQuota, QuotaSettings
 from app.models.release import PrintReleaseSettings
+from app.models.release_bypass import PrinterReleaseBypass
 from app.models.report import PrinterTonerCartridge, ReportFormulaSettings, ReportSnapshot
 from app.models.snmp import PrinterCounterReading, SnmpDefaultsSettings
 from app.models.staff_copier_identity import StaffCopierIdentity
@@ -42,6 +43,7 @@ __all__ = [
     "MosyleSettings",
     "Printer",
     "PrinterCounterReading",
+    "PrinterReleaseBypass",
     "PrinterTonerCartridge",
     "PrinterUserQuota",
     "PrintReleaseSettings",

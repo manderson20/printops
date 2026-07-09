@@ -17,6 +17,7 @@ from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.job import Job
 from app.models.printer import Printer
 from app.models.quota import PrinterUserQuota
+from app.models.release_bypass import PrinterReleaseBypass
 from app.models.report import PrinterTonerCartridge
 from app.printers.counter_history import get_daily_deltas
 from app.printers.discovery import refresh_printer_capabilities
@@ -33,6 +34,7 @@ from app.quotas.service import get_pages_used, period_bounds
 from app.schemas.auth import UserOut
 from app.schemas.printer import PrinterCreate, PrinterMdmConnectionOut, PrinterOut, PrinterUpdate
 from app.schemas.quota import PrinterUserQuotaCreate, PrinterUserQuotaOut, PrinterUserQuotaUpdate
+from app.schemas.release_bypass import PrinterReleaseBypassCreate, PrinterReleaseBypassOut
 from app.schemas.report import CartridgeIn, CartridgeOut
 from app.schemas.snmp import DailyCounterDeltaOut
 
@@ -520,4 +522,76 @@ async def delete_printer_quota(
     if quota is None or quota.printer_id != printer_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quota not found")
     await db.delete(quota)
+    await db.commit()
+
+
+@router.get("/{printer_id}/release-bypasses", response_model=list[PrinterReleaseBypassOut])
+async def list_printer_release_bypasses(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    await _get_printer_or_404(printer_id, db)
+    result = await db.execute(
+        select(PrinterReleaseBypass)
+        .where(PrinterReleaseBypass.printer_id == printer_id)
+        .order_by(PrinterReleaseBypass.user_email)
+    )
+    return result.scalars().all()
+
+
+@router.post(
+    "/{printer_id}/release-bypasses",
+    response_model=PrinterReleaseBypassOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def create_printer_release_bypass(
+    printer_id: UUID, payload: PrinterReleaseBypassCreate, db: AsyncSession = Depends(get_db)
+):
+    """Lets a specific staff member skip the PIN-release hold at this one
+    printer, even while release_required is on — see
+    app/quotas/service.py:resolve_hold_reason."""
+    await _get_printer_or_404(printer_id, db)
+
+    email = payload.user_email.strip().lower()
+    roster_match = await db.execute(
+        select(GoogleWorkspaceUser).where(func.lower(GoogleWorkspaceUser.email) == email)
+    )
+    if roster_match.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"'{payload.user_email}' is not in the synced Google Workspace user "
+                "roster — sync Google Workspace settings, or double-check the address."
+            ),
+        )
+
+    existing = await db.execute(
+        select(PrinterReleaseBypass).where(
+            PrinterReleaseBypass.printer_id == printer_id,
+            PrinterReleaseBypass.user_email == email,
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"'{payload.user_email}' already bypasses release on this printer.",
+        )
+
+    bypass = PrinterReleaseBypass(printer_id=printer_id, user_email=email)
+    db.add(bypass)
+    await db.commit()
+    await db.refresh(bypass)
+    return bypass
+
+
+@router.delete(
+    "/{printer_id}/release-bypasses/{bypass_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def delete_printer_release_bypass(
+    printer_id: UUID, bypass_id: UUID, db: AsyncSession = Depends(get_db)
+):
+    bypass = await db.get(PrinterReleaseBypass, bypass_id)
+    if bypass is None or bypass.printer_id != printer_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bypass not found")
+    await db.delete(bypass)
     await db.commit()
