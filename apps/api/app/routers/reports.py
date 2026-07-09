@@ -23,6 +23,7 @@ from app.reports.aggregation import (
     get_summary,
     get_timeline,
     get_user_leaderboard,
+    resolve_device_names,
     resolve_display_names,
 )
 from app.reports.formulas import (
@@ -164,18 +165,27 @@ async def _compute_cost_accumulators(
     filters: ReportFilters,
     cost_per_sheet_paper: float,
     fallback: FormulaValues,
-) -> tuple[dict[str, _CostAccumulator], dict[str, _CostAccumulator], _CostAccumulator]:
-    """Returns (by_printer, by_user, overall) computed together in one pass
-    over the raw job rows, since every grouping needs the identical
-    per-job cost (real per-printer toner rate + physical-sheet-accurate
-    paper cost — see the module docstring in aggregation.py's
-    get_cost_raw_rows for why this can't be a single SQL GROUP BY)."""
+) -> tuple[
+    dict[str, _CostAccumulator],
+    dict[str, _CostAccumulator],
+    dict[str, _CostAccumulator],
+    _CostAccumulator,
+]:
+    """Returns (by_printer, by_user, by_device, overall) computed together
+    in one pass over the raw job rows, since every grouping needs the
+    identical per-job cost (real per-printer toner rate + physical-sheet-
+    accurate paper cost — see the module docstring in aggregation.py's
+    get_cost_raw_rows for why this can't be a single SQL GROUP BY).
+    by_device lets the same person's Mac and iPad (same Workspace/Mosyle
+    account) show up as distinct rows, since mac_address — not
+    submitted_by — is the grouping key."""
     rows = await get_cost_raw_rows(db, filters)
     printer_ids = {r.printer_id for r in rows}
     rates = await _load_printer_rates(db, printer_ids, fallback)
 
     by_printer: dict[str, _CostAccumulator] = {}
     by_user: dict[str, _CostAccumulator] = {}
+    by_device: dict[str, _CostAccumulator] = {}
     overall = _CostAccumulator(label="Overall")
 
     for row in rows:
@@ -193,17 +203,27 @@ async def _compute_cost_accumulators(
             )
             _accumulate(user_entry, row, cost)
 
+        if row.mac_address:
+            device_entry = by_device.setdefault(
+                row.mac_address, _CostAccumulator(label=row.mac_address)
+            )
+            _accumulate(device_entry, row, cost)
+
         _accumulate(overall, row, cost)
 
-    # by_printer's labels are already real printer names; only by_user's
-    # (raw submitted_by email so far) benefit from the same roster-name
-    # resolution the Combined Leaderboard uses — see
-    # app/reports/aggregation.py:resolve_display_names.
+    # by_printer's labels are already real printer names; by_user's (raw
+    # submitted_by email so far) and by_device's (raw MAC so far) benefit
+    # from the same resolve-to-a-real-name treatment the Combined
+    # Leaderboard uses — see app/reports/aggregation.py.
     display_names = await resolve_display_names(db, set(by_user.keys()))
     for email, entry in by_user.items():
         entry.label = display_names.get(email, email)
 
-    return by_printer, by_user, overall
+    device_names = await resolve_device_names(db, set(by_device.keys()))
+    for mac, entry in by_device.items():
+        entry.label = device_names.get(mac, mac)
+
+    return by_printer, by_user, by_device, overall
 
 
 def _build_summary_out(summary, environmental, cost_overall: _CostAccumulator) -> SummaryOut:
@@ -238,7 +258,7 @@ async def _summary_out(db: AsyncSession, filters: ReportFilters) -> SummaryOut:
     # per-printer cartridge cost) — only the dollar cost fields switch to
     # the new real, per-job-accurate calculation below.
     environmental = compute_environmental_impact(summary, formulas)
-    _, _, overall = await _compute_cost_accumulators(
+    _, _, _, overall = await _compute_cost_accumulators(
         db, filters, formula_settings.cost_per_sheet_paper, formulas
     )
     return _build_summary_out(summary, environmental, overall)
@@ -310,7 +330,7 @@ async def report_combined_leaderboard(
     # this router layer, not in that lower-level aggregation module.
     formula_settings = await _get_or_create_formula_settings(db)
     fallback = _formula_values(formula_settings)
-    _, cost_by_user, _overall = await _compute_cost_accumulators(
+    _, cost_by_user, _, _overall = await _compute_cost_accumulators(
         db, filters, formula_settings.cost_per_sheet_paper, fallback
     )
     for entry in entries:
@@ -327,20 +347,24 @@ async def report_cost_breakdown(
     filters: ReportFilters = Depends(_report_filters),
     db: AsyncSession = Depends(get_db),
 ):
-    """Real per-printer/per-job cost, grouped by printer or by user — the
-    "cost by user" report. Supersedes /leaderboard's job_count/total_pages
-    for display purposes (this returns both, plus cost), but /leaderboard
-    stays for callers that only need the lighter query."""
-    if group_by not in ("printer", "user"):
+    """Real per-printer/per-job cost, grouped by printer, user, or device —
+    the "cost by user"/"cost by device" report. Supersedes /leaderboard's
+    job_count/total_pages for display purposes (this returns both, plus
+    cost), but /leaderboard stays for callers that only need the lighter
+    query. "device" groups by mac_address rather than submitted_by, so the
+    same person's Mac and iPad (same Workspace/Mosyle account) show up as
+    distinct rows — see app/reports/aggregation.py:resolve_device_names."""
+    if group_by not in ("printer", "user", "device"):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="group_by must be 'printer' or 'user'"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="group_by must be 'printer', 'user', or 'device'",
         )
     formula_settings = await _get_or_create_formula_settings(db)
     fallback = _formula_values(formula_settings)
-    by_printer, by_user, _overall = await _compute_cost_accumulators(
+    by_printer, by_user, by_device, _overall = await _compute_cost_accumulators(
         db, filters, formula_settings.cost_per_sheet_paper, fallback
     )
-    buckets = by_printer if group_by == "printer" else by_user
+    buckets = {"printer": by_printer, "user": by_user, "device": by_device}[group_by]
     entries = [
         CostEntryOut(
             key=key,
@@ -554,7 +578,7 @@ async def create_snapshot(
     formula_settings = await _get_or_create_formula_settings(db)
     formulas = _formula_values(formula_settings)
     environmental = compute_environmental_impact(summary, formulas)
-    _, _, cost_overall = await _compute_cost_accumulators(
+    _, _, _, cost_overall = await _compute_cost_accumulators(
         db, filters, formula_settings.cost_per_sheet_paper, formulas
     )
     summary_out = _build_summary_out(summary, environmental, cost_overall)
