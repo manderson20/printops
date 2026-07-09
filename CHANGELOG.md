@@ -13,6 +13,16 @@ schedules an update.
   doesn't use it for anything itself. Saved alongside the existing
   per-color cost/yield rows in the same card.
 
+## [0.23.1] - 2026-07-09
+
+- **Fixed the PrintOps logo missing from the printed/exported Insights
+  report.** The report header sits in a print-only block (hidden on
+  screen, shown only via the browser's print media query), and Next.js's
+  image component defers loading anything not currently visible — since
+  the logo was never visible on screen, it never finished loading before
+  `window.print()` fired. Marked as a priority image so it loads
+  immediately regardless of that hidden state.
+
 ## [0.23.0] - 2026-07-09
 
 - **Jobs list now shows the document name, and Size is actually populated.**

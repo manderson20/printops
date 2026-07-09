@@ -421,7 +421,13 @@ export default function InsightsPage() {
     <div className="flex w-full max-w-7xl flex-col gap-6">
       {/* Print-only report header — never shown on screen. */}
       <div className="hidden items-center gap-3 border-b border-black/20 pb-4 print:flex">
-        <Image src="/printops-logo.png" alt="PrintOps" width={40} height={40} />
+        <Image
+          src="/printops-logo.png"
+          alt="PrintOps"
+          width={40}
+          height={40}
+          priority
+        />
         <div>
           <p className="text-lg font-semibold text-black">
             PrintOps — Print Insights Report
