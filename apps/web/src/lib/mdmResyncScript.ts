@@ -30,6 +30,12 @@
  * - POSIX /bin/sh, not bash — macOS ships bash 3.2, and MDM script runners
  *   don't reliably honor a `#!/bin/bash` shebang, so this avoids bashisms
  *   (process substitution, arrays, [[ ]]) entirely.
+ * - `-m everywhere` is bounded by a manual background-job watchdog, not
+ *   `timeout(1)` — that's a GNU coreutils tool, not part of macOS/BSD, so
+ *   it's simply not there to call. Same reason this exists server-side in
+ *   sync_cups_queue.sh (confirmed live against a real device that hangs on
+ *   this specific probe) — one unresponsive printer shouldn't be able to
+ *   hang this whole script, which runs unattended fleet-wide via the MDM.
  */
 export function buildMdmResyncScript(): string {
   return `#!/bin/sh
@@ -48,6 +54,21 @@ export function buildMdmResyncScript(): string {
 #
 # Requires root (lpadmin needs it) — Mosyle Custom Commands run as root by
 # default, so no user-context wrapper is needed here.
+
+# Portable bound on a slow/hung command — macOS doesn't ship GNU coreutils'
+# timeout(1), so this uses a background watchdog instead.
+run_with_timeout() {
+  secs=$1; shift
+  "$@" &
+  cmd_pid=$!
+  ( sleep "$secs"; kill -TERM "$cmd_pid" 2>/dev/null ) &
+  watchdog_pid=$!
+  wait "$cmd_pid" 2>/dev/null
+  status=$?
+  kill "$watchdog_pid" 2>/dev/null
+  wait "$watchdog_pid" 2>/dev/null
+  return $status
+}
 
 lpstat -v 2>/dev/null | sed -n 's/^device for \\(.*\\): \\(.*\\)$/\\1|\\2/p' | while IFS='|' read -r queue uri; do
   case "$uri" in
@@ -73,10 +94,10 @@ lpstat -v 2>/dev/null | sed -n 's/^device for \\(.*\\): \\(.*\\)$/\\1|\\2/p' | w
   fi
 
   echo "Resyncing $queue ..."
-  if lpadmin -p "$queue" -v "$uri" -m everywhere >/dev/null 2>&1; then
+  if run_with_timeout 30 lpadmin -p "$queue" -v "$uri" -m everywhere >/dev/null 2>&1; then
     echo "Resynced $queue."
   else
-    echo "Could not resync $queue (printer may be offline right now) -- left as-is."
+    echo "Could not resync $queue (printer may be offline, or timed out) -- left as-is."
   fi
 done
 
