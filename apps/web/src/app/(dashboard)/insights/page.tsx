@@ -660,9 +660,13 @@ export default function InsightsPage() {
               value={state.data.summary.simplex_pages.toLocaleString()}
             />
             <StatCard
-              label="Failed / cancelled"
-              value={`${state.data.summary.failed_jobs} / ${state.data.summary.cancelled_jobs}`}
+              label="Failed jobs"
+              value={state.data.summary.failed_jobs.toLocaleString()}
               tone={state.data.summary.failed_jobs > 0 ? "danger" : undefined}
+            />
+            <StatCard
+              label="Cancelled jobs"
+              value={state.data.summary.cancelled_jobs.toLocaleString()}
             />
             <StatCard
               label="Estimated cost"
