@@ -197,6 +197,7 @@ function JobsList() {
                 <th className="cursor-pointer select-none px-4 py-3 font-medium" onClick={() => toggleSort("printer")}>
                   Printer{sortIndicator("printer")}
                 </th>
+                <th className="px-4 py-3 font-medium">Document</th>
                 <th className="px-4 py-3 font-medium">Submitted By</th>
                 <th className="px-4 py-3 font-medium">Device</th>
                 <th className="cursor-pointer select-none px-4 py-3 font-medium" onClick={() => toggleSort("status")}>
@@ -229,6 +230,9 @@ function JobsList() {
                       >
                         {job.printer_name}
                       </Link>
+                    </td>
+                    <td className="max-w-[16rem] truncate px-4 py-3 text-zinc-600 dark:text-zinc-400" title={job.document_name ?? undefined}>
+                      {job.document_name ?? "—"}
                     </td>
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                       <div className="flex items-center gap-2">
