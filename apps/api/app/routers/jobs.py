@@ -15,6 +15,7 @@ from app.models.printer import Printer
 from app.models.release import PrintReleaseSettings
 from app.printers.job_control import JobControlError, cancel_cups_job
 from app.quotas.service import resolve_hold_reason
+from app.reports.aggregation import resolve_device_names
 from app.schemas.auth import UserOut
 from app.schemas.job import JobCreate, JobListOut, JobOut, JobUpdate, UserUsageOut
 
@@ -41,8 +42,15 @@ async def list_jobs(
     if printer_id is not None:
         stmt = stmt.where(Job.printer_id == printer_id)
     rows = (await db.execute(stmt)).all()
+    device_names = await resolve_device_names(
+        db, {job.mac_address for job, _ in rows if job.mac_address}
+    )
     return [
-        JobListOut(**JobOut.model_validate(job).model_dump(), printer_name=printer_name)
+        JobListOut(
+            **JobOut.model_validate(job).model_dump(),
+            printer_name=printer_name,
+            device_name=device_names.get(job.mac_address) if job.mac_address else None,
+        )
         for job, printer_name in rows
     ]
 

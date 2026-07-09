@@ -848,6 +848,9 @@ export type Job = {
   id: string;
   printer_id: string;
   printer_name: string;
+  // Resolved from mac_address (Mosyle/Google Workspace device name), the
+  // raw MAC if unresolved, or null if this job never got a MAC at all.
+  device_name: string | null;
   cups_job_id: number | null;
   submitted_by: string | null;
   attribution_method: AttributionMethod;
@@ -1473,7 +1476,7 @@ export type CostEntry = {
 };
 
 export async function getCostBreakdown(
-  groupBy: "printer" | "user",
+  groupBy: "printer" | "user" | "device",
   filters?: ReportFilters,
 ): Promise<CostEntry[]> {
   const qs = buildReportQuery(filters, { group_by: groupBy });

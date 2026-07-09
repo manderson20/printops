@@ -166,6 +166,7 @@ type ReportData = {
   timeline: TimelineBucket[];
   printerCosts: CostEntry[];
   userCosts: CostEntry[];
+  deviceCosts: CostEntry[];
   peakTimes: PeakTimes;
   funFacts: string[];
   untrackedCopies: UntrackedCopySummary;
@@ -193,9 +194,9 @@ export default function InsightsPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [colorMode, setColorMode] = useState("");
   const [duplexFilter, setDuplexFilter] = useState("");
-  const [leaderboardType, setLeaderboardType] = useState<"printer" | "user">(
-    "printer",
-  );
+  const [leaderboardType, setLeaderboardType] = useState<
+    "printer" | "user" | "device"
+  >("printer");
 
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [exporting, setExporting] = useState(false);
@@ -349,6 +350,7 @@ export default function InsightsPage() {
       getReportTimeline(granularity, filters),
       getCostBreakdown("printer", filters),
       getCostBreakdown("user", filters),
+      getCostBreakdown("device", filters),
       getReportPeakTimes(filters),
       getReportFunFacts(periodLabel, filters),
       getUntrackedCopySummary(filters),
@@ -359,6 +361,7 @@ export default function InsightsPage() {
           timeline,
           printerCosts,
           userCosts,
+          deviceCosts,
           peakTimes,
           funFacts,
           untrackedCopies,
@@ -370,6 +373,7 @@ export default function InsightsPage() {
               timeline,
               printerCosts,
               userCosts,
+              deviceCosts,
               peakTimes,
               funFacts,
               untrackedCopies,
@@ -788,59 +792,74 @@ export default function InsightsPage() {
                 >
                   Users
                 </Button>
+                <Button
+                  variant={
+                    leaderboardType === "device" ? "primary" : "secondary"
+                  }
+                  className="!px-3 !py-1 text-xs"
+                  onClick={() => setLeaderboardType("device")}
+                >
+                  Devices
+                </Button>
               </div>
             </div>
-            {(leaderboardType === "printer"
-              ? state.data.printerCosts
-              : state.data.userCosts
-            ).length === 0 ? (
-              <EmptyState>No data for this range.</EmptyState>
-            ) : (
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-black/[.08] text-xs uppercase tracking-wide text-zinc-500 dark:border-white/[.145]">
-                    <th className="py-2 font-medium">
-                      {leaderboardType === "printer" ? "Printer" : "User"}
-                    </th>
-                    <th className="py-2 font-medium">Jobs</th>
-                    <th className="py-2 font-medium">Pages</th>
-                    <th className="py-2 font-medium">Toner Cost</th>
-                    <th className="py-2 font-medium">Paper Cost</th>
-                    <th className="py-2 font-medium">Total Cost</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(leaderboardType === "printer"
-                    ? state.data.printerCosts
-                    : state.data.userCosts
-                  ).map((entry) => (
-                    <tr
-                      key={entry.key}
-                      className="border-b border-black/[.08] last:border-0 dark:border-white/[.145]"
-                    >
-                      <td className="py-2 text-black dark:text-zinc-50">
-                        {entry.label}
-                      </td>
-                      <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                        {entry.job_count}
-                      </td>
-                      <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                        {entry.page_count.toLocaleString()}
-                      </td>
-                      <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                        {formatCurrency(entry.toner_cost)}
-                      </td>
-                      <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                        {formatCurrency(entry.paper_cost)}
-                      </td>
-                      <td className="py-2 font-medium text-black dark:text-zinc-50">
-                        {formatCurrency(entry.total_cost)}
-                      </td>
+            {(() => {
+              const activeEntries =
+                leaderboardType === "printer"
+                  ? state.data.printerCosts
+                  : leaderboardType === "user"
+                    ? state.data.userCosts
+                    : state.data.deviceCosts;
+              const columnLabel =
+                leaderboardType === "printer"
+                  ? "Printer"
+                  : leaderboardType === "user"
+                    ? "User"
+                    : "Device";
+              return activeEntries.length === 0 ? (
+                <EmptyState>No data for this range.</EmptyState>
+              ) : (
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-black/[.08] text-xs uppercase tracking-wide text-zinc-500 dark:border-white/[.145]">
+                      <th className="py-2 font-medium">{columnLabel}</th>
+                      <th className="py-2 font-medium">Jobs</th>
+                      <th className="py-2 font-medium">Pages</th>
+                      <th className="py-2 font-medium">Toner Cost</th>
+                      <th className="py-2 font-medium">Paper Cost</th>
+                      <th className="py-2 font-medium">Total Cost</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+                  </thead>
+                  <tbody>
+                    {activeEntries.map((entry) => (
+                      <tr
+                        key={entry.key}
+                        className="border-b border-black/[.08] last:border-0 dark:border-white/[.145]"
+                      >
+                        <td className="py-2 text-black dark:text-zinc-50">
+                          {entry.label}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {entry.job_count}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {entry.page_count.toLocaleString()}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {formatCurrency(entry.toner_cost)}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {formatCurrency(entry.paper_cost)}
+                        </td>
+                        <td className="py-2 font-medium text-black dark:text-zinc-50">
+                          {formatCurrency(entry.total_cost)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              );
+            })()}
           </Card>
 
           <Card>
