@@ -1,3 +1,6 @@
+import uuid
+from datetime import UTC, datetime
+
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
@@ -10,7 +13,9 @@ from app.main import app
 from app.models.base import Base
 from app.models.copier_usage import CopierUsageRecord
 from app.models.google_workspace import GoogleWorkspaceUser
+from app.models.job import Job
 from app.models.mfp_device import MfpDevice
+from app.models.mosyle import MosyleDevice
 from app.models.printer import Printer
 
 GOOGLE_CLAIMS = {
@@ -477,6 +482,67 @@ async def test_cost_breakdown_by_user_uses_roster_name(
 def test_cost_breakdown_rejects_bad_group_by(client, admin_headers):
     response = client.get("/api/v1/reports/cost-breakdown?group_by=bogus", headers=admin_headers)
     assert response.status_code == 400
+
+
+async def _set_job_mac(db_session_factory, job_id, mac_address):
+    async with db_session_factory() as session:
+        job = await session.get(Job, uuid.UUID(job_id))
+        job.mac_address = mac_address
+        await session.commit()
+
+
+async def test_cost_breakdown_by_device_splits_same_user_across_devices(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """The whole point: the same person's Mac and iPad (same Workspace
+    account) must show up as two distinct device rows, not merged into
+    one -- unlike group_by=user, which would combine them."""
+    mac_job = _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 10)
+    ipad_job = _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 4)
+    await _set_job_mac(db_session_factory, mac_job, "AA:AA:AA:AA:AA:AA")
+    await _set_job_mac(db_session_factory, ipad_job, "BB:BB:BB:BB:BB:BB")
+    async with db_session_factory() as session:
+        session.add(
+            MosyleDevice(
+                mac_address="AA:AA:AA:AA:AA:AA",
+                device_name="Jane's MacBook",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            MosyleDevice(
+                mac_address="BB:BB:BB:BB:BB:BB",
+                device_name="Jane's iPad",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    response = client.get("/api/v1/reports/cost-breakdown?group_by=device", headers=admin_headers)
+    assert response.status_code == 200
+    body = {entry["label"]: entry for entry in response.json()}
+    assert body["Jane's MacBook"]["page_count"] == 10
+    assert body["Jane's iPad"]["page_count"] == 4
+
+
+async def test_cost_breakdown_by_device_falls_back_to_raw_mac(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    job_id = _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 10)
+    await _set_job_mac(db_session_factory, job_id, "AA:AA:AA:AA:AA:AA")
+
+    response = client.get("/api/v1/reports/cost-breakdown?group_by=device", headers=admin_headers)
+    body = response.json()
+    assert body[0]["label"] == "AA:AA:AA:AA:AA:AA"
+
+
+def test_cost_breakdown_by_device_excludes_jobs_with_no_mac(
+    client, printer_id, backend_headers, admin_headers
+):
+    _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 10)
+
+    response = client.get("/api/v1/reports/cost-breakdown?group_by=device", headers=admin_headers)
+    assert response.json() == []
 
 
 def test_summary_includes_paper_cost(client, printer_id, backend_headers, admin_headers):

@@ -5,6 +5,15 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.21.0] - 2026-07-09
+
+- **New: device-level print tracking.** Staff and students often use the
+  same account on both a MacBook and an iPad. Jobs now show which device
+  submitted them (resolved from the device's MDM roster name, falling
+  back to its raw MAC address), and the Insights "Leaderboard & Cost"
+  panel gains a "Devices" toggle alongside Printers/Users so cost and
+  volume can be broken out per device, not just per person.
+
 ## [0.19.1] - 2026-07-09
 
 - **Untracked Copy Activity now lists each contributing copier
