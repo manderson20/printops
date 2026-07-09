@@ -515,8 +515,9 @@ export default function PrinterDetailPage() {
       </Card>
 
       <TonerCartridgesCard
-        printerId={printer.id}
+        printer={printer}
         colorSupported={!!caps?.color_supported}
+        onUpdate={(updated) => setState({ phase: "ok", printer: updated })}
       />
 
       <PrintReleaseCard
