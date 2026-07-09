@@ -48,7 +48,7 @@ from app.schemas.report import (
     SummaryOut,
     TimelineBucketOut,
 )
-from app.schemas.untracked_copies import UntrackedCopySummaryOut
+from app.schemas.untracked_copies import UntrackedCopyPrinterEntryOut, UntrackedCopySummaryOut
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -378,6 +378,15 @@ async def report_untracked_copies(
         measured_copies=summary.measured_copies,
         estimated_untracked=summary.estimated_untracked,
         tracking_since=summary.tracking_since,
+        printers=[
+            UntrackedCopyPrinterEntryOut(
+                printer_id=p.printer_id,
+                printer_name=p.printer_name,
+                measured_copies=p.measured_copies,
+                estimated_untracked=p.estimated_untracked,
+            )
+            for p in summary.printers
+        ],
     )
 
 

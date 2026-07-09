@@ -5,6 +5,14 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.19.1] - 2026-07-09
+
+- **Untracked Copy Activity now lists each contributing copier
+  individually**, not just the org-wide total — sorted largest first,
+  showing both its Unattributed Copies and Estimated Untracked Activity.
+  A printer that contributes nothing (no copy-capable SNMP data, or zero
+  activity in range) doesn't show up as a noisy zero row.
+
 ## [0.19.0] - 2026-07-09
 
 - **New: Untracked Copy Activity on Insights.** Estimates walk-up copy
