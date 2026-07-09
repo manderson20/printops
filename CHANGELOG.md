@@ -5,6 +5,18 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.18.0] - 2026-07-09
+
+- **Combined Leaderboard now shows names, a duplex/color breakdown, and
+  estimated cost.** The Insights page's Combined Leaderboard listed raw
+  email addresses — it now shows the person's synced Google Workspace
+  name, falling back to the email's local part (e.g. "jane.smith") for
+  anyone not in the roster yet, such as before an attribution alias is
+  merged. Also added Duplex/Simplex and Color/Mono page breakdowns per
+  person, and an estimated print cost using the same real per-printer
+  toner-rate formula the Cost Breakdown report already uses (print-only —
+  walk-up copy usage has no cost model yet).
+
 ## [0.17.1] - 2026-07-09
 
 - **Print Release's default hold expiry is now 48 hours, up from 4.**
