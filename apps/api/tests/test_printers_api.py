@@ -12,6 +12,15 @@ from app.printers import status as printer_status
 from app.printers.ipp_client import PrinterProbeError, PrinterStateResult, ProbeResult
 from app.routers import printers as printers_router
 
+GOOGLE_CLAIMS = {
+    "sub": "google-sub-viewer",
+    "email": "viewer@example.org",
+    "email_verified": True,
+    "hd": "example.org",
+    "name": "Viewer Person",
+    "picture": None,
+}
+
 
 @pytest_asyncio.fixture
 async def db_session_factory():
@@ -46,6 +55,47 @@ def client(db_session_factory):
 def auth_headers(client):
     response = client.post("/auth/login", json={"username": "admin", "password": "changeme"})
     token = response.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def google_settings(client, auth_headers):
+    response = client.put(
+        "/api/v1/settings/google-sso",
+        headers=auth_headers,
+        json={
+            "client_id": "test-client-id",
+            "client_secret": "test-client-secret",
+            "workspace_domain": "example.org",
+            "initial_admin_emails": [],
+            "redirect_base_url": "https://printops.test",
+            "enabled": True,
+        },
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+@pytest.fixture
+def viewer_headers(client, google_settings, monkeypatch):
+    async def fake_exchange_code(**kwargs):
+        return {"id_token": "fake-id-token"}
+
+    def fake_verify_id_token(id_token, client_id):
+        return GOOGLE_CLAIMS
+
+    monkeypatch.setattr("app.routers.auth.exchange_code", fake_exchange_code)
+    monkeypatch.setattr("app.routers.auth.verify_id_token", fake_verify_id_token)
+
+    login_response = client.get("/auth/google/login", follow_redirects=False)
+    state = login_response.cookies["printops_oauth_state"]
+    response = client.get(
+        "/auth/google/callback",
+        params={"code": "fake-code", "state": state},
+        cookies={"printops_oauth_state": state},
+        follow_redirects=False,
+    )
+    token = response.headers["location"].split("token=", 1)[1]
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -616,6 +666,135 @@ def test_update_printer_ldap_bind_password_never_echoed(client, auth_headers, mo
     assert body["ldap_bind_username"] == "ldap-printer"
     assert body["has_ldap_bind_password"] is True
     assert "top-secret" not in response.text
+
+
+def test_web_login_and_scan_credentials_never_echoed_on_write(
+    client, auth_headers, mock_failed_probe
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Reference Creds Printer", "ip_address": "10.0.0.31"},
+    )
+    printer_id = create.json()["id"]
+
+    response = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={
+            "web_login_username": "admin",
+            "web_login_password": "web-secret",
+            "scan_email_address": "cletus-scan@district.org",
+            "scan_password": "scan-secret",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["web_login_username"] == "admin"
+    assert body["scan_email_address"] == "cletus-scan@district.org"
+    assert body["has_web_login_password"] is True
+    assert body["has_scan_password"] is True
+    assert body["web_login_password"] is None  # never echoed on the write response
+    assert body["scan_password"] is None
+    assert "web-secret" not in response.text
+    assert "scan-secret" not in response.text
+
+
+def test_admin_can_read_back_web_login_and_scan_passwords(client, auth_headers, mock_failed_probe):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Reference Creds Printer", "ip_address": "10.0.0.31"},
+    )
+    printer_id = create.json()["id"]
+    client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"web_login_password": "web-secret", "scan_password": "scan-secret"},
+    )
+
+    response = client.get(f"/api/v1/printers/{printer_id}", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["web_login_password"] == "web-secret"
+    assert body["scan_password"] == "scan-secret"
+
+
+def test_viewer_never_sees_web_login_or_scan_passwords(
+    client, auth_headers, viewer_headers, mock_failed_probe
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Reference Creds Printer", "ip_address": "10.0.0.31"},
+    )
+    printer_id = create.json()["id"]
+    client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"web_login_password": "web-secret", "scan_password": "scan-secret"},
+    )
+
+    response = client.get(f"/api/v1/printers/{printer_id}", headers=viewer_headers)
+    assert response.status_code == 200
+    body = response.json()
+    # A viewer still learns *that* credentials are configured...
+    assert body["has_web_login_password"] is True
+    assert body["has_scan_password"] is True
+    # ...but never the real values.
+    assert body["web_login_password"] is None
+    assert body["scan_password"] is None
+    assert "web-secret" not in response.text
+    assert "scan-secret" not in response.text
+
+
+def test_list_printers_never_includes_plaintext_passwords_even_for_admin(
+    client, auth_headers, mock_failed_probe
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Reference Creds Printer", "ip_address": "10.0.0.31"},
+    )
+    printer_id = create.json()["id"]
+    client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"web_login_password": "web-secret", "scan_password": "scan-secret"},
+    )
+
+    response = client.get("/api/v1/printers", headers=auth_headers)
+    assert response.status_code == 200
+    entry = next(p for p in response.json() if p["id"] == printer_id)
+    assert entry["has_web_login_password"] is True
+    assert entry["web_login_password"] is None
+    assert entry["scan_password"] is None
+    assert "web-secret" not in response.text
+    assert "scan-secret" not in response.text
+
+
+def test_blank_string_clears_web_login_and_scan_passwords(client, auth_headers, mock_failed_probe):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Reference Creds Printer", "ip_address": "10.0.0.31"},
+    )
+    printer_id = create.json()["id"]
+    client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"web_login_password": "web-secret", "scan_password": "scan-secret"},
+    )
+
+    cleared = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"web_login_password": "", "scan_password": ""},
+    )
+    assert cleared.status_code == 200
+    body = cleared.json()
+    assert body["has_web_login_password"] is False
+    assert body["has_scan_password"] is False
 
 
 def test_update_printer_blank_string_clears_ldap_overrides(client, auth_headers, mock_failed_probe):
