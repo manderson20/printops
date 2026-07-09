@@ -421,7 +421,8 @@ def test_cost_breakdown_uses_real_cartridge_rate(
     assert response.status_code == 200
     body = response.json()
     assert len(body) == 1
-    assert body[0]["label"] == "alice@example.org"
+    # No GoogleWorkspaceUser row for alice in this test -> local-part fallback.
+    assert body[0]["label"] == "alice"
     assert body[0]["page_count"] == 10
     assert body[0]["toner_cost"] == 0.2  # 10 pages * $0.02
 
@@ -458,7 +459,19 @@ def test_cost_breakdown_scopes_to_viewer_identity(
     response = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=viewer_headers)
     body = response.json()
     assert len(body) == 1
-    assert body[0]["label"] == "viewer@example.org"
+    # No GoogleWorkspaceUser row for viewer in this test -> local-part fallback.
+    assert body[0]["label"] == "viewer"
+
+
+async def test_cost_breakdown_by_user_uses_roster_name(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 10)
+    await _make_google_workspace_user(db_session_factory, "jane.smith@district.org", "Jane Smith")
+
+    response = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers)
+    body = response.json()
+    assert body[0]["label"] == "Jane Smith"
 
 
 def test_cost_breakdown_rejects_bad_group_by(client, admin_headers):
