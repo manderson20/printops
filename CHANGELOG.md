@@ -5,6 +5,16 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.22.1] - 2026-07-09
+
+- **Fixed the PrintOps logo missing from the printed/exported Insights
+  report.** The report header sits in a print-only block (hidden on
+  screen, shown only via the browser's print media query), and Next.js's
+  image component defers loading anything not currently visible — since
+  the logo was never visible on screen, it never finished loading before
+  `window.print()` fired. Marked as a priority image so it loads
+  immediately regardless of that hidden state.
+
 ## [0.22.0] - 2026-07-09
 
 - **New: iPad AirPrint MDM Profile panel on each printer's detail page.**
