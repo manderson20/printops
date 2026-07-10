@@ -33,6 +33,18 @@ REAL_URI="${REAL_SCHEME}://${REAL_IP}:${REAL_PORT}${REAL_PATH}"
 # uniqueness, with the human name set separately via printer-info (-D).
 QUEUE_NAME="printops-${PRINTER_ID}"
 
+# This queue may already have a real, accurate PPD from a prior successful
+# sync — e.g. this same script running again after the printer reconnects
+# (app/printers/status.py's offline->online trigger), or an unrelated edit
+# that happened to re-trigger a sync while the printer was momentarily slow.
+# Recorded *before* attempting -m everywhere below, so a failure this time
+# doesn't wrongly downgrade an already-working queue.
+PPD_FILE="/etc/cups/ppd/${QUEUE_NAME}.ppd"
+HAD_REAL_PPD=false
+if [ -f "$PPD_FILE" ] && ! sudo grep -q '^\*NickName: "Generic IPP Everywhere Printer"' "$PPD_FILE"; then
+    HAD_REAL_PPD=true
+fi
+
 # Step 1: probe the REAL printer once via `-m everywhere` so CUPS builds an
 # accurate driverless PPD (correct document-format/pdl advertisement, needed
 # for AirPrint clients to recognize this as a usable destination) from what
@@ -48,9 +60,21 @@ QUEUE_NAME="printops-${PRINTER_ID}"
 # Python-level timeout (queue_sync.py) with nothing to show for it —
 # loses precise media-size/capability advertisement for that one queue,
 # but the printer actually becomes usable instead of stuck unsynced.
+#
+# That fallback is only safe to apply when there's nothing to lose, though
+# (confirmed live: MS - Cletus Copier's monochrome engine got dithered,
+# pixelated output the whole time its queue ran on this generic PPD's
+# RGB-default, color-advertising PPD). If this queue already had a real PPD
+# from a prior successful probe, a transient failure this time around
+# should leave that working config alone rather than regress it.
 if ! timeout 30 sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m everywhere -D "$PRINTER_NAME"; then
-    echo "WARNING: -m everywhere failed/timed out for $REAL_URI — falling back to a generic IPP Everywhere PPD (reduced capability accuracy for this printer)." >&2
-    sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m "drv:///cupsfilters.drv/pwgrast.ppd" -D "$PRINTER_NAME"
+    if [ "$HAD_REAL_PPD" = true ]; then
+        echo "WARNING: -m everywhere failed/timed out for $REAL_URI — keeping this queue's existing real PPD from a prior successful sync instead of regressing it to the generic fallback." >&2
+        sudo lpadmin -p "$QUEUE_NAME" -D "$PRINTER_NAME"
+    else
+        echo "WARNING: -m everywhere failed/timed out for $REAL_URI — falling back to a generic IPP Everywhere PPD (reduced capability accuracy for this printer)." >&2
+        sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m "drv:///cupsfilters.drv/pwgrast.ppd" -D "$PRINTER_NAME"
+    fi
 fi
 
 # The generic-PPD fallback above can leave a newly-created queue disabled/
@@ -59,6 +83,47 @@ fi
 # already-enabled queue is a harmless no-op.
 sudo cupsenable "$QUEUE_NAME"
 sudo cupsaccept "$QUEUE_NAME"
+
+# CUPS's own driverless-PPD generation (or, on this box, at least one past
+# manual misconfiguration — confirmed live on 4 color copiers) can leave a
+# genuinely color-capable printer defaulting to print-color-mode=monochrome.
+# Apps that explicitly request a color mode (Chrome) are unaffected either
+# way, but apps that submit a job without an explicit color option (Word,
+# Adobe, confirmed live) silently inherit whatever this queue's default is —
+# so a color printer defaulting to monochrome here means those apps print
+# monochrome despite the user picking Color in their print dialog. Force the
+# default to color for any printer that actually supports it, rather than
+# leaving it to chance.
+COLOR_SUPPORTED=$(ipptool -X "ipp://localhost/printers/$QUEUE_NAME" /dev/stdin <<IPPTOOL_EOF 2>/dev/null | grep -A1 "<key>color-supported</key>" | grep -c "<true" || true
+{
+    OPERATION Get-Printer-Attributes
+    GROUP operation-attributes-tag
+    ATTR charset attributes-charset utf-8
+    ATTR language attributes-natural-language en
+    ATTR uri printer-uri ipp://localhost/printers/$QUEUE_NAME
+    ATTR keyword requested-attributes color-supported
+}
+IPPTOOL_EOF
+)
+if [ "$COLOR_SUPPORTED" -ge 1 ]; then
+    sudo lpadmin -p "$QUEUE_NAME" -o print-color-mode-default=color
+    # print-color-mode-default above only covers the modern IPP attribute.
+    # The driverless PPD `-m everywhere` just (re)generated above carries
+    # its OWN, separate color default — *DefaultColorModel, exposed here as
+    # the "ColorModel" option — which CUPS's classic PPD-based print path
+    # reads instead. `-m everywhere` always sets that to Gray regardless of
+    # the device's real color capability (confirmed live), so every time
+    # this script reruns for a color printer (e.g. an offline->online
+    # reconnect re-triggering the sync, not just an intentional edit), a
+    # queue previously fixed by the print-color-mode-default line above
+    # silently reverts to monochrome for these apps even though this script
+    # ran again and "should" have kept it fixed. RGB is consistently the
+    # PPD's "Color" choice label (confirmed live across all current color
+    # queues) — tolerate failure in case a future device's PPD names it
+    # differently, since print-color-mode-default above still covers the
+    # apps that use it.
+    sudo lpadmin -p "$QUEUE_NAME" -o ColorModel=RGB || true
+fi
 
 # cupsd.conf's global ErrorPolicy is retry-job, which keeps retrying the
 # SAME failed job rather than skipping to the next one — a single bad job

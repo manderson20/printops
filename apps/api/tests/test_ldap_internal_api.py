@@ -179,7 +179,11 @@ def test_search_empty_when_relay_disabled(client, backend_headers):
     response = client.post(
         "/api/v1/internal/ldap/search",
         headers=backend_headers,
-        json={"filter_attr": "mail", "filter_type": "equality", "filter_value": "matt.anderson@brookfieldr3.org"},
+        json={
+            "filter_attr": "mail",
+            "filter_type": "equality",
+            "filter_value": "matt.anderson@brookfieldr3.org",
+        },
     )
     assert response.status_code == 200
     assert response.json()["entries"] == []
@@ -190,7 +194,11 @@ def test_search_equality_by_mail(client, auth_headers, backend_headers):
     response = client.post(
         "/api/v1/internal/ldap/search",
         headers=backend_headers,
-        json={"filter_attr": "mail", "filter_type": "equality", "filter_value": "matt.anderson@brookfieldr3.org"},
+        json={
+            "filter_attr": "mail",
+            "filter_type": "equality",
+            "filter_value": "matt.anderson@brookfieldr3.org",
+        },
     )
     entries = response.json()["entries"]
     assert len(entries) == 1
@@ -232,10 +240,16 @@ def test_search_uses_configured_base_dn(client, auth_headers, backend_headers):
     response = client.post(
         "/api/v1/internal/ldap/search",
         headers=backend_headers,
-        json={"filter_attr": "mail", "filter_type": "equality", "filter_value": "matt.anderson@brookfieldr3.org"},
+        json={
+            "filter_attr": "mail",
+            "filter_type": "equality",
+            "filter_value": "matt.anderson@brookfieldr3.org",
+        },
     )
     entries = response.json()["entries"]
-    assert entries[0]["dn"] == "mail=matt.anderson@brookfieldr3.org,ou=people,dc=brookfieldr3,dc=org"
+    assert (
+        entries[0]["dn"] == "mail=matt.anderson@brookfieldr3.org,ou=people,dc=brookfieldr3,dc=org"
+    )
 
 
 def test_search_requires_backend_token(client):

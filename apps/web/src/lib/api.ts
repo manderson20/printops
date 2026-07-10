@@ -95,6 +95,7 @@ export type Printer = {
   room: string | null;
   department: string | null;
   notes: string | null;
+  toner_cartridge_model: string | null;
   capabilities: Capabilities | null;
   capabilities_detected_at: string | null;
   capabilities_error: string | null;
@@ -103,6 +104,7 @@ export type Printer = {
   status_reasons: string[] | null;
   status_message: string | null;
   status_checked_at: string | null;
+  archived_at: string | null;
   release_required: boolean;
   release_token: string | null;
   snmp_enabled: boolean;
@@ -113,6 +115,16 @@ export type Printer = {
   ldap_enabled: boolean;
   ldap_bind_username: string | null;
   has_ldap_bind_password: boolean;
+  // Reference-only credential storage — see the Printer model's docstring.
+  // The plaintext password fields are only ever populated by GET
+  // /printers/{id} for an admin requester; null everywhere else
+  // (including the list endpoint, and always for a viewer).
+  web_login_username: string | null;
+  has_web_login_password: boolean;
+  web_login_password: string | null;
+  scan_email_address: string | null;
+  has_scan_password: boolean;
+  scan_password: string | null;
   page_count_total: number | null;
   page_count_copy: number | null;
   page_count_print: number | null;
@@ -146,6 +158,7 @@ export type PrinterCreateInput = {
   room?: string | null;
   department?: string | null;
   notes?: string | null;
+  toner_cartridge_model?: string | null;
 };
 
 export type PrinterUpdateInput = Partial<PrinterCreateInput> & {
@@ -161,10 +174,16 @@ export type PrinterUpdateInput = Partial<PrinterCreateInput> & {
   // "" clears the override, same convention as the SNMP fields above.
   ldap_bind_username?: string | null;
   ldap_bind_password?: string | null;
+  // "" clears the stored value, same convention as ldap_bind_password.
+  web_login_username?: string | null;
+  web_login_password?: string | null;
+  scan_email_address?: string | null;
+  scan_password?: string | null;
 };
 
-export async function listPrinters(): Promise<Printer[]> {
-  const response = await authorizedFetch("/api/v1/printers");
+export async function listPrinters(params?: { includeArchived?: boolean }): Promise<Printer[]> {
+  const qs = params?.includeArchived ? "?include_archived=true" : "";
+  const response = await authorizedFetch(`/api/v1/printers${qs}`);
   return response.json();
 }
 
@@ -196,6 +215,20 @@ export async function updatePrinter(
 
 export async function deletePrinter(id: string): Promise<void> {
   await authorizedFetch(`/api/v1/printers/${id}`, { method: "DELETE" });
+}
+
+export async function archivePrinter(id: string): Promise<Printer> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/archive`, {
+    method: "POST",
+  });
+  return response.json();
+}
+
+export async function unarchivePrinter(id: string): Promise<Printer> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/unarchive`, {
+    method: "POST",
+  });
+  return response.json();
 }
 
 export async function rediscoverPrinter(id: string): Promise<Printer> {
@@ -833,8 +866,15 @@ export type Job = {
   id: string;
   printer_id: string;
   printer_name: string;
+  // Resolved from mac_address (Mosyle/Google Workspace device name), the
+  // raw MAC if unresolved, or null if this job never got a MAC at all.
+  device_name: string | null;
   cups_job_id: number | null;
   submitted_by: string | null;
+  // Resolved from submitted_by — the synced Google Workspace name if
+  // known, else the email's local-part as a readable stand-in, or null
+  // if this job has no submitted_by at all.
+  submitted_by_name: string | null;
   attribution_method: AttributionMethod;
   file_size_bytes: number | null;
   page_count: number | null;
@@ -854,10 +894,12 @@ export type Job = {
 
 export async function listJobs(params?: {
   printer_id?: string;
+  submitted_by?: string;
   limit?: number;
 }): Promise<Job[]> {
   const query = new URLSearchParams();
   if (params?.printer_id) query.set("printer_id", params.printer_id);
+  if (params?.submitted_by) query.set("submitted_by", params.submitted_by);
   if (params?.limit) query.set("limit", String(params.limit));
   const qs = query.toString();
   const response = await authorizedFetch(`/api/v1/jobs${qs ? `?${qs}` : ""}`);
@@ -886,10 +928,36 @@ export type UserUsage = {
   job_count: number;
   total_pages: number;
   total_bytes: number;
+  duplex_pages: number;
+  simplex_pages: number;
+  mono_pages: number;
+  color_pages: number;
+  estimated_cost: number;
 };
 
-export async function getJobUsage(): Promise<UserUsage[]> {
-  const response = await authorizedFetch("/api/v1/jobs/usage");
+export type UserUsagePage = {
+  items: UserUsage[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export async function getJobUsage(params?: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+}): Promise<UserUsagePage> {
+  const query = new URLSearchParams();
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.pageSize) query.set("page_size", String(params.pageSize));
+  if (params?.search) query.set("search", params.search);
+  const qs = query.toString();
+  const response = await authorizedFetch(`/api/v1/jobs/usage${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export async function getUserUsage(email: string): Promise<UserUsage> {
+  const response = await authorizedFetch(`/api/v1/jobs/usage/${encodeURIComponent(email)}`);
   return response.json();
 }
 
@@ -1067,13 +1135,16 @@ export async function syncGoogleWorkspaceDevices(): Promise<GoogleWorkspaceSetti
   return response.json();
 }
 
-export type Role = "admin" | "viewer";
+export type Role = "admin" | "viewer" | "ou_viewer";
 
 export type CurrentUser = {
   username: string;
   role: Role;
   email: string | null;
   name: string | null;
+  // Display-only for "ou_viewer" accounts — see app.deps.get_current_user's
+  // docstring; enforcement always re-reads the User row server-side.
+  granted_ou_paths: string[] | null;
 };
 
 export async function getMe(): Promise<CurrentUser> {
@@ -1088,6 +1159,8 @@ export type UserAccount = {
   role: Role;
   is_active: boolean;
   last_login_at: string | null;
+  exempt_from_timeout: boolean;
+  granted_ou_paths: string[] | null;
 };
 
 export type UserAccountPage = {
@@ -1101,11 +1174,13 @@ export async function listUsers(params?: {
   page?: number;
   pageSize?: number;
   search?: string;
+  role?: Role;
 }): Promise<UserAccountPage> {
   const query = new URLSearchParams();
   if (params?.page) query.set("page", String(params.page));
   if (params?.pageSize) query.set("page_size", String(params.pageSize));
   if (params?.search) query.set("search", params.search);
+  if (params?.role) query.set("role", params.role);
   const qs = query.toString();
   const response = await authorizedFetch(`/api/v1/users${qs ? `?${qs}` : ""}`);
   return response.json();
@@ -1113,10 +1188,31 @@ export async function listUsers(params?: {
 
 export async function updateUser(
   id: string,
-  input: { role?: Role; is_active?: boolean },
+  input: {
+    role?: Role;
+    is_active?: boolean;
+    exempt_from_timeout?: boolean;
+    granted_ou_paths?: string[] | null;
+  },
 ): Promise<UserAccount> {
   const response = await authorizedFetch(`/api/v1/users/${id}`, {
     method: "PATCH",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+// Pre-provisions an account by email before their first Google sign-in —
+// google_sub stays null until then; /auth/google/callback matches this row
+// by email on that first login instead of creating a duplicate (see that
+// endpoint's docstring on the backend).
+export async function createUser(input: {
+  email: string;
+  role: Role;
+  granted_ou_paths?: string[] | null;
+}): Promise<UserAccount> {
+  const response = await authorizedFetch("/api/v1/users", {
+    method: "POST",
     body: JSON.stringify(input),
   });
   return response.json();
@@ -1133,8 +1229,24 @@ export type KnownDevice = {
   override_note: string | null;
 };
 
-export async function listKnownDevices(): Promise<KnownDevice[]> {
-  const response = await authorizedFetch("/api/v1/devices");
+export type KnownDevicePage = {
+  items: KnownDevice[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export async function listKnownDevices(params?: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+}): Promise<KnownDevicePage> {
+  const query = new URLSearchParams();
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.pageSize) query.set("page_size", String(params.pageSize));
+  if (params?.search) query.set("search", params.search);
+  const qs = query.toString();
+  const response = await authorizedFetch(`/api/v1/devices${qs ? `?${qs}` : ""}`);
   return response.json();
 }
 
@@ -1234,6 +1346,16 @@ export async function listGoogleWorkspaceUsers(): Promise<
 > {
   const response = await authorizedFetch(
     "/api/v1/settings/google-workspace/users",
+  );
+  return response.json();
+}
+
+// Distinct org_unit_path values from the synced roster — powers the OU
+// picker on Settings > Permissions so an admin picks from real, currently-
+// populated org units instead of typing a path blind.
+export async function listGoogleWorkspaceOrgUnits(): Promise<string[]> {
+  const response = await authorizedFetch(
+    "/api/v1/settings/google-workspace/org-units",
   );
   return response.json();
 }
@@ -1428,6 +1550,32 @@ export async function getReportTimeline(
   return response.json();
 }
 
+export type HourlyBucket = {
+  interval: number;
+  total_pages: number;
+  color_pages: number;
+  mono_pages: number;
+  duplex_pages: number;
+  simplex_pages: number;
+  job_count: number;
+  // Tracked walk-up copies only (CopierUsageRecord) — see HourlyBucketOut
+  // in app/schemas/report.py for why untracked/estimated copies aren't here.
+  copy_pages: number;
+  copy_count: number;
+};
+
+// start/end are full ISO instants (typically the viewer's local midnight
+// through now) — see app/reports/aggregation.py:get_hourly_timeline's
+// docstring for why this endpoint has no server-side notion of "today".
+export async function getLiveHourly(start: Date, end: Date): Promise<HourlyBucket[]> {
+  const query = new URLSearchParams({
+    start: start.toISOString(),
+    end: end.toISOString(),
+  });
+  const response = await authorizedFetch(`/api/v1/reports/live/hourly?${query.toString()}`);
+  return response.json();
+}
+
 export type LeaderboardEntry = {
   key: string;
   label: string;
@@ -1458,12 +1606,36 @@ export type CostEntry = {
 };
 
 export async function getCostBreakdown(
-  groupBy: "printer" | "user",
+  groupBy: "printer" | "user" | "device",
   filters?: ReportFilters,
 ): Promise<CostEntry[]> {
   const qs = buildReportQuery(filters, { group_by: groupBy });
   const response = await authorizedFetch(
     `/api/v1/reports/cost-breakdown${qs ? `?${qs}` : ""}`,
+  );
+  return response.json();
+}
+
+export type UntrackedCopyPrinterEntry = {
+  printer_id: string;
+  printer_name: string;
+  measured_copies: number;
+  estimated_untracked: number;
+};
+
+export type UntrackedCopySummary = {
+  measured_copies: number;
+  estimated_untracked: number;
+  tracking_since: string | null;
+  printers: UntrackedCopyPrinterEntry[];
+};
+
+export async function getUntrackedCopySummary(
+  filters?: ReportFilters,
+): Promise<UntrackedCopySummary> {
+  const qs = buildReportQuery(filters);
+  const response = await authorizedFetch(
+    `/api/v1/reports/untracked-copies${qs ? `?${qs}` : ""}`,
   );
   return response.json();
 }
@@ -1538,6 +1710,12 @@ export type CombinedLeaderboardEntry = {
   print_pages: number;
   copy_pages: number;
   total_pages: number;
+  color_pages: number;
+  mono_pages: number;
+  duplex_pages: number;
+  simplex_pages: number;
+  // Print-only -- walk-up copy usage has no cost model.
+  estimated_cost: number;
 };
 
 export async function getCombinedUserLeaderboard(
@@ -1644,9 +1822,41 @@ export async function updateReportFormulaSettings(
   return response.json();
 }
 
+export type UntrackedCopySettings = {
+  enabled: boolean;
+  enabled_at: string | null;
+};
+
+export async function getUntrackedCopySettings(): Promise<UntrackedCopySettings> {
+  const response = await authorizedFetch("/api/v1/settings/untracked-copies");
+  return response.json();
+}
+
+export async function updateUntrackedCopySettings(
+  enabled: boolean,
+): Promise<UntrackedCopySettings> {
+  const response = await authorizedFetch("/api/v1/settings/untracked-copies", {
+    method: "PUT",
+    body: JSON.stringify({ enabled }),
+  });
+  return response.json();
+}
+
 export type CartridgeColor = "black" | "cyan" | "magenta" | "yellow";
 
 export type Cartridge = {
+  color: CartridgeColor;
+  cost: number;
+  yield_pages: number;
+  // SNMP-detected, read-only — see PrinterTonerCartridge.detected_*'s
+  // docstring (app/models/report.py). null until the first successful
+  // detectPrinterCartridges call.
+  detected_description: string | null;
+  detected_high_capacity: boolean | null;
+  detected_at: string | null;
+};
+
+export type CartridgeInput = {
   color: CartridgeColor;
   cost: number;
   yield_pages: number;
@@ -1663,7 +1873,7 @@ export async function getPrinterCartridges(
 
 export async function updatePrinterCartridges(
   printerId: string,
-  cartridges: Cartridge[],
+  cartridges: CartridgeInput[],
 ): Promise<Cartridge[]> {
   const response = await authorizedFetch(
     `/api/v1/printers/${printerId}/toner-cartridges`,
@@ -1671,6 +1881,27 @@ export async function updatePrinterCartridges(
       method: "PUT",
       body: JSON.stringify(cartridges),
     },
+  );
+  return response.json();
+}
+
+export type DetectedSupply = {
+  description: string;
+  color: CartridgeColor | null;
+  high_capacity: boolean | null;
+};
+
+export type DetectCartridgesResult = {
+  cartridges: Cartridge[];
+  unmatched: DetectedSupply[];
+};
+
+export async function detectPrinterCartridges(
+  printerId: string,
+): Promise<DetectCartridgesResult> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/toner-cartridges/detect`,
+    { method: "POST" },
   );
   return response.json();
 }
@@ -1745,6 +1976,45 @@ export async function deletePrinterQuota(
   });
 }
 
+export type PrinterReleaseBypass = {
+  id: string;
+  printer_id: string;
+  user_email: string;
+};
+
+export async function listPrinterReleaseBypasses(
+  printerId: string,
+): Promise<PrinterReleaseBypass[]> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/release-bypasses`,
+  );
+  return response.json();
+}
+
+export async function createPrinterReleaseBypass(
+  printerId: string,
+  userEmail: string,
+): Promise<PrinterReleaseBypass> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/release-bypasses`,
+    {
+      method: "POST",
+      body: JSON.stringify({ user_email: userEmail }),
+    },
+  );
+  return response.json();
+}
+
+export async function deletePrinterReleaseBypass(
+  printerId: string,
+  bypassId: string,
+): Promise<void> {
+  await authorizedFetch(
+    `/api/v1/printers/${printerId}/release-bypasses/${bypassId}`,
+    { method: "DELETE" },
+  );
+}
+
 export type QuotaSettings = {
   enabled: boolean;
 };
@@ -1761,6 +2031,46 @@ export async function updateQuotaSettings(
     method: "PUT",
     body: JSON.stringify(input),
   });
+  return response.json();
+}
+
+export type SessionSettings = {
+  idle_timeout_minutes: number;
+};
+
+export async function getSessionSettings(): Promise<SessionSettings> {
+  const response = await authorizedFetch("/api/v1/settings/session");
+  return response.json();
+}
+
+export async function updateSessionSettings(
+  input: Partial<SessionSettings>,
+): Promise<SessionSettings> {
+  const response = await authorizedFetch("/api/v1/settings/session", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+// Reissues the current token with a renewed expiry — see
+// apps/web/src/lib/idleRefresh.ts, which calls this periodically only
+// while there's been real activity, implementing the idle-timeout on the
+// frontend side (app/routers/auth.py's /auth/refresh docstring has the
+// other half). Deliberately NOT wrapped in authorizedFetch's usual 401 ->
+// redirect-to-login handling for this one call: a 401 here just means the
+// idle window already lapsed, which is the expected end state, not an
+// error to bounce on specially — the very next authorizedFetch call will
+// naturally hit that same 401 and redirect anyway.
+export async function refreshSession(): Promise<{ access_token: string }> {
+  const token = getToken();
+  const response = await fetch(`${API_URL}/auth/refresh`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "Session refresh failed");
+  }
   return response.json();
 }
 
@@ -1836,6 +2146,102 @@ export async function updateLdapRelaySettings(
     method: "PUT",
     body: JSON.stringify(input),
   });
+  return response.json();
+}
+
+export type SyslogSeverity =
+  | "emerg"
+  | "alert"
+  | "crit"
+  | "err"
+  | "warning"
+  | "notice"
+  | "info"
+  | "debug";
+
+export type SyslogSettings = {
+  enabled: boolean;
+  port: number;
+  min_severity: SyslogSeverity;
+  retention_days: number;
+};
+
+export type SyslogSettingsInput = Partial<SyslogSettings>;
+
+export async function getSyslogSettings(): Promise<SyslogSettings> {
+  const response = await authorizedFetch("/api/v1/settings/syslog");
+  return response.json();
+}
+
+export async function updateSyslogSettings(
+  input: SyslogSettingsInput,
+): Promise<SyslogSettings> {
+  const response = await authorizedFetch("/api/v1/settings/syslog", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export type SyslogEvent = {
+  id: string;
+  printer_id: string | null;
+  printer_name: string | null;
+  source_ip: string;
+  received_at: string;
+  device_timestamp: string | null;
+  severity: SyslogSeverity | null;
+  facility: number | null;
+  hostname: string | null;
+  app_name: string | null;
+  message: string;
+  raw: string;
+};
+
+export type SyslogEventPage = {
+  items: SyslogEvent[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export async function listPrinterSyslogEvents(
+  printerId: string,
+  params?: { severity?: SyslogSeverity; search?: string; page?: number; pageSize?: number },
+): Promise<SyslogEventPage> {
+  const query = new URLSearchParams();
+  if (params?.severity) query.set("severity", params.severity);
+  if (params?.search) query.set("search", params.search);
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.pageSize) query.set("page_size", String(params.pageSize));
+  const qs = query.toString();
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/syslog${qs ? `?${qs}` : ""}`,
+  );
+  return response.json();
+}
+
+export async function listSyslogEvents(params?: {
+  printerId?: string;
+  severity?: SyslogSeverity;
+  unmatchedOnly?: boolean;
+  search?: string;
+  since?: string;
+  until?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<SyslogEventPage> {
+  const query = new URLSearchParams();
+  if (params?.printerId) query.set("printer_id", params.printerId);
+  if (params?.severity) query.set("severity", params.severity);
+  if (params?.unmatchedOnly) query.set("unmatched_only", "true");
+  if (params?.search) query.set("search", params.search);
+  if (params?.since) query.set("since", params.since);
+  if (params?.until) query.set("until", params.until);
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.pageSize) query.set("page_size", String(params.pageSize));
+  const qs = query.toString();
+  const response = await authorizedFetch(`/api/v1/syslog${qs ? `?${qs}` : ""}`);
   return response.json();
 }
 

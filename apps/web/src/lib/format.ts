@@ -10,6 +10,10 @@ export function formatRelativeTime(iso: string | null): string {
   return `${days}d ago`;
 }
 
+export function formatCurrency(value: number): string {
+  return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 export function formatBytes(bytes: number | null): string {
   if (bytes === null) return "—";
   if (bytes < 1024) return `${bytes} B`;

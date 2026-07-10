@@ -1,16 +1,19 @@
+import uuid
+from datetime import UTC, datetime
+
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from datetime import UTC, datetime
-
 from app.core.config import get_settings
 from app.db import get_db
 from app.main import app
 from app.models.base import Base
 from app.models.google_workspace import GoogleWorkspaceUser
+from app.models.job import Job
+from app.models.mosyle import MosyleDevice
 from app.models.printer import Printer
 from app.printers import discovery as printer_discovery
 from app.printers.ipp_client import PrinterProbeError
@@ -113,10 +116,45 @@ def test_create_and_update_job(client, printer_id, backend_headers):
     assert updated.json()["error_message"] is None
 
 
-def test_update_job_failure_path(client, printer_id, backend_headers):
-    create = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
+def test_update_job_learns_file_size_when_not_known_at_creation(
+    client, printer_id, backend_headers
+):
+    # No file_size_bytes at creation — the CUPS backend only learns this
+    # after the fact when a job arrives over stdin instead of a filename.
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
+    job_id = create.json()["id"]
+    assert create.json()["file_size_bytes"] is None
+
+    updated = client.patch(
+        f"/api/v1/jobs/{job_id}",
+        json={"status": "forwarded", "file_size_bytes": 54321},
+        headers=backend_headers,
     )
+    assert updated.status_code == 200
+    assert updated.json()["file_size_bytes"] == 54321
+
+
+def test_update_job_omitting_file_size_keeps_existing_value(
+    client, printer_id, backend_headers
+):
+    create = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "file_size_bytes": 999},
+        headers=backend_headers,
+    )
+    job_id = create.json()["id"]
+
+    updated = client.patch(
+        f"/api/v1/jobs/{job_id}",
+        json={"status": "forwarded"},
+        headers=backend_headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["file_size_bytes"] == 999
+
+
+def test_update_job_failure_path(client, printer_id, backend_headers):
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     job_id = create.json()["id"]
 
     updated = client.patch(
@@ -159,16 +197,22 @@ def test_list_jobs_requires_auth(client, printer_id, backend_headers):
     assert response.status_code == 401
 
 
-def test_list_jobs_returns_newest_first_with_printer_name(client, printer_id, backend_headers, auth_headers):
+def test_list_jobs_returns_newest_first_with_printer_name(
+    client, printer_id, backend_headers, auth_headers
+):
     # SQLite's server_default=func.now() only has second-level resolution, so
     # two jobs created back-to-back in a test can legitimately tie on
     # created_at — Postgres (production) has microsecond precision and won't.
     # Assert presence/shape here rather than tie-breaking order.
     first = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id, "submitted_by": "adele"}, headers=backend_headers
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "adele"},
+        headers=backend_headers,
     )
     second = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id, "submitted_by": "bob"}, headers=backend_headers
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "bob"},
+        headers=backend_headers,
     )
 
     response = client.get("/api/v1/jobs", headers=auth_headers)
@@ -196,7 +240,125 @@ def test_list_jobs_filters_by_printer(
     assert response.status_code == 200
     body = response.json()
     assert len(body) == 1
+
+
+async def test_list_jobs_resolves_device_name_from_mosyle(
+    client, printer_id, backend_headers, auth_headers, db_session_factory
+):
+    """mac_address isn't settable via the create API (it's only ever
+    populated server-side by the attribution pipeline via source_host/
+    ClassGuard) -- seeded directly here to test the reporting/resolution
+    layer (resolve_device_names) in isolation from that pipeline."""
+    create = client.post(
+        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
+    )
+    job_id = create.json()["id"]
+
+    async with db_session_factory() as session:
+        job = await session.get(Job, uuid.UUID(job_id))
+        job.mac_address = "AA:BB:CC:DD:EE:FF"
+        session.add(
+            MosyleDevice(
+                mac_address="AA:BB:CC:DD:EE:FF",
+                device_name="Jane's iPad",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    response = client.get("/api/v1/jobs", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["device_name"] == "Jane's iPad"
+
+
+async def test_list_jobs_falls_back_to_raw_mac_when_unresolved(
+    client, printer_id, backend_headers, auth_headers, db_session_factory
+):
+    create = client.post(
+        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
+    )
+    job_id = create.json()["id"]
+
+    async with db_session_factory() as session:
+        job = await session.get(Job, uuid.UUID(job_id))
+        job.mac_address = "AA:BB:CC:DD:EE:FF"
+        await session.commit()
+
+    response = client.get("/api/v1/jobs", headers=auth_headers)
+    body = response.json()
+    assert body[0]["device_name"] == "AA:BB:CC:DD:EE:FF"
+
+
+def test_list_jobs_device_name_none_when_no_mac(
+    client, printer_id, backend_headers, auth_headers
+):
+    client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
+
+    response = client.get("/api/v1/jobs", headers=auth_headers)
+    body = response.json()
+    assert body[0]["device_name"] is None
     assert body[0]["printer_id"] == printer_id
+
+
+async def test_list_jobs_resolves_submitted_by_name_from_roster(
+    client, printer_id, backend_headers, auth_headers, db_session_factory
+):
+    async with db_session_factory() as session:
+        session.add(
+            GoogleWorkspaceUser(
+                email="jane@example.com", name="Jane Doe", synced_at=datetime.now(UTC)
+            )
+        )
+        await session.commit()
+
+    client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "jane@example.com"},
+        headers=backend_headers,
+    )
+
+    response = client.get("/api/v1/jobs", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["submitted_by"] == "jane@example.com"
+    assert body[0]["submitted_by_name"] == "Jane Doe"
+
+
+def test_list_jobs_submitted_by_name_falls_back_to_local_part_when_unresolved(
+    client, printer_id, backend_headers, auth_headers
+):
+    client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "some.local.user@example.com"},
+        headers=backend_headers,
+    )
+
+    response = client.get("/api/v1/jobs", headers=auth_headers)
+    body = response.json()
+    assert body[0]["submitted_by_name"] == "some.local.user"
+
+
+async def test_list_jobs_submitted_by_name_none_when_no_submitted_by(
+    client, printer_id, backend_headers, auth_headers, db_session_factory
+):
+    """resolve_user's own "unknown" fallback means a job created through
+    the normal API always ends up with *some* submitted_by string — the
+    genuinely-null case tested here (e.g. a very old row from before
+    Job.submitted_by existed) only happens via direct DB manipulation."""
+    create = client.post(
+        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
+    )
+    job_id = create.json()["id"]
+
+    async with db_session_factory() as session:
+        job = await session.get(Job, uuid.UUID(job_id))
+        job.submitted_by = None
+        await session.commit()
+
+    response = client.get("/api/v1/jobs", headers=auth_headers)
+    body = response.json()
+    assert body[0]["submitted_by_name"] is None
 
 
 def test_list_jobs_caps_limit(client, printer_id, backend_headers, auth_headers):
@@ -233,9 +395,7 @@ def test_create_job_without_submitted_by_is_unresolved(client, printer_id, backe
 
 
 def test_update_job_records_page_count(client, printer_id, backend_headers):
-    create = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
-    )
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     job_id = create.json()["id"]
 
     updated = client.patch(
@@ -248,9 +408,7 @@ def test_update_job_records_page_count(client, printer_id, backend_headers):
 
 
 def test_update_job_without_page_count_stays_null(client, printer_id, backend_headers):
-    create = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
-    )
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     job_id = create.json()["id"]
 
     updated = client.patch(
@@ -265,9 +423,7 @@ def test_update_job_without_page_count_stays_null(client, printer_id, backend_he
 def test_update_job_held_records_spool_path_and_computes_expiry(
     client, printer_id, backend_headers
 ):
-    create = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
-    )
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     job_id = create.json()["id"]
 
     updated = client.patch(
@@ -296,9 +452,7 @@ def test_update_job_held_uses_configured_expiry_window(
     )
     assert settings.status_code == 200
 
-    create = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
-    )
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     job_id = create.json()["id"]
 
     updated = client.patch(
@@ -323,9 +477,7 @@ def test_create_job_no_hold_reason_by_default(client, printer_id, backend_header
     assert create.json()["status"] == "forwarding"
 
 
-async def test_create_job_hold_reason_pin_release(
-    client, backend_headers, db_session_factory
-):
+async def test_create_job_hold_reason_pin_release(client, backend_headers, db_session_factory):
     async with db_session_factory() as session:
         printer = Printer(name="Release Printer", ip_address="10.0.0.10", release_required=True)
         session.add(printer)
@@ -415,7 +567,9 @@ async def test_job_usage_aggregates_per_user(
 ):
     async with db_session_factory() as session:
         session.add(
-            GoogleWorkspaceUser(email="adele@example.com", name="Adele", synced_at=datetime.now(UTC))
+            GoogleWorkspaceUser(
+                email="adele@example.com", name="Adele", synced_at=datetime.now(UTC)
+            )
         )
         session.add(
             GoogleWorkspaceUser(email="bob@example.com", name="Bob", synced_at=datetime.now(UTC))
@@ -429,12 +583,20 @@ async def test_job_usage_aggregates_per_user(
 
     adele_job_1 = client.post(
         "/api/v1/jobs",
-        json={"printer_id": printer_id, "submitted_by": "adele@example.com", "file_size_bytes": 1000},
+        json={
+            "printer_id": printer_id,
+            "submitted_by": "adele@example.com",
+            "file_size_bytes": 1000,
+        },
         headers=backend_headers,
     ).json()
     adele_job_2 = client.post(
         "/api/v1/jobs",
-        json={"printer_id": printer_id, "submitted_by": "adele@example.com", "file_size_bytes": 2000},
+        json={
+            "printer_id": printer_id,
+            "submitted_by": "adele@example.com",
+            "file_size_bytes": 2000,
+        },
         headers=backend_headers,
     ).json()
     bob_job = client.post(
@@ -471,7 +633,9 @@ async def test_job_usage_aggregates_per_user(
 
     response = client.get("/api/v1/jobs/usage", headers=auth_headers)
     assert response.status_code == 200
-    rows = response.json()
+    payload = response.json()
+    rows = payload["items"]
+    assert payload["total"] == len(rows)
     by_email = {row["email"]: row for row in rows if not row["is_other"]}
 
     assert by_email["adele@example.com"]["job_count"] == 2
@@ -549,7 +713,20 @@ def test_job_usage_forbidden_for_viewer(client, printer_id, backend_headers, mon
     )
     viewer_token = callback.headers["location"].split("token=", 1)[1]
 
-    response = client.get(
-        "/api/v1/jobs/usage", headers={"Authorization": f"Bearer {viewer_token}"}
-    )
+    response = client.get("/api/v1/jobs/usage", headers={"Authorization": f"Bearer {viewer_token}"})
     assert response.status_code == 403
+
+
+async def test_create_job_rejects_archived_printer(
+    client, printer_id, backend_headers, db_session_factory
+):
+    async with db_session_factory() as session:
+        printer = await session.get(Printer, uuid.UUID(printer_id))
+        printer.archived_at = datetime.now(UTC)
+        await session.commit()
+
+    response = client.post(
+        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
+    )
+    assert response.status_code == 409
+    assert "archived" in response.json()["detail"].lower()

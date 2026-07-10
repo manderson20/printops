@@ -33,3 +33,23 @@ venv/
 
 # Runtime spool data (uploaded copier accounting CSVs — app/routers/copier_imports.py)
 /var/
+
+# Local/private config
+.env
+.env.*
+*.local
+.claude/
+settings.local.json
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Node/Next
+node_modules/
+.next/
+dist/
+build/
+**/.venv/

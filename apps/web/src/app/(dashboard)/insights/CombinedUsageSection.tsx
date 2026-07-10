@@ -33,9 +33,18 @@ type LoadState =
 export function CombinedUsageSection({ filters }: { filters: ReportFilters }) {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [exporting, setExporting] = useState(false);
+  const [prevFilters, setPrevFilters] = useState(filters);
+
+  // Reset to "loading" the instant filters change, computed during render
+  // rather than via an effect + setState — see useCurrentUser.ts for the
+  // same pattern and why (avoids a render or two of stale prior-filter data
+  // before the new fetch resolves).
+  if (filters !== prevFilters) {
+    setPrevFilters(filters);
+    setState({ phase: "loading" });
+  }
 
   useEffect(() => {
-    setState({ phase: "loading" });
     Promise.all([
       getCombinedReportSummary(filters),
       getCombinedUserLeaderboard(filters, 10),
@@ -144,6 +153,9 @@ export function CombinedUsageSection({ filters }: { filters: ReportFilters }) {
                 <th className="py-2 font-medium">Printed</th>
                 <th className="py-2 font-medium">Copied</th>
                 <th className="py-2 font-medium">Total</th>
+                <th className="py-2 font-medium">Duplex / Simplex</th>
+                <th className="py-2 font-medium">Color / Mono</th>
+                <th className="py-2 font-medium">Est. Cost</th>
               </tr>
             </thead>
             <tbody>
@@ -167,6 +179,17 @@ export function CombinedUsageSection({ filters }: { filters: ReportFilters }) {
                   </td>
                   <td className="py-2 font-medium text-black dark:text-zinc-50">
                     {entry.total_pages.toLocaleString()}
+                  </td>
+                  <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                    {entry.duplex_pages.toLocaleString()} /{" "}
+                    {entry.simplex_pages.toLocaleString()}
+                  </td>
+                  <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                    {entry.color_pages.toLocaleString()} /{" "}
+                    {entry.mono_pages.toLocaleString()}
+                  </td>
+                  <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                    ${entry.estimated_cost.toFixed(2)}
                   </td>
                 </tr>
               ))}
