@@ -464,6 +464,38 @@ async def list_google_workspace_users(db: AsyncSession = Depends(get_db)):
 
 
 @router.get(
+    "/google-workspace/org-units",
+    response_model=list[str],
+    dependencies=[Depends(require_role("admin"))],
+)
+async def list_google_workspace_org_units(db: AsyncSession = Depends(get_db)):
+    """Distinct org_unit_path values from the synced roster (sync_users) —
+    powers the OU picker on Settings > Permissions (app/models/user.py's
+    granted_ou_paths), so an admin picks from real, currently-populated org
+    units instead of typing a path blind with no idea what actually exists
+    in the directory.
+
+    Filtered to GoogleWorkspaceSettings.staff_org_unit_path (and anything
+    nested under it) when configured — same reasoning as
+    export_copier_pin_roster below: unscoped, this directory's OU list is
+    dominated by non-staff structure (student grade levels, Classroom
+    Devices, Apple-VPP, IT test OUs, ...) that has nothing to do with who
+    an OU Viewer account should see report data for. Falls back to
+    everything only when that setting isn't configured, so the picker is
+    never empty."""
+    settings = await _get_or_create_google_workspace_settings(db)
+    result = await db.execute(
+        select(GoogleWorkspaceUser.org_unit_path).where(
+            GoogleWorkspaceUser.org_unit_path.is_not(None)
+        )
+    )
+    paths = {path for (path,) in result.all() if path}
+    if settings.staff_org_unit_path:
+        paths = {path for path in paths if org_unit_matches(path, settings.staff_org_unit_path)}
+    return sorted(paths)
+
+
+@router.get(
     "/google-workspace/copier-pin-roster.csv",
     dependencies=[Depends(require_role("admin"))],
 )
