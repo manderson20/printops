@@ -57,6 +57,27 @@ The landing page at `localhost:3000` fetches `/healthz` from the API live — if
 
 Schema changes go through Alembic: `cd apps/api && alembic revision --autogenerate -m "..."` after changing a model, then `alembic upgrade head`.
 
+## Production / self-hosted install
+
+The Quickstart above is for local development. For standing up a real
+instance (school, business, MSP), run:
+
+```bash
+./scripts/setup.sh
+```
+
+It's the only command you need, even on a completely bare machine — it
+installs Node/pnpm, Python/uv, and Docker if they're missing (via
+`bootstrap.sh`), then walks you through your domain, an initial admin
+login, and (optionally) automatic HTTPS via [Caddy](https://caddyserver.com/)
++ Let's Encrypt. It generates real secrets (JWT signing key, encryption key,
+database password) instead of the `change-me` placeholders in the
+`.env.example` files, brings up Postgres/Redis, runs migrations, builds the
+web app, and can install both services under systemd so they survive a
+reboot. Safe to re-run — it asks before overwriting any `.env` that's
+already there, since regenerating secrets invalidates existing sessions and
+can make already-encrypted integration credentials unreadable.
+
 ## Environment variables
 
 Each app documents its own env vars in a `.env.example` (or `.env.local.example` for the web app):
