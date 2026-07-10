@@ -1,7 +1,7 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import JSON, Date, ForeignKey, UniqueConstraint, Uuid
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -57,6 +57,19 @@ class PrinterTonerCartridge(Base, TimestampMixin):
     color: Mapped[str]
     cost: Mapped[float]
     yield_pages: Mapped[int]
+
+    # SNMP-detected supply info (app/printers/snmp_counters.py:
+    # get_toner_supplies, via POST /printers/{id}/toner-cartridges/detect)
+    # — separate from cost/yield_pages above, which stay admin-entered
+    # only (SNMP has no concept of a dollar cost). detected_description is
+    # the raw device-reported string, shown as-is so an admin can judge it
+    # directly; detected_high_capacity is a best-effort "XL"/"High Yield"
+    # text guess parsed from it, not a confirmed fact — see that
+    # function's docstring for why it's never trusted outright. All three
+    # are None until the first successful detect.
+    detected_description: Mapped[str | None] = mapped_column(default=None)
+    detected_high_capacity: Mapped[bool | None] = mapped_column(default=None)
+    detected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
 
 class ReportSnapshot(Base, TimestampMixin):

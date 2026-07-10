@@ -155,7 +155,7 @@ function NewCopierImportForm() {
   }
 
   return (
-    <div className="flex w-full max-w-3xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
       <h1 className="text-xl font-semibold text-black dark:text-zinc-50">New Accounting Import</h1>
 
       {step.phase === "select" && (
