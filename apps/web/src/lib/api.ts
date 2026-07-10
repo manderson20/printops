@@ -1521,6 +1521,10 @@ export type HourlyBucket = {
   duplex_pages: number;
   simplex_pages: number;
   job_count: number;
+  // Tracked walk-up copies only (CopierUsageRecord) — see HourlyBucketOut
+  // in app/schemas/report.py for why untracked/estimated copies aren't here.
+  copy_pages: number;
+  copy_count: number;
 };
 
 // start/end are full ISO instants (typically the viewer's local midnight

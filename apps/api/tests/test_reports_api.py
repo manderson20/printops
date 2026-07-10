@@ -287,6 +287,59 @@ async def test_live_hourly_buckets_by_elapsed_hour(
     assert buckets[0]["total_pages"] == 0
 
 
+async def _create_copy_at(
+    db_session_factory, device_id, created_at, page_count=1, activity_type="copy"
+):
+    async with db_session_factory() as session:
+        session.add(
+            CopierUsageRecord(
+                mfp_device_id=uuid.UUID(device_id),
+                vendor="canon",
+                external_identity_used="unknown",
+                source_connector="generic_csv",
+                page_count=page_count,
+                activity_type=activity_type,
+                created_at=created_at,
+                raw_payload={},
+            )
+        )
+        await session.commit()
+
+
+async def test_live_hourly_includes_tracked_copies(
+    client, printer_id, mfp_device_id, admin_headers, db_session_factory
+):
+    start = datetime(2026, 7, 10, 0, 0, tzinfo=UTC)
+    end = start + timedelta(days=1)
+    await _create_job_at(db_session_factory, printer_id, start.replace(hour=9), page_count=5)
+    await _create_copy_at(db_session_factory, mfp_device_id, start.replace(hour=9), page_count=4)
+    await _create_copy_at(
+        db_session_factory, mfp_device_id, start.replace(hour=9, minute=30), page_count=2
+    )
+    # A scan shouldn't be counted as a copy.
+    await _create_copy_at(
+        db_session_factory, mfp_device_id, start.replace(hour=9), page_count=9, activity_type="scan"
+    )
+
+    response = client.get(
+        "/api/v1/reports/live/hourly",
+        params={"start": start.isoformat(), "end": end.isoformat()},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    buckets = response.json()
+
+    hour_9 = buckets[9]
+    assert hour_9["job_count"] == 1
+    assert hour_9["total_pages"] == 5
+    assert hour_9["copy_count"] == 2
+    assert hour_9["copy_pages"] == 6
+
+    # Every other hour is zero-filled for copies too.
+    assert buckets[0]["copy_count"] == 0
+    assert buckets[0]["copy_pages"] == 0
+
+
 def test_live_hourly_rejects_end_before_start(client, admin_headers):
     response = client.get(
         "/api/v1/reports/live/hourly",

@@ -119,6 +119,64 @@ export function VolumeBarChart({ data }: { data: { label: string; value: number 
   );
 }
 
+/** Print + tracked-copy volume per hour, stacked — two series (identity:
+ * print vs copy), so a fixed-order legend per the color formula (blue is
+ * already print's slot on VolumeBarChart above; copy takes the next fixed
+ * slot, aqua, rather than a cycled/arbitrary hue). */
+export function StackedVolumeBarChart({
+  data,
+}: {
+  data: { label: string; print: number; copy: number }[];
+}) {
+  const isDark = useIsDarkMode();
+  const chrome = chartChrome(isDark);
+  const printColor = hue("blue", isDark);
+  const copyColor = hue("aqua", isDark);
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-4 text-xs text-zinc-600 dark:text-zinc-400">
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: printColor }} />
+          Print Pages
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: copyColor }} />
+          Copy Pages (tracked)
+        </span>
+      </div>
+      <ResponsiveContainer width="100%" height={220}>
+        <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barCategoryGap={4}>
+          <CartesianGrid stroke={chrome.grid} vertical={false} />
+          <XAxis
+            dataKey="label"
+            tick={{ fill: chrome.mutedText, fontSize: 11 }}
+            axisLine={{ stroke: chrome.axis }}
+            tickLine={false}
+            interval={0}
+          />
+          <YAxis
+            tick={{ fill: chrome.mutedText, fontSize: 12 }}
+            axisLine={false}
+            tickLine={false}
+            width={44}
+            allowDecimals={false}
+          />
+          <Tooltip content={<ChartTooltip chrome={chrome} />} />
+          <Bar dataKey="print" name="Print Pages" stackId="pages" fill={printColor} maxBarSize={24} />
+          <Bar
+            dataKey="copy"
+            name="Copy Pages (tracked)"
+            stackId="pages"
+            fill={copyColor}
+            radius={[4, 4, 0, 0]}
+            maxBarSize={24}
+          />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 /** Part-to-whole share (color vs mono, duplex vs simplex) — a horizontal
  * stacked bar rather than a pie of two slices (see dataviz skill's
  * choosing-a-form guidance: a 2-slice pie is a meter/stacked-bar job).

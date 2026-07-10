@@ -45,6 +45,11 @@ class HourlyBucketOut(BaseModel):
     duplex_pages: int
     simplex_pages: int
     job_count: int
+    # Tracked walk-up copies only (CopierUsageRecord) — see
+    # HourlyBucket's docstring in app/reports/aggregation.py for why
+    # untracked/estimated copies aren't included here.
+    copy_pages: int
+    copy_count: int
 
 
 class LeaderboardEntryOut(BaseModel):
