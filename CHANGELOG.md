@@ -5,6 +5,19 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.35.1] - 2026-07-10
+
+- **Fix color copiers reverting to grayscale for Word/Adobe (again).** The
+  v0.15.2 fix only forced CUPS's `print-color-mode-default` IPP attribute;
+  the driverless PPD's own, separate `ColorModel` default got reset to
+  Gray every time a queue resynced (including automatic ones on a
+  printer's offline→online reconnect), silently undoing the fix for apps
+  that go through the classic PPD-based print path. Both sync scripts now
+  also force `ColorModel=RGB` on every sync for color-capable printers, so
+  it can't drift back. Applied live to the 3 queues that had reverted (CO
+  Danica Copier, SS - Director Color Printer, LCACTC - RM 502 Color
+  Printer).
+
 ## [0.35.0] - 2026-07-10
 
 - **New "OU Viewer" role.** A read-only account type scoped to Insights
