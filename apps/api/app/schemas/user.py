@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-Role = Literal["admin", "viewer"]
+Role = Literal["admin", "viewer", "ou_viewer"]
 
 
 class UserAccountOut(BaseModel):
@@ -17,12 +17,14 @@ class UserAccountOut(BaseModel):
     is_active: bool
     last_login_at: datetime | None
     exempt_from_timeout: bool
+    granted_ou_paths: list[str] | None
 
 
 class UserAccountUpdate(BaseModel):
     role: Role | None = None
     is_active: bool | None = None
     exempt_from_timeout: bool | None = None
+    granted_ou_paths: list[str] | None = None
 
 
 class UserAccountPage(BaseModel):

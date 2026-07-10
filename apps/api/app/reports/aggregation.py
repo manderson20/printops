@@ -20,6 +20,7 @@ from uuid import UUID
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.integrations.google_workspace import org_unit_matches
 from app.models.copier_usage import CopierUsageRecord
 from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceUser
 from app.models.job import Job
@@ -41,6 +42,12 @@ class ReportFilters:
     status: str | None = None
     color_mode: str | None = None
     duplex: bool | None = None
+    # Set (instead of submitted_by) when scoping an "ou_viewer" account —
+    # see app/routers/reports.py's _report_filters and
+    # resolve_ou_scoped_emails below. An empty list (as opposed to None)
+    # deliberately matches nothing, not everything — an ou_viewer with no
+    # granted OUs yet should see no data, not unfiltered data.
+    submitted_by_in: list[str] | None = None
 
 
 def _apply_filters(stmt: Select, filters: ReportFilters) -> Select:
@@ -59,6 +66,8 @@ def _apply_filters(stmt: Select, filters: ReportFilters) -> Select:
         stmt = stmt.where(Job.printer_id == filters.printer_id)
     if filters.submitted_by is not None:
         stmt = stmt.where(Job.submitted_by == filters.submitted_by)
+    if filters.submitted_by_in is not None:
+        stmt = stmt.where(Job.submitted_by.in_(filters.submitted_by_in))
     if filters.status is not None:
         stmt = stmt.where(Job.status == filters.status)
     if filters.color_mode is not None:
@@ -66,6 +75,24 @@ def _apply_filters(stmt: Select, filters: ReportFilters) -> Select:
     if filters.duplex is not None:
         stmt = stmt.where(Job.duplex == filters.duplex)
     return stmt
+
+
+async def resolve_ou_scoped_emails(db: AsyncSession, granted_ou_paths: list[str]) -> list[str]:
+    """Every synced roster email whose org_unit_path falls under any of
+    granted_ou_paths (nested sub-OUs included, via the same org_unit_matches
+    prefix-match already used for the copier PIN roster's
+    staff_org_unit_path filter). Used to build ReportFilters.submitted_by_in
+    for an "ou_viewer" account — see app/routers/reports.py's
+    _report_filters. Returns [] (not an error) for an empty grant list,
+    which _apply_filters then correctly treats as "matches nothing"."""
+    if not granted_ou_paths:
+        return []
+    result = await db.execute(select(GoogleWorkspaceUser.email, GoogleWorkspaceUser.org_unit_path))
+    return [
+        email
+        for email, org_unit_path in result.all()
+        if any(org_unit_matches(org_unit_path, path) for path in granted_ou_paths)
+    ]
 
 
 @dataclass

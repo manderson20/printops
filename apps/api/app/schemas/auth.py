@@ -25,3 +25,7 @@ class UserOut(BaseModel):
     email: str | None = None
     name: str | None = None
     subject: str
+    # Display-only for "ou_viewer" accounts (e.g. an "Insights scoped to:
+    # X, Y" banner) — see app.deps.get_current_user's docstring for why
+    # enforcement never trusts this field itself.
+    granted_ou_paths: list[str] | None = None

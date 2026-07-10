@@ -1135,13 +1135,16 @@ export async function syncGoogleWorkspaceDevices(): Promise<GoogleWorkspaceSetti
   return response.json();
 }
 
-export type Role = "admin" | "viewer";
+export type Role = "admin" | "viewer" | "ou_viewer";
 
 export type CurrentUser = {
   username: string;
   role: Role;
   email: string | null;
   name: string | null;
+  // Display-only for "ou_viewer" accounts — see app.deps.get_current_user's
+  // docstring; enforcement always re-reads the User row server-side.
+  granted_ou_paths: string[] | null;
 };
 
 export async function getMe(): Promise<CurrentUser> {
@@ -1157,6 +1160,7 @@ export type UserAccount = {
   is_active: boolean;
   last_login_at: string | null;
   exempt_from_timeout: boolean;
+  granted_ou_paths: string[] | null;
 };
 
 export type UserAccountPage = {
@@ -1182,7 +1186,12 @@ export async function listUsers(params?: {
 
 export async function updateUser(
   id: string,
-  input: { role?: Role; is_active?: boolean; exempt_from_timeout?: boolean },
+  input: {
+    role?: Role;
+    is_active?: boolean;
+    exempt_from_timeout?: boolean;
+    granted_ou_paths?: string[] | null;
+  },
 ): Promise<UserAccount> {
   const response = await authorizedFetch(`/api/v1/users/${id}`, {
     method: "PATCH",
