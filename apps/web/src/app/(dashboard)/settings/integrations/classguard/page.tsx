@@ -52,7 +52,7 @@ export default function ClassGuardSettingsPage() {
 
   useEffect(() => {
     if (currentUser && currentUser.role !== "admin") {
-      router.replace("/integrations");
+      router.replace("/settings/integrations");
     }
   }, [currentUser, router]);
 
@@ -117,7 +117,7 @@ export default function ClassGuardSettingsPage() {
   const readyToTest = Boolean((form.access_token || settings.has_access_token) && form.base_url && testIp);
 
   return (
-    <div className="flex w-full max-w-2xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">ClassGuard Integration</h1>
         <p className="mt-1 text-sm text-zinc-500">

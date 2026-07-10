@@ -4,7 +4,6 @@ StaffCopierIdentity at import time. Mirrors app/routers/device_overrides.py's
 "unknown identity -> admin assigns -> backfill already-logged rows"
 pattern exactly, just for copier usage instead of print jobs."""
 
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, update
@@ -133,7 +132,9 @@ async def resolve_unmapped_copier_activity(
         )
     )
     if payload.mfp_device_id is not None:
-        backfill_stmt = backfill_stmt.where(CopierUsageRecord.mfp_device_id == payload.mfp_device_id)
+        backfill_stmt = backfill_stmt.where(
+            CopierUsageRecord.mfp_device_id == payload.mfp_device_id
+        )
     backfill_result = await db.execute(backfill_stmt)
 
     await db.commit()

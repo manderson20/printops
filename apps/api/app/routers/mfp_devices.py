@@ -13,6 +13,7 @@ from app.deps import require_role
 from app.models.copier_usage import CopierUsageRecord
 from app.models.mfp_device import MfpDevice
 from app.models.printer import Printer
+from app.schemas.copier_usage import CopierUsageRecordOut
 from app.schemas.mfp_device import (
     ConnectorTypeOut,
     MfpDeviceCreate,
@@ -20,7 +21,6 @@ from app.schemas.mfp_device import (
     MfpDeviceUpdate,
     available_connector_types,
 )
-from app.schemas.copier_usage import CopierUsageRecordOut
 
 router = APIRouter(dependencies=[Depends(require_role("admin"))])
 
@@ -126,7 +126,9 @@ async def create_mfp_device(payload: MfpDeviceCreate, db: AsyncSession = Depends
     data = payload.model_dump(exclude={"snmp_community"})
     device = MfpDevice(
         **data,
-        snmp_community_encrypted=encrypt(payload.snmp_community) if payload.snmp_community else None,
+        snmp_community_encrypted=encrypt(payload.snmp_community)
+        if payload.snmp_community
+        else None,
     )
     db.add(device)
     await db.commit()
@@ -165,7 +167,9 @@ async def update_mfp_device(
         setattr(device, field, value)
 
     if payload.snmp_community is not None:
-        device.snmp_community_encrypted = encrypt(payload.snmp_community) if payload.snmp_community else None
+        device.snmp_community_encrypted = (
+            encrypt(payload.snmp_community) if payload.snmp_community else None
+        )
 
     if payload.capabilities is not None:
         for schema_field, model_field in _CAPABILITY_FIELD_MAP.items():

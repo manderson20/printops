@@ -65,6 +65,7 @@ def _resolve_config(device: MfpDevice) -> SnmpConfig:
         vendor_profile="canon",
     )
 
+
 SETUP_NOTES = (
     "On the device's own touchscreen or admin web page: Settings/Registration "
     "> Preferences (Function Settings) > Management Settings > User Management "
@@ -74,7 +75,7 @@ SETUP_NOTES = (
     "bring usage into PrintOps: from that same screen, export/print the "
     "Department ID counter report, then use Accounting Imports here to bring "
     "in the CSV. Map each staff member's Department ID under Staff Copier "
-    "Identities (identity type \"Department ID\") so the import can resolve it "
+    'Identities (identity type "Department ID") so the import can resolve it '
     "to a real person."
 )
 

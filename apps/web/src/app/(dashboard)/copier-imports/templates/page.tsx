@@ -37,7 +37,7 @@ export default function CopierImportTemplatesPage() {
   }
 
   return (
-    <div className="flex w-full max-w-3xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
       <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Import Mapping Templates</h1>
       <p className="text-sm text-zinc-500">
         Templates saved from a previous import&apos;s preview step (or created here) let a

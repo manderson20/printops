@@ -81,9 +81,7 @@ def test_requires_auth(client, printer_id):
 
 async def test_lists_only_quota_held_jobs(client, auth_headers, printer_id, db_session_factory):
     await _make_job(db_session_factory, printer_id, "matt@example.org")
-    await _make_job(
-        db_session_factory, printer_id, "other@example.org", hold_reason="pin_release"
-    )
+    await _make_job(db_session_factory, printer_id, "other@example.org", hold_reason="pin_release")
     await _make_job(db_session_factory, printer_id, "third@example.org", status="forwarded")
 
     response = client.get("/api/v1/quota-holds", headers=auth_headers)
@@ -97,28 +95,28 @@ async def test_lists_only_quota_held_jobs(client, auth_headers, printer_id, db_s
 async def test_release_succeeds(client, auth_headers, printer_id, db_session_factory):
     job = await _make_job(db_session_factory, printer_id, "matt@example.org")
     with patch("app.routers.quota_holds.submit_released_job", return_value="request id is x-1"):
-        response = client.post(
-            f"/api/v1/quota-holds/{job.id}/release", headers=auth_headers
-        )
+        response = client.post(f"/api/v1/quota-holds/{job.id}/release", headers=auth_headers)
     assert response.status_code == 200
     assert response.json()["status"] == "forwarded"
 
 
-async def test_release_failure_marks_job_failed(client, auth_headers, printer_id, db_session_factory):
+async def test_release_failure_marks_job_failed(
+    client, auth_headers, printer_id, db_session_factory
+):
     job = await _make_job(db_session_factory, printer_id, "matt@example.org")
     with patch(
         "app.routers.quota_holds.submit_released_job", side_effect=ReleaseError("lp exploded")
     ):
-        response = client.post(
-            f"/api/v1/quota-holds/{job.id}/release", headers=auth_headers
-        )
+        response = client.post(f"/api/v1/quota-holds/{job.id}/release", headers=auth_headers)
     assert response.status_code == 502
 
 
 async def test_cannot_release_pin_release_job_via_admin_route(
     client, auth_headers, printer_id, db_session_factory
 ):
-    job = await _make_job(db_session_factory, printer_id, "matt@example.org", hold_reason="pin_release")
+    job = await _make_job(
+        db_session_factory, printer_id, "matt@example.org", hold_reason="pin_release"
+    )
     response = client.post(f"/api/v1/quota-holds/{job.id}/release", headers=auth_headers)
     assert response.status_code == 404
 
