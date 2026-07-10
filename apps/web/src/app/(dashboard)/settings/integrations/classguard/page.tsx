@@ -52,7 +52,7 @@ export default function ClassGuardSettingsPage() {
 
   useEffect(() => {
     if (currentUser && currentUser.role !== "admin") {
-      router.replace("/integrations");
+      router.replace("/settings/integrations");
     }
   }, [currentUser, router]);
 
