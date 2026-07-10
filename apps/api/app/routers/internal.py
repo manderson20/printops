@@ -19,6 +19,8 @@ from app.schemas.ldap_relay import (
     LdapSearchResult,
 )
 from app.schemas.printer import PrinterConnectionOut
+from app.schemas.syslog import SyslogIngestRequest, SyslogIngestResult
+from app.syslog.service import get_or_create_syslog_settings, ingest_events
 
 router = APIRouter(dependencies=[Depends(verify_backend_token)])
 
@@ -37,6 +39,25 @@ async def get_printer_connection(printer_id: UUID, db: AsyncSession = Depends(ge
     if printer is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Printer not found")
     return printer
+
+
+@router.post("/syslog/events", response_model=SyslogIngestResult)
+async def post_syslog_events(payload: SyslogIngestRequest, db: AsyncSession = Depends(get_db)):
+    """Called by the syslog relay service with a batch of parsed messages
+    (batched client-side, not one call per UDP packet — see
+    infra/syslog-relay/server.py). source_ip -> printer_id matching happens
+    here, per batch (one IN-query, see app/syslog/service.py:ingest_events)
+    rather than the relay keeping its own cache — a batch is already at
+    most a couple seconds of traffic, so there's no per-packet DB cost to
+    avoid. Silently drops everything when disabled rather than erroring,
+    matching ldap_bind/ldap_search's "routine outcome, not an error"
+    convention — the relay listens regardless of this flag (see
+    infra/syslog-relay/server.py main()), same as the LDAP relay listens
+    regardless of LdapRelaySettings.enabled."""
+    settings = await get_or_create_syslog_settings(db)
+    result = await ingest_events(db, settings, payload.events)
+    await db.commit()
+    return result
 
 
 @router.get("/ldap/settings", response_model=LdapRelaySettingsOut)

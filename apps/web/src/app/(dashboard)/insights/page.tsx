@@ -28,6 +28,7 @@ import {
   type TimelineBucket,
   type UntrackedCopySummary,
 } from "@/lib/api";
+import { formatCurrency } from "@/lib/format";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -136,10 +137,6 @@ function computeRange(
   }
 }
 
-function formatCurrency(value: number): string {
-  return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
 function StatCard({
   label,
   value,
@@ -222,7 +219,7 @@ export default function InsightsPage() {
   }, []);
 
   useEffect(() => {
-    listPrinters()
+    listPrinters({ includeArchived: true })
       .then(setPrinters)
       .catch(() => setPrinters([]));
     if (isAdmin) {
@@ -418,7 +415,7 @@ export default function InsightsPage() {
   }, [state]);
 
   return (
-    <div className="flex w-full max-w-7xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
       {/* Print-only report header — never shown on screen. */}
       <div className="hidden items-center gap-3 border-b border-black/20 pb-4 print:flex">
         <Image

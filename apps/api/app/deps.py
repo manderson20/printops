@@ -38,12 +38,14 @@ def get_current_user(
         raise credentials_exception
 
     if subject == settings.dev_username:
-        return UserOut(username=subject, role=role)
+        return UserOut(username=subject, role=role, subject=subject)
 
     email = payload.get("email")
     if not email:
         raise credentials_exception
-    return UserOut(username=email, role=role, email=email, name=payload.get("name"))
+    return UserOut(
+        username=email, role=role, email=email, name=payload.get("name"), subject=subject
+    )
 
 
 def require_role(*roles: str):

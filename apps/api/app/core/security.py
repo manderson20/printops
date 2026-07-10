@@ -16,13 +16,21 @@ def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
 
 
-def create_access_token(subject: str, role: str, settings: Settings, **extra_claims: str) -> str:
+def create_access_token(
+    subject: str, role: str, settings: Settings, expires_minutes: int, **extra_claims: str
+) -> str:
     """`role` (and any `extra_claims`, e.g. email/name for SSO logins) is
     embedded in the token itself rather than looked up from the DB on every
     request, so get_current_user never needs a DB call — the trade-off is
     that a role change only takes effect on the user's next login/token
-    refresh, see app.deps.get_current_user."""
-    expire = datetime.now(UTC) + timedelta(minutes=settings.jwt_expires_minutes)
+    refresh, see app.deps.get_current_user.
+
+    expires_minutes is caller-supplied (not read from settings internally)
+    since it now varies per call: the admin-configured SessionSettings.
+    idle_timeout_minutes normally, or a long fixed duration for a user
+    flagged exempt_from_timeout — see app/routers/auth.py's login and
+    /auth/refresh, the only callers."""
+    expire = datetime.now(UTC) + timedelta(minutes=expires_minutes)
     payload = {"sub": subject, "role": role, "exp": expire, **extra_claims}
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 

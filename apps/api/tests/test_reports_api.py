@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -230,6 +230,78 @@ def test_viewer_cannot_override_submitted_by_filter(
 def test_timeline_rejects_bad_granularity(client, admin_headers):
     response = client.get("/api/v1/reports/timeline?granularity=fortnight", headers=admin_headers)
     assert response.status_code == 400
+
+
+async def _create_job_at(db_session_factory, printer_id, created_at, page_count=1, **kwargs):
+    async with db_session_factory() as session:
+        job = Job(
+            printer_id=uuid.UUID(printer_id),
+            status="forwarded",
+            page_count=page_count,
+            created_at=created_at,
+            **kwargs,
+        )
+        session.add(job)
+        await session.commit()
+
+
+async def test_live_hourly_buckets_by_elapsed_hour(
+    client, printer_id, admin_headers, db_session_factory
+):
+    start = datetime(2026, 7, 10, 0, 0, tzinfo=UTC)
+    end = start + timedelta(days=1)
+    await _create_job_at(db_session_factory, printer_id, start.replace(hour=9), page_count=5)
+    await _create_job_at(
+        db_session_factory, printer_id, start.replace(hour=9, minute=45), page_count=3
+    )
+    await _create_job_at(
+        db_session_factory,
+        printer_id,
+        start.replace(hour=14),
+        page_count=2,
+        color_mode="color",
+        duplex=True,
+    )
+
+    response = client.get(
+        "/api/v1/reports/live/hourly",
+        params={"start": start.isoformat(), "end": end.isoformat()},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    buckets = response.json()
+    assert len(buckets) == 24
+    assert [b["hour"] for b in buckets] == list(range(24))
+
+    hour_9 = buckets[9]
+    assert hour_9["job_count"] == 2
+    assert hour_9["total_pages"] == 8
+
+    hour_14 = buckets[14]
+    assert hour_14["job_count"] == 1
+    assert hour_14["color_pages"] == 2
+    assert hour_14["duplex_pages"] == 2
+
+    # Every other hour is zero-filled, not just absent.
+    assert buckets[0]["job_count"] == 0
+    assert buckets[0]["total_pages"] == 0
+
+
+def test_live_hourly_rejects_end_before_start(client, admin_headers):
+    response = client.get(
+        "/api/v1/reports/live/hourly",
+        params={"start": "2026-07-10T12:00:00Z", "end": "2026-07-10T06:00:00Z"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 400
+
+
+def test_live_hourly_requires_auth(client):
+    response = client.get(
+        "/api/v1/reports/live/hourly",
+        params={"start": "2026-07-10T00:00:00Z", "end": "2026-07-11T00:00:00Z"},
+    )
+    assert response.status_code == 401
 
 
 def test_leaderboard_by_printer(client, printer_id, backend_headers, admin_headers):

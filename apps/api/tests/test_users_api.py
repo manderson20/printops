@@ -113,6 +113,18 @@ def test_admin_can_patch_user_role(client, admin_headers, viewer_headers):
     assert response.json()["role"] == "admin"
 
 
+def test_admin_can_patch_exempt_from_timeout(client, admin_headers, viewer_headers):
+    users = client.get("/api/v1/users", headers=admin_headers).json()["items"]
+    user_id = next(u["id"] for u in users if u["email"] == "viewer@example.org")
+    assert next(u["exempt_from_timeout"] for u in users if u["id"] == user_id) is False
+
+    response = client.patch(
+        f"/api/v1/users/{user_id}", headers=admin_headers, json={"exempt_from_timeout": True}
+    )
+    assert response.status_code == 200
+    assert response.json()["exempt_from_timeout"] is True
+
+
 def test_viewer_cannot_list_users(client, viewer_headers):
     response = client.get("/api/v1/users", headers=viewer_headers)
     assert response.status_code == 403

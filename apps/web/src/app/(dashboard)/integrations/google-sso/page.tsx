@@ -112,7 +112,7 @@ export default function GoogleSsoSettingsPage() {
   }
 
   return (
-    <div className="flex w-full max-w-2xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Google Sign-In</h1>
         <p className="mt-1 text-sm text-zinc-500">

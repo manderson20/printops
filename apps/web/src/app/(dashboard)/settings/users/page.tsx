@@ -62,6 +62,16 @@ export default function UsersSettingsPage() {
     }
   }
 
+  async function handleExemptToggle(user: UserAccount) {
+    setRowError(null);
+    try {
+      await updateUser(user.id, { exempt_from_timeout: !user.exempt_from_timeout });
+      load();
+    } catch (err) {
+      setRowError(err instanceof ApiError ? err.message : "Failed to update account");
+    }
+  }
+
   const totalPages = state.phase === "ok" ? Math.max(1, Math.ceil(state.total / PAGE_SIZE)) : 1;
 
   return (
@@ -123,6 +133,7 @@ export default function UsersSettingsPage() {
                   <th className="px-4 py-3 font-medium">Name</th>
                   <th className="px-4 py-3 font-medium">Role</th>
                   <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium">Timeout</th>
                   <th className="px-4 py-3 font-medium">Last Login</th>
                 </tr>
               </thead>
@@ -150,6 +161,15 @@ export default function UsersSettingsPage() {
                           <Badge tone="success">Active</Badge>
                         ) : (
                           <Badge tone="neutral">Deactivated</Badge>
+                        )}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3">
+                      <button onClick={() => handleExemptToggle(user)} title="Toggle idle-timeout exemption">
+                        {user.exempt_from_timeout ? (
+                          <Badge tone="info">No timeout</Badge>
+                        ) : (
+                          <Badge tone="neutral">Normal</Badge>
                         )}
                       </button>
                     </td>

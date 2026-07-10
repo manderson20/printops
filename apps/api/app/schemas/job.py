@@ -93,3 +93,18 @@ class UserUsageOut(BaseModel):
     job_count: int
     total_pages: int
     total_bytes: int
+    duplex_pages: int
+    simplex_pages: int
+    mono_pages: int
+    color_pages: int
+    # Real per-job cost (app/reports/formulas.py:job_cost) — priced off
+    # each job's own printer's toner rate, same calculation the Insights
+    # cost-breakdown report uses, not a flat page-count multiplier.
+    estimated_cost: float
+
+
+class UserUsagePage(BaseModel):
+    items: list[UserUsageOut]
+    total: int
+    page: int
+    page_size: int

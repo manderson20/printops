@@ -40,4 +40,13 @@ class User(Base, TimestampMixin):
     role: Mapped[str] = mapped_column(default="viewer", server_default="viewer")
     is_active: Mapped[bool] = mapped_column(default=True, server_default="true")
 
+    # Opts this account out of the idle timeout entirely (app/routers/
+    # auth.py's /auth/refresh mints a long-lived token instead of the
+    # admin-configured SessionSettings.idle_timeout_minutes for it) — e.g.
+    # a front-desk/shared login that should just stay signed in all day.
+    # Checked fresh from this row on every refresh, not baked into the
+    # JWT at login, so revoking it takes effect on the user's very next
+    # refresh instead of waiting for their token to expire.
+    exempt_from_timeout: Mapped[bool] = mapped_column(default=False, server_default="false")
+
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

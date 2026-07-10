@@ -57,6 +57,17 @@ class Printer(Base, TimestampMixin):
     # probe). None means the queue is in sync as of the last create/update.
     queue_sync_error: Mapped[str | None] = mapped_column(default=None)
 
+    # When set, this printer is retired — POST /{id}/archive (routers/
+    # printers.py) tears down its CUPS queue (same remove_queue() delete_printer
+    # already used, just without deleting the row) so it stops accepting new
+    # jobs, but the row and all its historical Job rows stay put (Job.printer_id
+    # is ondelete="CASCADE" — that's what actually deleting a printer would
+    # destroy). The usual reason: swapping in a replacement physical device
+    # and wanting to keep the old one's usage/cost history intact instead of
+    # losing it to that cascade. None = active. Excluded from the status/SNMP
+    # background poll loops (app/main.py) — nothing to reach anymore.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
     # Reachability/error state, refreshed by app/printers/status.py — either
     # on the 60s background poll (app/main.py) or a manual "Check Now" call
     # (POST /printers/{id}/check-status). "unknown" until the first check.
