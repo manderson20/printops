@@ -5,6 +5,13 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.39.0] - 2026-07-10
+
+- **Printers: CSV export.** Export the (optionally search-filtered)
+  Printers list as a CSV — name, status, manufacturer, model, serial
+  number, IP address, hostname, building/room/department, page count,
+  AirPrint status, and archived flag.
+
 ## [0.38.0] - 2026-07-10
 
 - **Users & Permissions merged into one page.** OU grants for "OU Viewer"
