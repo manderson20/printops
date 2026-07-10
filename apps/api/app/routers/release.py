@@ -69,9 +69,7 @@ async def _get_printer_by_token(db: AsyncSession, token: str) -> Printer:
     return printer
 
 
-async def _resolve_pin(
-    db: AsyncSession, token: str, pin: str
-) -> GoogleWorkspaceUser:
+async def _resolve_pin(db: AsyncSession, token: str, pin: str) -> GoogleWorkspaceUser:
     _rate_limiter.check(token)
     stmt = select(GoogleWorkspaceUser).where(GoogleWorkspaceUser.employee_id == pin)
     user = (await db.execute(stmt)).scalar_one_or_none()

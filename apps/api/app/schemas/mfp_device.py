@@ -169,6 +169,8 @@ class ConnectorTypeOut(BaseModel):
 
 def available_connector_types() -> list[ConnectorTypeOut]:
     return [
-        ConnectorTypeOut(connector_type=key, label=connector.display_name, setup_notes=connector.setup_notes)
+        ConnectorTypeOut(
+            connector_type=key, label=connector.display_name, setup_notes=connector.setup_notes
+        )
         for key, connector in CONNECTOR_REGISTRY.items()
     ]

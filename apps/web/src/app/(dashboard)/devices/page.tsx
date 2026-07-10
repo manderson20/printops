@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ApiError,
@@ -18,9 +18,11 @@ import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 
+const PAGE_SIZE = 50;
+
 type LoadState =
   | { phase: "loading" }
-  | { phase: "ok"; devices: KnownDevice[] }
+  | { phase: "ok"; devices: KnownDevice[]; total: number }
   | { phase: "error"; message: string };
 
 const SOURCE_LABEL: Record<KnownDevice["source"], string> = {
@@ -137,6 +139,9 @@ export default function DevicesPage() {
   const currentUser = useCurrentUser();
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [roster, setRoster] = useState<GoogleWorkspaceUserEntry[]>([]);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     if (currentUser === null) {
@@ -146,9 +151,9 @@ export default function DevicesPage() {
     }
   }, [currentUser, router]);
 
-  function load() {
-    listKnownDevices()
-      .then((devices) => setState({ phase: "ok", devices }))
+  const load = useCallback(() => {
+    listKnownDevices({ page, pageSize: PAGE_SIZE, search: search || undefined })
+      .then((result) => setState({ phase: "ok", devices: result.items, total: result.total }))
       .catch((error: unknown) =>
         setState({
           phase: "error",
@@ -158,18 +163,27 @@ export default function DevicesPage() {
     listGoogleWorkspaceUsers()
       .then(setRoster)
       .catch(() => setRoster([]));
-  }
+  }, [page, search]);
 
   useEffect(() => {
     if (currentUser?.role === "admin") load();
-  }, [currentUser]);
+  }, [currentUser, load]);
 
   if (currentUser === undefined || currentUser?.role !== "admin") {
     return <Spinner label="Loading…" />;
   }
 
+  function handleSearchSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setPage(1);
+    setSearch(searchInput.trim());
+  }
+
+  const total = state.phase === "ok" ? state.total : 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
   return (
-    <div className="flex w-full max-w-5xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Devices</h1>
         <p className="mt-1 text-sm text-zinc-500">
@@ -181,14 +195,46 @@ export default function DevicesPage() {
         </p>
       </div>
 
+      <div className="flex flex-wrap items-center gap-3">
+        <form onSubmit={handleSearchSubmit} className="flex items-center gap-2">
+          <Input
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search MAC, device, or user…"
+            className="w-full max-w-xs"
+          />
+          <Button type="submit" variant="secondary">
+            Search
+          </Button>
+          {search && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setSearchInput("");
+                setSearch("");
+                setPage(1);
+              }}
+            >
+              Clear
+            </Button>
+          )}
+        </form>
+        <span className="text-xs text-zinc-500">{total.toLocaleString()} devices</span>
+      </div>
+
       {state.phase === "loading" && <Spinner label="Loading devices…" />}
       {state.phase === "error" && <ErrorState>{state.message}</ErrorState>}
 
       {state.phase === "ok" && (
-        <Card className="p-0">
+        <Card className="overflow-hidden p-0">
           {state.devices.length === 0 ? (
             <div className="p-6">
-              <EmptyState>No devices synced yet from Mosyle or Google Workspace.</EmptyState>
+              <EmptyState>
+                {search
+                  ? `No devices match "${search}".`
+                  : "No devices synced yet from Mosyle or Google Workspace."}
+              </EmptyState>
             </div>
           ) : (
             <table className="w-full text-left text-sm">
@@ -209,6 +255,32 @@ export default function DevicesPage() {
             </table>
           )}
         </Card>
+      )}
+
+      {state.phase === "ok" && state.devices.length > 0 && (
+        <div className="flex items-center justify-between text-xs text-zinc-500">
+          <span>
+            Page {page} of {totalPages}
+          </span>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              className="!px-2 !py-1 text-xs"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="secondary"
+              className="!px-2 !py-1 text-xs"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
       )}
 
       <datalist id={ROSTER_DATALIST_ID}>
