@@ -5,6 +5,14 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.39.1] - 2026-07-10
+
+- **Security fix: PostCSS XSS (GHSA-qx2v-qp2m-jg93, CVE-2026-41305).**
+  Next.js pinned a transitive `postcss@8.4.31`, below the patched 8.5.10 —
+  added a pnpm override forcing `postcss` to `^8.5.16` repo-wide (Tailwind's
+  own postcss dependency already resolved there) so both consumers use the
+  patched version.
+
 ## [0.39.0] - 2026-07-10
 
 - **Printers: CSV export.** Export the (optionally search-filtered)
