@@ -184,9 +184,7 @@ export default function LiveDashboardPage() {
         <div>
           <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Live Dashboard</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Rolling last 24 hours of print activity — the current hour is always the rightmost
-            bar, sliding forward as time passes. Updates on its own every 15 seconds, no refresh
-            needed. Good for leaving up on a TV display.
+            Rolling last 24 hours — updates automatically every 15 seconds.
           </p>
         </div>
         <div className="flex items-center gap-3">
