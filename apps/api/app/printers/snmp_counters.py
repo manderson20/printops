@@ -73,6 +73,17 @@ KONICA_METER_B_OID = "1.3.6.1.4.1.18334.1.1.1.5.7.2.2.1.5.1.2"
 # the DB-field heuristic in practice).
 SYS_DESCR_OID = "1.3.6.1.2.1.1.1.0"
 
+# RFC 3805 Printer MIB — prtMarkerSuppliesTable columns (standard, not
+# vendor-private like the Canon/Konica OIDs above). See get_toner_supplies.
+SUPPLIES_TYPE_OID = "1.3.6.1.2.1.43.11.1.1.5"
+SUPPLIES_DESCRIPTION_OID = "1.3.6.1.2.1.43.11.1.1.6"
+
+# prtMarkerSuppliesType (RFC 3805) values that represent an actual
+# toner/ink cartridge, as opposed to a waste bin, drum, fuser, staples,
+# etc. — other(1)/unknown(2) excluded on purpose, only the specific
+# cartridge-shaped types are kept: toner(3), inkCartridge(6), tonerCartridge(21).
+_CARTRIDGE_SUPPLY_TYPES = {"3", "6", "21"}
+
 
 class SnmpProbeError(Exception):
     pass
@@ -259,6 +270,99 @@ def get_standard_total(ip: str, config: SnmpConfig) -> int:
     if not found:
         raise SnmpProbeError("Standard Printer MIB returned no usable counter.")
     return total
+
+
+CartridgeColorGuess = Literal["black", "cyan", "magenta", "yellow"]
+
+# Order matters: checked in sequence, first match wins — put multi-letter
+# colors before anything that could false-positive on a shorter substring.
+_COLOR_KEYWORDS: tuple[tuple[str, CartridgeColorGuess], ...] = (
+    ("cyan", "cyan"),
+    ("magenta", "magenta"),
+    ("yellow", "yellow"),
+    ("black", "black"),
+)
+
+_HIGH_CAPACITY_KEYWORDS = ("xl", "high yield", "high-yield", "high capacity", "high-capacity")
+
+
+@dataclass
+class DetectedSupply:
+    """One cartridge-type row read from prtMarkerSuppliesTable. `color`
+    and `high_capacity` are always a best-effort text guess parsed from
+    `description` (see get_toner_supplies's docstring for why) — never
+    treated as verified/confirmed, unlike this module's counter
+    breakdowns, which were checked against real hardware before being
+    trusted. `description` itself (the raw device-reported string) is
+    always shown alongside the guess so an admin can judge it directly."""
+
+    description: str
+    color: CartridgeColorGuess | None
+    high_capacity: bool | None
+
+
+def _guess_cartridge_color(description: str) -> CartridgeColorGuess | None:
+    lower = description.lower()
+    for keyword, color in _COLOR_KEYWORDS:
+        if keyword in lower:
+            return color
+    return None
+
+
+def _guess_high_capacity(description: str) -> bool | None:
+    """None (not False) when the description doesn't mention capacity at
+    all — vendors generally only bother naming it when it IS the
+    high-yield variant, so silence isn't evidence of a standard-yield
+    cartridge, just unknown. Only ever returns True or None, deliberately
+    never a confident False."""
+    lower = description.lower()
+    if any(keyword in lower for keyword in _HIGH_CAPACITY_KEYWORDS):
+        return True
+    return None
+
+
+def get_toner_supplies(ip: str, config: SnmpConfig) -> list[DetectedSupply]:
+    """Walks the standard Printer MIB supplies table (RFC 3805) for
+    cartridge-type rows, parsing each one's device-reported description
+    string for a color and a high-capacity ("XL"/"High Yield") hint —
+    feeds PrinterTonerCartridge.detected_* (app/models/report.py) via
+    POST /printers/{id}/toner-cartridges/detect.
+
+    Standard MIB, so — unlike this module's Canon/Konica counter
+    breakdowns — it should work across vendors in principle. But also
+    unlike those, it has NOT been confirmed against this district's real
+    fleet yet (see module docstring's "not attempted here" note this
+    supersedes): whether a given vendor's firmware writes "XL"/"High
+    Yield" into the description at all, versus just a bare part number,
+    is unverified. That's why color/high_capacity are always a best-effort
+    guess (DetectedSupply), never asserted as confirmed.
+
+    Raises SnmpProbeError if the walk itself fails or returns nothing
+    recognizable as a cartridge."""
+    types = snmp_walk(ip, SUPPLIES_TYPE_OID, config)
+    descriptions = snmp_walk(ip, SUPPLIES_DESCRIPTION_OID, config)
+
+    supplies: list[DetectedSupply] = []
+    for index, raw_type in types.items():
+        type_value = _extract_counter_value(raw_type)
+        if type_value is None or str(type_value) not in _CARTRIDGE_SUPPLY_TYPES:
+            continue
+        raw_description = descriptions.get(index)
+        if raw_description is None:
+            continue
+        description = _extract_string_value(raw_description)
+        if not description:
+            continue
+        supplies.append(
+            DetectedSupply(
+                description=description,
+                color=_guess_cartridge_color(description),
+                high_capacity=_guess_high_capacity(description),
+            )
+        )
+    if not supplies:
+        raise SnmpProbeError("No toner/ink cartridge supplies reported by this device.")
+    return supplies
 
 
 def _canon_breakdown(ip: str, config: SnmpConfig) -> VendorBreakdown:

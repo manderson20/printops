@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.models.base import Base
 from app.models.snmp import PrinterCounterReading
-from app.printers.counter_history import _field_delta, get_daily_deltas
+from app.printers.counter_history import _field_delta, get_daily_deltas, get_daily_deltas_range
 
 
 @pytest_asyncio.fixture
@@ -164,3 +164,88 @@ class TestGetDailyDeltas:
         today = max(d.bucket_start for d in deltas)
         today_delta = next(d for d in deltas if d.bucket_start == today)
         assert today_delta.total_delta == 100  # not the other printer's 999
+
+
+class TestGetDailyDeltasRange:
+    async def test_boundary_floor_excludes_earlier_boundary_reading(self, db_session):
+        """Without boundary_floor, the last reading before `start` (even
+        from days earlier) becomes the diffing baseline. With it, a
+        boundary reading older than the floor is ignored entirely, and
+        the first day in the window is left null instead of silently
+        diffing against pre-floor state — this is what keeps the
+        Untracked Copy Activity report from ever attributing pre-enable
+        activity to a post-enable day."""
+        printer_id = uuid.uuid4()
+        start = datetime.now(UTC)
+        old_boundary = start - timedelta(days=5)
+        floor = start - timedelta(hours=1)
+        in_window = start + timedelta(hours=1)
+
+        db_session.add(_reading(printer_id, old_boundary, 500))
+        db_session.add(_reading(printer_id, in_window, 600))
+        await db_session.commit()
+
+        without_floor = await get_daily_deltas_range(
+            db_session, printer_id, start, start + timedelta(days=1)
+        )
+        assert without_floor[0].total_delta == 100  # 600 - 500, using the old boundary
+
+        with_floor = await get_daily_deltas_range(
+            db_session, printer_id, start, start + timedelta(days=1), boundary_floor=floor
+        )
+        assert with_floor[0].total_delta is None  # old boundary is before the floor -> ignored
+
+    async def test_boundary_floor_equal_to_start_promotes_first_reading_as_baseline(
+        self, db_session
+    ):
+        """The Untracked Copy Activity report computes start=max(filters.start,
+        enabled_at) and passes boundary_floor=enabled_at — on the very day a
+        report covers the feature's own enablement, start and boundary_floor
+        collapse to the same instant, so "a reading before start but not
+        before boundary_floor" is impossible to satisfy no matter what data
+        exists (not a real gap, like the test above — an empty range by
+        construction). That must not silently drop the whole day: the first
+        in-window reading becomes the baseline instead."""
+        printer_id = uuid.uuid4()
+        enabled_at = datetime.now(UTC)
+        first_poll_after_enable = enabled_at + timedelta(minutes=30)
+        later_same_day = enabled_at + timedelta(hours=8)
+
+        db_session.add(_reading(printer_id, first_poll_after_enable, 1000, 400, 600))
+        db_session.add(_reading(printer_id, later_same_day, 1300, 550, 750))
+        await db_session.commit()
+
+        deltas = await get_daily_deltas_range(
+            db_session,
+            printer_id,
+            enabled_at,
+            enabled_at + timedelta(days=1),
+            boundary_floor=enabled_at,
+        )
+
+        assert len(deltas) == 1
+        assert deltas[0].total_delta == 300  # 1300 - 1000, not None
+        assert deltas[0].copy_delta == 150
+        assert deltas[0].print_delta == 150
+
+    async def test_boundary_floor_equal_to_start_with_only_one_reading_yields_no_delta(
+        self, db_session
+    ):
+        """Same collapsed start/boundary_floor case, but only one reading
+        exists so far today — it's consumed as the baseline itself, leaving
+        nothing to diff against yet (correctly no delta yet, not a false
+        zero)."""
+        printer_id = uuid.uuid4()
+        enabled_at = datetime.now(UTC)
+        db_session.add(_reading(printer_id, enabled_at + timedelta(minutes=30), 1000))
+        await db_session.commit()
+
+        deltas = await get_daily_deltas_range(
+            db_session,
+            printer_id,
+            enabled_at,
+            enabled_at + timedelta(days=1),
+            boundary_floor=enabled_at,
+        )
+
+        assert deltas == []

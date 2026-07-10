@@ -48,8 +48,7 @@ export default function UpdatesPage() {
     }
   }, [currentUser, router]);
 
-  function loadCheck() {
-    setCheckState({ phase: "loading" });
+  function fetchCheck() {
     checkForUpdate()
       .then((check) => setCheckState({ phase: "ok", check }))
       .catch((error: unknown) =>
@@ -60,6 +59,11 @@ export default function UpdatesPage() {
       );
   }
 
+  function loadCheck() {
+    setCheckState({ phase: "loading" });
+    fetchCheck();
+  }
+
   function loadSchedule() {
     listUpdateSchedule()
       .then(setSchedule)
@@ -68,7 +72,11 @@ export default function UpdatesPage() {
 
   useEffect(() => {
     if (currentUser?.role !== "admin") return;
-    loadCheck();
+    // Not loadCheck(): checkState already starts at { phase: "loading" },
+    // so the initial fetch doesn't need to re-set it — only the manual
+    // "Check for updates" button (a real event handler, not an effect)
+    // needs to reset phase back to loading on a later click.
+    fetchCheck();
     loadSchedule();
     const interval = setInterval(loadSchedule, 15_000);
     return () => clearInterval(interval);
@@ -113,7 +121,7 @@ export default function UpdatesPage() {
   }
 
   return (
-    <div className="flex w-full max-w-3xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Updates</h1>
         <p className="mt-1 text-sm text-zinc-500">

@@ -20,8 +20,11 @@ from uuid import UUID
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.integrations.google_workspace import org_unit_matches
 from app.models.copier_usage import CopierUsageRecord
+from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceUser
 from app.models.job import Job
+from app.models.mosyle import MosyleDevice
 from app.models.printer import Printer
 
 TERMINAL_STATUSES = ("forwarded", "failed", "cancelled")
@@ -39,6 +42,12 @@ class ReportFilters:
     status: str | None = None
     color_mode: str | None = None
     duplex: bool | None = None
+    # Set (instead of submitted_by) when scoping an "ou_viewer" account —
+    # see app/routers/reports.py's _report_filters and
+    # resolve_ou_scoped_emails below. An empty list (as opposed to None)
+    # deliberately matches nothing, not everything — an ou_viewer with no
+    # granted OUs yet should see no data, not unfiltered data.
+    submitted_by_in: list[str] | None = None
 
 
 def _apply_filters(stmt: Select, filters: ReportFilters) -> Select:
@@ -57,6 +66,8 @@ def _apply_filters(stmt: Select, filters: ReportFilters) -> Select:
         stmt = stmt.where(Job.printer_id == filters.printer_id)
     if filters.submitted_by is not None:
         stmt = stmt.where(Job.submitted_by == filters.submitted_by)
+    if filters.submitted_by_in is not None:
+        stmt = stmt.where(Job.submitted_by.in_(filters.submitted_by_in))
     if filters.status is not None:
         stmt = stmt.where(Job.status == filters.status)
     if filters.color_mode is not None:
@@ -64,6 +75,24 @@ def _apply_filters(stmt: Select, filters: ReportFilters) -> Select:
     if filters.duplex is not None:
         stmt = stmt.where(Job.duplex == filters.duplex)
     return stmt
+
+
+async def resolve_ou_scoped_emails(db: AsyncSession, granted_ou_paths: list[str]) -> list[str]:
+    """Every synced roster email whose org_unit_path falls under any of
+    granted_ou_paths (nested sub-OUs included, via the same org_unit_matches
+    prefix-match already used for the copier PIN roster's
+    staff_org_unit_path filter). Used to build ReportFilters.submitted_by_in
+    for an "ou_viewer" account — see app/routers/reports.py's
+    _report_filters. Returns [] (not an error) for an empty grant list,
+    which _apply_filters then correctly treats as "matches nothing"."""
+    if not granted_ou_paths:
+        return []
+    result = await db.execute(select(GoogleWorkspaceUser.email, GoogleWorkspaceUser.org_unit_path))
+    return [
+        email
+        for email, org_unit_path in result.all()
+        if any(org_unit_matches(org_unit_path, path) for path in granted_ou_paths)
+    ]
 
 
 @dataclass
@@ -182,6 +211,121 @@ async def get_timeline(
     return sorted(buckets.values(), key=lambda b: b.bucket_start)
 
 
+LIVE_INTERVAL_MINUTES = 30
+
+
+@dataclass
+class HourlyBucket:
+    """One 30-minute interval's worth of activity — the Live Dashboard's
+    intraday view (app/routers/reports.py's /live/hourly), distinct from
+    get_timeline's day/week/month buckets above. `interval` is just an
+    index (0, 1, 2, ...), counting LIVE_INTERVAL_MINUTES-minute steps
+    since the caller's `start`, not a wall-clock hour-of-day in any
+    particular timezone — see get_hourly_timeline's docstring for why.
+
+    copy_pages/copy_count cover only *tracked* walk-up copies
+    (CopierUsageRecord rows with a resolved staff identity — see
+    _fetch_raw_copy_rows below). Untracked/estimated copy volume (the
+    Untracked Copy Activity report) is SNMP counter-delta based and only
+    ever computed at daily granularity, so it's deliberately not folded
+    in here — a 30-minute split of a daily estimate would overstate its
+    precision."""
+
+    interval: int
+    total_pages: int = 0
+    color_pages: int = 0
+    mono_pages: int = 0
+    duplex_pages: int = 0
+    simplex_pages: int = 0
+    job_count: int = 0
+    copy_pages: int = 0
+    copy_count: int = 0
+
+
+@dataclass
+class _CopyRawRow:
+    created_at: datetime
+    page_count: int
+
+
+async def _fetch_raw_copy_rows(
+    db: AsyncSession, start: datetime, end: datetime
+) -> list[_CopyRawRow]:
+    """Tracked copies only — activity_type == 'copy' with a known page
+    count. Reuses _apply_copier_filters (see the Combined print + copy
+    reporting section below) so this agrees with every other copier
+    report on what start/end filtering means."""
+    stmt = _apply_copier_filters(
+        select(CopierUsageRecord.created_at, CopierUsageRecord.page_count),
+        ReportFilters(start=start, end=end),
+    ).where(
+        CopierUsageRecord.activity_type == "copy",
+        CopierUsageRecord.page_count.is_not(None),
+    )
+    rows = (await db.execute(stmt)).all()
+    return [_CopyRawRow(created_at=r.created_at, page_count=r.page_count or 0) for r in rows]
+
+
+async def get_hourly_timeline(
+    db: AsyncSession, start: datetime, end: datetime
+) -> list[HourlyBucket]:
+    """48 (or however many LIVE_INTERVAL_MINUTES-minute steps actually fit
+    between start/end) buckets, always fully zero-filled — a bar chart
+    needs a stable x-axis as the day progresses, not an array that grows
+    interval by interval.
+
+    Deliberately timezone-naive here: `interval` is "intervals elapsed
+    since start", not Job.created_at's UTC hour-of-day. This server only
+    ever stores UTC timestamps, but a TV-mounted live dashboard needs to
+    line up with the viewer's actual wall clock — so the caller (app/
+    routers/reports.py) is expected to pass a browser-local
+    midnight-to-midnight (or midnight-to-now) window as start/end,
+    computed client-side, and this just buckets relative to that,
+    whatever timezone it represents."""
+    filters = ReportFilters(start=start, end=end)
+    rows = await _fetch_raw_rows(db, filters)
+
+    # .replace(tzinfo=None) before subtracting, not just for start/end here
+    # but for each row's created_at below too — SQLite (used in tests, see
+    # tests/test_reports_api.py) doesn't actually enforce DateTime(timezone=True)
+    # the way Postgres does and can hand back naive datetimes even though
+    # the column is declared aware; naive-minus-aware raises TypeError.
+    # Both sides represent the same UTC instant either way, so stripping
+    # tzinfo from both changes nothing about the actual elapsed-interval math.
+    naive_start = start.replace(tzinfo=None)
+    interval_seconds = LIVE_INTERVAL_MINUTES * 60
+    interval_count = max(1, int((end - start).total_seconds() // interval_seconds))
+    buckets = {i: HourlyBucket(interval=i) for i in range(interval_count)}
+    for r in rows:
+        naive_created_at = r.created_at.replace(tzinfo=None)
+        elapsed = int((naive_created_at - naive_start).total_seconds() // interval_seconds)
+        bucket = buckets.get(elapsed)
+        if bucket is None:
+            continue  # outside the requested window — shouldn't happen, but not fatal
+        bucket.job_count += 1
+        bucket.total_pages += r.page_count
+        if r.color_mode == "color":
+            bucket.color_pages += r.page_count
+        elif r.color_mode == "monochrome":
+            bucket.mono_pages += r.page_count
+        if r.duplex is True:
+            bucket.duplex_pages += r.page_count
+        elif r.duplex is False:
+            bucket.simplex_pages += r.page_count
+
+    copy_rows = await _fetch_raw_copy_rows(db, start, end)
+    for cr in copy_rows:
+        naive_created_at = cr.created_at.replace(tzinfo=None)
+        elapsed = int((naive_created_at - naive_start).total_seconds() // interval_seconds)
+        bucket = buckets.get(elapsed)
+        if bucket is None:
+            continue
+        bucket.copy_count += 1
+        bucket.copy_pages += cr.page_count
+
+    return [buckets[i] for i in range(interval_count)]
+
+
 @dataclass
 class PeakTimes:
     by_day_of_week: dict[int, int] = field(default_factory=dict)  # 0=Monday .. 6=Sunday
@@ -209,15 +353,20 @@ class LeaderboardEntry:
 async def get_printer_leaderboard(
     db: AsyncSession, filters: ReportFilters, limit: int = 10
 ) -> list[LeaderboardEntry]:
-    stmt = _apply_filters(
-        select(
-            Job.printer_id,
-            Printer.name,
-            func.count(Job.id).label("job_count"),
-            func.sum(func.coalesce(Job.page_count, 0)).label("total_pages"),
-        ),
-        filters,
-    ).group_by(Job.printer_id, Printer.name).order_by(func.count(Job.id).desc()).limit(limit)
+    stmt = (
+        _apply_filters(
+            select(
+                Job.printer_id,
+                Printer.name,
+                func.count(Job.id).label("job_count"),
+                func.sum(func.coalesce(Job.page_count, 0)).label("total_pages"),
+            ),
+            filters,
+        )
+        .group_by(Job.printer_id, Printer.name)
+        .order_by(func.count(Job.id).desc())
+        .limit(limit)
+    )
     rows = (await db.execute(stmt)).all()
     return [
         LeaderboardEntry(
@@ -233,16 +382,20 @@ async def get_printer_leaderboard(
 async def get_user_leaderboard(
     db: AsyncSession, filters: ReportFilters, limit: int = 10
 ) -> list[LeaderboardEntry]:
-    stmt = _apply_filters(
-        select(
-            Job.submitted_by,
-            func.count(Job.id).label("job_count"),
-            func.sum(func.coalesce(Job.page_count, 0)).label("total_pages"),
-        ),
-        filters,
-    ).where(Job.submitted_by.is_not(None)).group_by(Job.submitted_by).order_by(
-        func.count(Job.id).desc()
-    ).limit(limit)
+    stmt = (
+        _apply_filters(
+            select(
+                Job.submitted_by,
+                func.count(Job.id).label("job_count"),
+                func.sum(func.coalesce(Job.page_count, 0)).label("total_pages"),
+            ),
+            filters,
+        )
+        .where(Job.submitted_by.is_not(None))
+        .group_by(Job.submitted_by)
+        .order_by(func.count(Job.id).desc())
+        .limit(limit)
+    )
     rows = (await db.execute(stmt)).all()
     return [
         LeaderboardEntry(
@@ -266,33 +419,41 @@ def physical_sheets_used(page_count: int, duplex: bool | None) -> int:
 
 @dataclass
 class CostRawRow:
-    """One job's worth of the fields needed to price it — printer identity
-    is included because toner rate is per-printer (see
-    app/reports/formulas.py:compute_printer_rate), unlike the plain
-    _RawRow above which only timeline/peak-times need."""
+    """One job's worth of the fields needed to price it (plus
+    file_size_bytes, used by app/routers/jobs.py:list_job_usage for its
+    byte totals — same row shape, just one more column, rather than a
+    second near-identical query) — printer identity is included because
+    toner rate is per-printer (see app/reports/formulas.py:
+    compute_printer_rate), unlike the plain _RawRow above which only
+    timeline/peak-times need."""
 
     printer_id: UUID
     printer_name: str
     submitted_by: str | None
+    mac_address: str | None
     page_count: int
     color_mode: str | None
     duplex: bool | None
+    file_size_bytes: int | None
 
 
 async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[CostRawRow]:
     """Feeds real per-job cost calculation (app/routers/reports.py's
-    cost-breakdown endpoint) — kept in this module rather than computing
-    cost here directly so aggregation.py stays DB-query-only and
-    app/reports/formulas.py stays a pure, DB-free calculation module (it
-    already imports from here; importing back would be circular)."""
+    cost-breakdown endpoint, app/routers/jobs.py's usage report) — kept in
+    this module rather than computing cost here directly so aggregation.py
+    stays DB-query-only and app/reports/formulas.py stays a pure, DB-free
+    calculation module (it already imports from here; importing back would
+    be circular)."""
     stmt = _apply_filters(
         select(
             Job.printer_id,
             Printer.name,
             Job.submitted_by,
+            Job.mac_address,
             Job.page_count,
             Job.color_mode,
             Job.duplex,
+            Job.file_size_bytes,
         ),
         filters,
     )
@@ -302,9 +463,11 @@ async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[Co
             printer_id=r.printer_id,
             printer_name=r.name,
             submitted_by=r.submitted_by,
+            mac_address=r.mac_address,
             page_count=r.page_count or 0,
             color_mode=r.color_mode,
             duplex=r.duplex,
+            file_size_bytes=r.file_size_bytes,
         )
         for r in rows
     ]
@@ -313,9 +476,9 @@ async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[Co
 async def get_raw_rows_for_export(db: AsyncSession, filters: ReportFilters):
     """Filtered job rows joined with printer name, for CSV export — one row
     per job, newest first."""
-    stmt = _apply_filters(
-        select(Job, Printer.name.label("printer_name")), filters
-    ).order_by(Job.created_at.desc())
+    stmt = _apply_filters(select(Job, Printer.name.label("printer_name")), filters).order_by(
+        Job.created_at.desc()
+    )
     return (await db.execute(stmt)).all()
 
 
@@ -356,7 +519,9 @@ class CopyTotals:
     copy_pages: int = 0
 
 
-async def get_copier_usage_totals(db: AsyncSession, filters: ReportFilters) -> dict[str, CopyTotals]:
+async def get_copier_usage_totals(
+    db: AsyncSession, filters: ReportFilters
+) -> dict[str, CopyTotals]:
     """staff_email -> aggregated copy totals — the copier-side mirror of
     get_user_leaderboard, over CopierUsageRecord instead of Job. Excludes
     unmapped rows (staff_email is null) entirely; see
@@ -417,23 +582,39 @@ class CombinedLeaderboardEntry:
     print_pages: int = 0
     copy_pages: int = 0
     total_pages: int = 0
+    color_pages: int = 0
+    mono_pages: int = 0
+    duplex_pages: int = 0
+    simplex_pages: int = 0
+    # Print-only — walk-up copy usage has no cost model (see
+    # get_copier_usage_totals). Left at 0.0 here; the combined-leaderboard
+    # router endpoint fills this in from the same cost accumulator
+    # report_cost_breakdown uses (app/routers/reports.py), since that
+    # depends on admin-configured formula settings this module doesn't
+    # have access to.
+    estimated_cost: float = 0.0
 
 
 async def _get_all_user_print_totals(
     db: AsyncSession, filters: ReportFilters
-) -> dict[str, LeaderboardEntry]:
-    """Same query as get_user_leaderboard, but with no limit — the
-    combined leaderboard below needs every user's print total before it
-    can rank by combined (print + copy) pages; get_user_leaderboard's own
-    limit would otherwise cut someone with modest print volume but heavy
-    copy volume before the copy side is even merged in, undercounting
-    them in the combined ranking."""
+) -> dict[str, CombinedLeaderboardEntry]:
+    """Same underlying query as get_user_leaderboard, but with no limit —
+    the combined leaderboard below needs every user's print total before
+    it can rank by combined (print + copy) pages; get_user_leaderboard's
+    own limit would otherwise cut someone with modest print volume but
+    heavy copy volume before the copy side is even merged in, undercounting
+    them in the combined ranking. Also broken down by color/duplex, same
+    CASE-WHEN-via-.filter() idiom as get_summary, just grouped by user."""
+    pages = func.coalesce(Job.page_count, 0)
     stmt = (
         _apply_filters(
             select(
                 Job.submitted_by,
-                func.count(Job.id).label("job_count"),
-                func.sum(func.coalesce(Job.page_count, 0)).label("total_pages"),
+                func.sum(pages).label("total_pages"),
+                func.sum(pages).filter(Job.color_mode == "color").label("color_pages"),
+                func.sum(pages).filter(Job.color_mode == "monochrome").label("mono_pages"),
+                func.sum(pages).filter(Job.duplex.is_(True)).label("duplex_pages"),
+                func.sum(pages).filter(Job.duplex.is_(False)).label("simplex_pages"),
             ),
             filters,
         )
@@ -442,28 +623,76 @@ async def _get_all_user_print_totals(
     )
     rows = (await db.execute(stmt)).all()
     return {
-        r.submitted_by: LeaderboardEntry(
-            key=r.submitted_by, label=r.submitted_by, job_count=r.job_count, total_pages=r.total_pages or 0
+        r.submitted_by: CombinedLeaderboardEntry(
+            key=r.submitted_by,
+            label=r.submitted_by,
+            print_pages=r.total_pages or 0,
+            total_pages=r.total_pages or 0,
+            color_pages=r.color_pages or 0,
+            mono_pages=r.mono_pages or 0,
+            duplex_pages=r.duplex_pages or 0,
+            simplex_pages=r.simplex_pages or 0,
         )
         for r in rows
     }
 
 
+async def resolve_display_names(db: AsyncSession, emails: set[str]) -> dict[str, str]:
+    """email -> best display label: the synced Google Workspace name if
+    known, else the email's local-part (before @) as a readable stand-in
+    for someone not in the roster yet (e.g. before an attribution alias
+    is merged) — same local-part idiom app/attribution/resolve.py uses on
+    the lookup side, applied here for display instead."""
+    if not emails:
+        return {}
+    result = await db.execute(
+        select(GoogleWorkspaceUser.email, GoogleWorkspaceUser.name).where(
+            GoogleWorkspaceUser.email.in_(emails)
+        )
+    )
+    names = dict(result.all())
+    return {email: names.get(email) or email.split("@", 1)[0] for email in emails}
+
+
+async def resolve_device_names(db: AsyncSession, macs: set[str]) -> dict[str, str]:
+    """mac_address -> best display label: the device's name from whichever
+    MDM roster has it (Mosyle for Mac/iPad, Google Workspace for
+    ChromeOS — both keyed by unique mac_address), falling back to the raw
+    MAC string itself for a device in neither roster yet. Never hides a
+    MAC outright — an admin can still act on it even unresolved, same
+    philosophy as resolve_display_names' local-part fallback above."""
+    if not macs:
+        return {}
+    mosyle_result = await db.execute(
+        select(MosyleDevice.mac_address, MosyleDevice.device_name).where(
+            MosyleDevice.mac_address.in_(macs)
+        )
+    )
+    names = {mac: name for mac, name in mosyle_result.all() if name}
+    remaining = macs - names.keys()
+    if remaining:
+        google_result = await db.execute(
+            select(GoogleWorkspaceDevice.mac_address, GoogleWorkspaceDevice.device_name).where(
+                GoogleWorkspaceDevice.mac_address.in_(remaining)
+            )
+        )
+        names.update({mac: name for mac, name in google_result.all() if name})
+    return {mac: names.get(mac, mac) for mac in macs}
+
+
 async def get_combined_user_leaderboard(
     db: AsyncSession, filters: ReportFilters, limit: int = 10
 ) -> list[CombinedLeaderboardEntry]:
-    print_totals = await _get_all_user_print_totals(db, filters)
+    merged = await _get_all_user_print_totals(db, filters)
     copy_totals = await get_copier_usage_totals(db, filters)
 
-    merged: dict[str, CombinedLeaderboardEntry] = {
-        email: CombinedLeaderboardEntry(
-            key=email, label=email, print_pages=entry.total_pages, total_pages=entry.total_pages
-        )
-        for email, entry in print_totals.items()
-    }
     for email, copy_entry in copy_totals.items():
         entry = merged.setdefault(email, CombinedLeaderboardEntry(key=email, label=email))
         entry.copy_pages = copy_entry.copy_pages
         entry.total_pages += copy_entry.copy_pages
+
+    display_names = await resolve_display_names(db, set(merged.keys()))
+    for email, entry in merged.items():
+        entry.label = display_names.get(email, email)
 
     return sorted(merged.values(), key=lambda e: e.total_pages, reverse=True)[:limit]
