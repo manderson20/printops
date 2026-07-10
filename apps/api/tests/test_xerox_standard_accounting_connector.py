@@ -60,7 +60,9 @@ async def test_get_meter_snapshot_falls_back_to_standard_total_only():
 @pytest.mark.asyncio
 async def test_test_connection_forces_xerox_profile():
     connector = XeroxStandardAccountingConnector()
-    with patch("app.printers.snmp_counters._run_snmp", return_value=XEROX_SYS_DESCR_OUTPUT) as mock_run:
+    with patch(
+        "app.printers.snmp_counters._run_snmp", return_value=XEROX_SYS_DESCR_OUTPUT
+    ) as mock_run:
         result = await connector.test_connection(_device())
     assert result.ok is True
     assert mock_run.call_count == 1

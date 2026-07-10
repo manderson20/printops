@@ -63,7 +63,9 @@ class CopierUsageRecord(Base, TimestampMixin):
     # connector's payload actually separates them.
     authentication_method: Mapped[str | None] = mapped_column(default=None)
 
-    activity_type: Mapped[str] = mapped_column(default="copy", server_default="copy")  # copy|scan|fax|unknown
+    activity_type: Mapped[str] = mapped_column(
+        default="copy", server_default="copy"
+    )  # copy|scan|fax|unknown
 
     page_count: Mapped[int | None] = mapped_column(default=None)
     sheet_count: Mapped[int | None] = mapped_column(default=None)

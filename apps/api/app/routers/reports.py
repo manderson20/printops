@@ -5,40 +5,46 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.deps import get_current_user, require_role
-from app.models.report import PrinterTonerCartridge, ReportFormulaSettings, ReportSnapshot
+from app.models.report import ReportFormulaSettings, ReportSnapshot
+from app.models.user import User
 from app.reports.aggregation import (
     CostRawRow,
     ReportFilters,
     get_combined_summary,
     get_combined_user_leaderboard,
     get_cost_raw_rows,
+    get_hourly_timeline,
     get_peak_times,
     get_printer_leaderboard,
     get_raw_rows_for_export,
     get_summary,
     get_timeline,
     get_user_leaderboard,
+    resolve_device_names,
+    resolve_display_names,
+    resolve_ou_scoped_emails,
 )
+from app.reports.cost_rates import load_printer_rates
 from app.reports.formulas import (
     FormulaValues,
     JobCost,
-    PrinterTonerRate,
     compute_environmental_impact,
-    compute_printer_rate,
     job_cost,
 )
 from app.reports.fun_facts import generate_fun_facts
+from app.reports.untracked_copies import get_untracked_copy_summary
 from app.schemas.auth import UserOut
 from app.schemas.report import (
     CombinedLeaderboardEntryOut,
     CombinedSummaryOut,
     CostEntryOut,
     FunFactsOut,
+    HourlyBucketOut,
     LeaderboardEntryOut,
     PeakTimesOut,
     SnapshotCreate,
@@ -46,6 +52,7 @@ from app.schemas.report import (
     SummaryOut,
     TimelineBucketOut,
 )
+from app.schemas.untracked_copies import UntrackedCopyPrinterEntryOut, UntrackedCopySummaryOut
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -61,13 +68,30 @@ async def _report_filters(
     color_mode: str | None = None,
     duplex: bool | None = None,
     current_user: UserOut = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> ReportFilters:
     """Shared query-param parsing + RBAC scoping for every report endpoint.
-    A non-admin only ever sees their own print history — `submitted_by` is
-    force-set to their own identity (the same value Job.submitted_by stores
-    for them, since UserOut.username *is* their attributed email for SSO
-    logins — see app/schemas/auth.py), overriding whatever they passed."""
-    if current_user.role != "admin":
+    A plain "viewer" only ever sees their own print history —
+    `submitted_by` is force-set to their own identity (the same value
+    Job.submitted_by stores for them, since UserOut.username *is* their
+    attributed email for SSO logins — see app/schemas/auth.py), overriding
+    whatever they passed. An "ou_viewer" instead gets `submitted_by_in`
+    set to every roster email under their granted OUs — granted_ou_paths
+    is re-read from the User row here, never trusted from the JWT (see
+    app.deps.get_current_user's docstring), so a grant change an admin
+    makes takes effect on this account's very next request, not just its
+    next login. "admin" is unrestricted, as before."""
+    submitted_by_in = None
+    if current_user.role == "ou_viewer":
+        result = await db.execute(
+            select(User.granted_ou_paths).where(
+                func.lower(User.email) == (current_user.email or "").lower()
+            )
+        )
+        granted_ou_paths = result.scalar_one_or_none() or []
+        submitted_by_in = await resolve_ou_scoped_emails(db, granted_ou_paths)
+        submitted_by = None
+    elif current_user.role != "admin":
         submitted_by = current_user.username
     return ReportFilters(
         start=start,
@@ -76,6 +100,7 @@ async def _report_filters(
         department=department,
         printer_id=printer_id,
         submitted_by=submitted_by,
+        submitted_by_in=submitted_by_in,
         status=status_filter,
         color_mode=color_mode,
         duplex=duplex,
@@ -136,43 +161,32 @@ def _accumulate(entry: _CostAccumulator, row: CostRawRow, cost: JobCost) -> None
     entry.paper_cost += cost.paper_cost
 
 
-async def _load_printer_rates(
-    db: AsyncSession, printer_ids: set[UUID], fallback: FormulaValues
-) -> dict[UUID, PrinterTonerRate]:
-    """One printer's cartridges price both its mono and color pages — see
-    app/reports/formulas.py:compute_printer_rate for the fallback rule
-    when a printer has no (or incomplete) cartridges configured yet."""
-    if not printer_ids:
-        return {}
-    result = await db.execute(
-        select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id.in_(printer_ids))
-    )
-    by_printer: dict[UUID, list[PrinterTonerCartridge]] = {}
-    for cartridge in result.scalars().all():
-        by_printer.setdefault(cartridge.printer_id, []).append(cartridge)
-    return {
-        printer_id: compute_printer_rate(by_printer.get(printer_id, []), fallback)
-        for printer_id in printer_ids
-    }
-
-
 async def _compute_cost_accumulators(
     db: AsyncSession,
     filters: ReportFilters,
     cost_per_sheet_paper: float,
     fallback: FormulaValues,
-) -> tuple[dict[str, _CostAccumulator], dict[str, _CostAccumulator], _CostAccumulator]:
-    """Returns (by_printer, by_user, overall) computed together in one pass
-    over the raw job rows, since every grouping needs the identical
-    per-job cost (real per-printer toner rate + physical-sheet-accurate
-    paper cost — see the module docstring in aggregation.py's
-    get_cost_raw_rows for why this can't be a single SQL GROUP BY)."""
+) -> tuple[
+    dict[str, _CostAccumulator],
+    dict[str, _CostAccumulator],
+    dict[str, _CostAccumulator],
+    _CostAccumulator,
+]:
+    """Returns (by_printer, by_user, by_device, overall) computed together
+    in one pass over the raw job rows, since every grouping needs the
+    identical per-job cost (real per-printer toner rate + physical-sheet-
+    accurate paper cost — see the module docstring in aggregation.py's
+    get_cost_raw_rows for why this can't be a single SQL GROUP BY).
+    by_device lets the same person's Mac and iPad (same Workspace/Mosyle
+    account) show up as distinct rows, since mac_address — not
+    submitted_by — is the grouping key."""
     rows = await get_cost_raw_rows(db, filters)
     printer_ids = {r.printer_id for r in rows}
-    rates = await _load_printer_rates(db, printer_ids, fallback)
+    rates = await load_printer_rates(db, printer_ids, fallback)
 
     by_printer: dict[str, _CostAccumulator] = {}
     by_user: dict[str, _CostAccumulator] = {}
+    by_device: dict[str, _CostAccumulator] = {}
     overall = _CostAccumulator(label="Overall")
 
     for row in rows:
@@ -190,9 +204,27 @@ async def _compute_cost_accumulators(
             )
             _accumulate(user_entry, row, cost)
 
+        if row.mac_address:
+            device_entry = by_device.setdefault(
+                row.mac_address, _CostAccumulator(label=row.mac_address)
+            )
+            _accumulate(device_entry, row, cost)
+
         _accumulate(overall, row, cost)
 
-    return by_printer, by_user, overall
+    # by_printer's labels are already real printer names; by_user's (raw
+    # submitted_by email so far) and by_device's (raw MAC so far) benefit
+    # from the same resolve-to-a-real-name treatment the Combined
+    # Leaderboard uses — see app/reports/aggregation.py.
+    display_names = await resolve_display_names(db, set(by_user.keys()))
+    for email, entry in by_user.items():
+        entry.label = display_names.get(email, email)
+
+    device_names = await resolve_device_names(db, set(by_device.keys()))
+    for mac, entry in by_device.items():
+        entry.label = device_names.get(mac, mac)
+
+    return by_printer, by_user, by_device, overall
 
 
 def _build_summary_out(summary, environmental, cost_overall: _CostAccumulator) -> SummaryOut:
@@ -227,7 +259,7 @@ async def _summary_out(db: AsyncSession, filters: ReportFilters) -> SummaryOut:
     # per-printer cartridge cost) — only the dollar cost fields switch to
     # the new real, per-job-accurate calculation below.
     environmental = compute_environmental_impact(summary, formulas)
-    _, _, overall = await _compute_cost_accumulators(
+    _, _, _, overall = await _compute_cost_accumulators(
         db, filters, formula_settings.cost_per_sheet_paper, formulas
     )
     return _build_summary_out(summary, environmental, overall)
@@ -253,6 +285,31 @@ async def report_timeline(
         )
     buckets = await get_timeline(db, filters, granularity=granularity)
     return [TimelineBucketOut(**vars(b)) for b in buckets]
+
+
+@router.get(
+    "/live/hourly",
+    response_model=list[HourlyBucketOut],
+    dependencies=[Depends(require_role("admin"))],
+)
+async def report_live_hourly(start: datetime, end: datetime, db: AsyncSession = Depends(get_db)):
+    """Intraday hourly buckets for the Live Dashboard (apps/web/.../live/
+    page.tsx) — distinct from /timeline's day/week/month view above.
+    start/end are required and computed client-side (typically the
+    viewer's local midnight through now) rather than defaulted here — see
+    app/reports/aggregation.py:get_hourly_timeline's docstring for why
+    this endpoint has no server-side notion of "today" at all.
+
+    Admin-only: this returns org-wide aggregate activity + (via the
+    frontend's separate GET /jobs call) a recent-jobs feed, with no
+    per-person scoping — it's an ops/TV-display view, not personal data,
+    so it's restricted by role rather than self- or OU-scoped."""
+    if end <= start:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="end must be after start"
+        )
+    buckets = await get_hourly_timeline(db, start, end)
+    return [HourlyBucketOut(**vars(b)) for b in buckets]
 
 
 @router.get("/leaderboard", response_model=list[LeaderboardEntryOut])
@@ -291,6 +348,22 @@ async def report_combined_leaderboard(
     db: AsyncSession = Depends(get_db),
 ):
     entries = await get_combined_user_leaderboard(db, filters, limit=min(limit, 50))
+
+    # Print-only estimated cost, same real per-printer-toner-rate formula
+    # /cost-breakdown uses (job_cost, app/reports/formulas.py) — computed
+    # here rather than in aggregation.py's get_combined_user_leaderboard
+    # since it depends on admin-configured formula settings that live at
+    # this router layer, not in that lower-level aggregation module.
+    formula_settings = await _get_or_create_formula_settings(db)
+    fallback = _formula_values(formula_settings)
+    _, cost_by_user, _, _overall = await _compute_cost_accumulators(
+        db, filters, formula_settings.cost_per_sheet_paper, fallback
+    )
+    for entry in entries:
+        acc = cost_by_user.get(entry.key)
+        if acc is not None:
+            entry.estimated_cost = round(acc.total_cost, 2)
+
     return [CombinedLeaderboardEntryOut(**vars(e)) for e in entries]
 
 
@@ -300,20 +373,24 @@ async def report_cost_breakdown(
     filters: ReportFilters = Depends(_report_filters),
     db: AsyncSession = Depends(get_db),
 ):
-    """Real per-printer/per-job cost, grouped by printer or by user — the
-    "cost by user" report. Supersedes /leaderboard's job_count/total_pages
-    for display purposes (this returns both, plus cost), but /leaderboard
-    stays for callers that only need the lighter query."""
-    if group_by not in ("printer", "user"):
+    """Real per-printer/per-job cost, grouped by printer, user, or device —
+    the "cost by user"/"cost by device" report. Supersedes /leaderboard's
+    job_count/total_pages for display purposes (this returns both, plus
+    cost), but /leaderboard stays for callers that only need the lighter
+    query. "device" groups by mac_address rather than submitted_by, so the
+    same person's Mac and iPad (same Workspace/Mosyle account) show up as
+    distinct rows — see app/reports/aggregation.py:resolve_device_names."""
+    if group_by not in ("printer", "user", "device"):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="group_by must be 'printer' or 'user'"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="group_by must be 'printer', 'user', or 'device'",
         )
     formula_settings = await _get_or_create_formula_settings(db)
     fallback = _formula_values(formula_settings)
-    by_printer, by_user, _overall = await _compute_cost_accumulators(
+    by_printer, by_user, by_device, _overall = await _compute_cost_accumulators(
         db, filters, formula_settings.cost_per_sheet_paper, fallback
     )
-    buckets = by_printer if group_by == "printer" else by_user
+    buckets = {"printer": by_printer, "user": by_user, "device": by_device}[group_by]
     entries = [
         CostEntryOut(
             key=key,
@@ -336,6 +413,31 @@ async def report_peak_times(
 ):
     peak = await get_peak_times(db, filters)
     return PeakTimesOut(by_day_of_week=peak.by_day_of_week, by_hour=peak.by_hour)
+
+
+@router.get("/untracked-copies", response_model=UntrackedCopySummaryOut)
+async def report_untracked_copies(
+    filters: ReportFilters = Depends(_report_filters), db: AsyncSession = Depends(get_db)
+):
+    """Estimated walk-up copy activity PrintOps otherwise has no
+    visibility into — see app/reports/untracked_copies.py's module
+    docstring for how measured vs. estimated is decided, and why it never
+    reaches back before the org-wide setting was enabled."""
+    summary = await get_untracked_copy_summary(db, filters)
+    return UntrackedCopySummaryOut(
+        measured_copies=summary.measured_copies,
+        estimated_untracked=summary.estimated_untracked,
+        tracking_since=summary.tracking_since,
+        printers=[
+            UntrackedCopyPrinterEntryOut(
+                printer_id=p.printer_id,
+                printer_name=p.printer_name,
+                measured_copies=p.measured_copies,
+                estimated_untracked=p.estimated_untracked,
+            )
+            for p in summary.printers
+        ],
+    )
 
 
 def _previous_period_filters(filters: ReportFilters) -> ReportFilters | None:
@@ -502,7 +604,7 @@ async def create_snapshot(
     formula_settings = await _get_or_create_formula_settings(db)
     formulas = _formula_values(formula_settings)
     environmental = compute_environmental_impact(summary, formulas)
-    _, _, cost_overall = await _compute_cost_accumulators(
+    _, _, _, cost_overall = await _compute_cost_accumulators(
         db, filters, formula_settings.cost_per_sheet_paper, formulas
     )
     summary_out = _build_summary_out(summary, environmental, cost_overall)

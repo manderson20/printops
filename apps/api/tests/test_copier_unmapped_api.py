@@ -9,7 +9,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-os.environ["PRINTOPS_COPIER_IMPORT_SPOOL_DIR"] = tempfile.mkdtemp(prefix="printops-copier-imports-test-")
+os.environ["PRINTOPS_COPIER_IMPORT_SPOOL_DIR"] = tempfile.mkdtemp(
+    prefix="printops-copier-imports-test-"
+)
 
 from app.db import get_db  # noqa: E402
 from app.main import app  # noqa: E402
@@ -77,7 +79,11 @@ def device_with_unmapped_usage(client, auth_headers):
         f"/api/v1/copier-imports/{upload['batch_id']}/preview",
         headers=auth_headers,
         json={
-            "column_mapping": {"identity_value": "User Code", "occurred_at": "Date", "page_count": "Pages"},
+            "column_mapping": {
+                "identity_value": "User Code",
+                "occurred_at": "Date",
+                "page_count": "Pages",
+            },
             "identity_type": "staff_id",
         },
     )

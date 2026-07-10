@@ -69,7 +69,9 @@ async def test_lexmark_meter_uses_existing_unsupported_breakdown_entry():
     hardware verified yet) — the placeholder reuses it rather than
     reimplementing anything."""
     with patch("app.printers.snmp_counters._run_snmp", return_value=STANDARD_TOTAL_OUTPUT):
-        snapshot = await LexmarkAccountingConnector().get_meter_snapshot(_device("lexmark_accounting"))
+        snapshot = await LexmarkAccountingConnector().get_meter_snapshot(
+            _device("lexmark_accounting")
+        )
     assert snapshot.total == 12345
     assert snapshot.copy is None
     assert snapshot.print is None
@@ -93,7 +95,9 @@ async def test_sharp_meter_falls_back_to_standard_total_only():
 
 @pytest.mark.parametrize("connector_type,connector_cls", ALL_PLACEHOLDERS)
 @pytest.mark.asyncio
-async def test_import_accounting_file_uses_same_csv_pipeline_as_generic(connector_type, connector_cls):
+async def test_import_accounting_file_uses_same_csv_pipeline_as_generic(
+    connector_type, connector_cls
+):
     template = CopierImportTemplate(
         name="t",
         vendor="generic",
@@ -102,7 +106,9 @@ async def test_import_accounting_file_uses_same_csv_pipeline_as_generic(connecto
         delimiter=",",
     )
     csv_bytes = b"User,Date,Pages\nabc123,2026-07-01,10\n"
-    result = await connector_cls().import_accounting_file(_device(connector_type), csv_bytes, template)
+    result = await connector_cls().import_accounting_file(
+        _device(connector_type), csv_bytes, template
+    )
     assert len(result.rows) == 1
     assert result.rows[0].external_identity_used == "abc123"
     assert result.rows[0].page_count == 10

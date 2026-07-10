@@ -20,6 +20,7 @@ from app.models.job import Job
 from app.models.mosyle import MosyleSettings
 from app.models.printer import Printer
 from app.models.snmp import PrinterCounterReading
+from app.models.syslog import PrinterSyslogEvent
 from app.printers.snmp_counters import (
     get_or_create_snmp_defaults,
     record_reading,
@@ -40,11 +41,13 @@ from app.routers import (
     quota_holds,
     release,
     reports,
-    settings as settings_router,
     staff_copier_identities,
     updates,
     users,
 )
+from app.routers import settings as settings_router
+from app.routers import syslog as syslog_router
+from app.syslog.service import get_or_create_syslog_settings
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -86,13 +89,17 @@ async def _printer_status_poll_loop() -> None:
     unreachable printer can't stall/skip the rest of the cycle; a cycle-level
     failure (e.g. DB down) just logs and retries next interval.
 
-    Also re-runs capability discovery whenever a printer transitions into
-    "online" from anything else — see
+    Also re-runs capability discovery and the CUPS queue sync whenever a
+    printer transitions into "online" from anything else — see
     refresh_printer_status_and_rediscover's docstring."""
     while True:
         try:
             async with AsyncSessionLocal() as db:
-                printers = (await db.execute(select(Printer))).scalars().all()
+                printers = (
+                    (await db.execute(select(Printer).where(Printer.archived_at.is_(None))))
+                    .scalars()
+                    .all()
+                )
 
                 async def _refresh_one(printer: Printer) -> None:
                     await refresh_printer_status_and_rediscover(printer)
@@ -124,7 +131,14 @@ async def _snmp_counter_poll_loop() -> None:
                 defaults = await get_or_create_snmp_defaults(db)
                 if defaults.enabled:
                     printers = (
-                        (await db.execute(select(Printer).where(Printer.snmp_enabled.is_(True))))
+                        (
+                            await db.execute(
+                                select(Printer).where(
+                                    Printer.snmp_enabled.is_(True),
+                                    Printer.archived_at.is_(None),
+                                )
+                            )
+                        )
                         .scalars()
                         .all()
                     )
@@ -159,14 +173,35 @@ async def _counter_reading_purge_loop() -> None:
                 defaults = await get_or_create_snmp_defaults(db)
                 cutoff = datetime.now(UTC) - timedelta(days=defaults.retention_days)
                 await db.execute(
-                    delete(PrinterCounterReading).where(
-                        PrinterCounterReading.recorded_at < cutoff
-                    )
+                    delete(PrinterCounterReading).where(PrinterCounterReading.recorded_at < cutoff)
                 )
                 await db.commit()
         except Exception:
             logger.exception("Unexpected error in counter reading purge loop")
         await asyncio.sleep(COUNTER_READING_PURGE_INTERVAL_SECONDS)
+
+
+SYSLOG_EVENT_PURGE_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+async def _syslog_event_purge_loop() -> None:
+    """Deletes PrinterSyslogEvent rows older than
+    SyslogSettings.retention_days — same daily cadence and tolerant
+    per-cycle error handling as _counter_reading_purge_loop above, and for
+    the same reason: not time-sensitive, so a day's delay in pruning is
+    harmless."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                settings = await get_or_create_syslog_settings(db)
+                cutoff = datetime.now(UTC) - timedelta(days=settings.retention_days)
+                await db.execute(
+                    delete(PrinterSyslogEvent).where(PrinterSyslogEvent.received_at < cutoff)
+                )
+                await db.commit()
+        except Exception:
+            logger.exception("Unexpected error in syslog event purge loop")
+        await asyncio.sleep(SYSLOG_EVENT_PURGE_INTERVAL_SECONDS)
 
 
 HELD_JOB_PURGE_INTERVAL_SECONDS = 15 * 60
@@ -234,15 +269,21 @@ async def _failed_job_purge_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tasks = [
-        asyncio.create_task(_make_device_sync_loop("Mosyle", MosyleSettings, run_mosyle_sync, MosyleError)()),
+        asyncio.create_task(
+            _make_device_sync_loop("Mosyle", MosyleSettings, run_mosyle_sync, MosyleError)()
+        ),
         asyncio.create_task(
             _make_device_sync_loop(
-                "Google Workspace", GoogleWorkspaceSettings, run_google_workspace_sync, GoogleWorkspaceError
+                "Google Workspace",
+                GoogleWorkspaceSettings,
+                run_google_workspace_sync,
+                GoogleWorkspaceError,
             )()
         ),
         asyncio.create_task(_printer_status_poll_loop()),
         asyncio.create_task(_snmp_counter_poll_loop()),
         asyncio.create_task(_counter_reading_purge_loop()),
+        asyncio.create_task(_syslog_event_purge_loop()),
         asyncio.create_task(_held_job_purge_loop()),
         asyncio.create_task(_failed_job_purge_loop()),
     ]
@@ -277,6 +318,7 @@ app.include_router(printers.router, prefix="/api/v1/printers", tags=["printers"]
 app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["jobs"])
 app.include_router(jobs.user_router, prefix="/api/v1/jobs", tags=["jobs"])
 app.include_router(internal.router, prefix="/api/v1/internal", tags=["internal"])
+app.include_router(syslog_router.router, prefix="/api/v1/syslog", tags=["syslog"])
 app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["settings"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(device_overrides.router, prefix="/api/v1/devices", tags=["devices"])
@@ -293,5 +335,7 @@ app.include_router(
     tags=["staff-copier-identities"],
 )
 app.include_router(copier_imports.router, prefix="/api/v1/copier-imports", tags=["copier-imports"])
-app.include_router(copier_unmapped.router, prefix="/api/v1/copier-unmapped", tags=["copier-unmapped"])
+app.include_router(
+    copier_unmapped.router, prefix="/api/v1/copier-unmapped", tags=["copier-unmapped"]
+)
 app.include_router(quota_holds.router, prefix="/api/v1/quota-holds", tags=["quota-holds"])

@@ -3,17 +3,25 @@
 import { useEffect, useState } from "react";
 import {
   ApiError,
+  createPrinterReleaseBypass,
+  deletePrinterReleaseBypass,
   getPrintReleaseSettings,
+  listGoogleWorkspaceUsers,
+  listPrinterReleaseBypasses,
   regeneratePrinterReleaseToken,
   updatePrintReleaseSettings,
   updatePrinter,
+  type GoogleWorkspaceUserEntry,
   type Printer,
+  type PrinterReleaseBypass,
 } from "@/lib/api";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
 import { ErrorState } from "@/components/ui/EmptyState";
+
+const RELEASE_BYPASS_ROSTER_DATALIST_ID = "printer-release-bypass-roster";
 
 export function PrintReleaseCard({
   printer,
@@ -30,6 +38,12 @@ export function PrintReleaseCard({
   const [holdExpiryHours, setHoldExpiryHours] = useState<string>("");
   const [savingExpiry, setSavingExpiry] = useState(false);
 
+  const [bypasses, setBypasses] = useState<PrinterReleaseBypass[] | null>(null);
+  const [roster, setRoster] = useState<GoogleWorkspaceUserEntry[]>([]);
+  const [bypassEmail, setBypassEmail] = useState("");
+  const [bypassSaving, setBypassSaving] = useState(false);
+  const [bypassError, setBypassError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!isAdmin) return;
     getPrintReleaseSettings()
@@ -37,7 +51,49 @@ export function PrintReleaseCard({
       .catch(() => {});
   }, [isAdmin]);
 
+  function loadBypasses() {
+    if (!isAdmin) return;
+    listPrinterReleaseBypasses(printer.id)
+      .then(setBypasses)
+      .catch(() => setBypasses([]));
+  }
+
+  useEffect(loadBypasses, [isAdmin, printer.id]);
+  useEffect(() => {
+    if (!isAdmin) return;
+    listGoogleWorkspaceUsers()
+      .then(setRoster)
+      .catch(() => setRoster([]));
+  }, [isAdmin]);
+
   if (!isAdmin) return null;
+
+  async function handleAddBypass() {
+    setBypassSaving(true);
+    setBypassError(null);
+    try {
+      await createPrinterReleaseBypass(printer.id, bypassEmail.trim());
+      setBypassEmail("");
+      loadBypasses();
+    } catch (err) {
+      setBypassError(err instanceof ApiError ? err.message : "Failed to add bypass");
+    } finally {
+      setBypassSaving(false);
+    }
+  }
+
+  async function handleRemoveBypass(bypassId: string) {
+    setBypassSaving(true);
+    setBypassError(null);
+    try {
+      await deletePrinterReleaseBypass(printer.id, bypassId);
+      loadBypasses();
+    } catch (err) {
+      setBypassError(err instanceof ApiError ? err.message : "Failed to remove bypass");
+    } finally {
+      setBypassSaving(false);
+    }
+  }
 
   const kioskUrl =
     printer.release_token && typeof window !== "undefined"
@@ -142,6 +198,67 @@ export function PrintReleaseCard({
           >
             {regenerating ? "Regenerating…" : "Regenerate Link"}
           </Button>
+
+          <div className="mt-2 border-t border-black/[.08] pt-4 dark:border-white/[.1]">
+            <span className="text-xs font-medium text-zinc-500">
+              Release Bypass — skips the kiosk for specific staff
+            </span>
+            <p className="mt-1 text-xs text-zinc-500">
+              These users&rsquo; jobs at this printer print immediately, without ever being held
+              — e.g. someone who sits right next to it. Everyone else still releases their own
+              jobs normally.
+            </p>
+
+            {bypasses !== null && bypasses.length > 0 && (
+              <ul className="mt-3 flex flex-col gap-1">
+                {bypasses.map((bypass) => (
+                  <li
+                    key={bypass.id}
+                    className="flex items-center justify-between rounded border border-black/[.08] px-2 py-1 text-xs dark:border-white/[.1]"
+                  >
+                    <span className="font-mono">{bypass.user_email}</span>
+                    <Button
+                      variant="danger"
+                      className="!px-2 !py-0.5 text-xs"
+                      disabled={bypassSaving}
+                      onClick={() => handleRemoveBypass(bypass.id)}
+                    >
+                      Remove
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="mt-3 flex items-end gap-2">
+              <label className="flex flex-1 flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
+                User
+                <input
+                  list={RELEASE_BYPASS_ROSTER_DATALIST_ID}
+                  value={bypassEmail}
+                  onChange={(e) => setBypassEmail(e.target.value)}
+                  placeholder="user@domain.com"
+                  className="rounded border border-black/[.15] bg-transparent px-2 py-1.5 text-sm text-black dark:border-white/[.2] dark:text-zinc-50"
+                />
+              </label>
+              <Button
+                variant="secondary"
+                className="!px-3 !py-1 text-xs"
+                onClick={handleAddBypass}
+                disabled={bypassSaving || !bypassEmail.trim()}
+              >
+                {bypassSaving ? "Adding…" : "Add"}
+              </Button>
+            </div>
+            {bypassError && <ErrorState>{bypassError}</ErrorState>}
+            <datalist id={RELEASE_BYPASS_ROSTER_DATALIST_ID}>
+              {roster.map((u) => (
+                <option key={u.email} value={u.email}>
+                  {u.name ?? u.email}
+                </option>
+              ))}
+            </datalist>
+          </div>
         </div>
       )}
 
