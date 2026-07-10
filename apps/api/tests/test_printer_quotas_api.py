@@ -27,7 +27,7 @@ async def db_session_factory():
     async with session_factory() as seed:
         seed.add(
             GoogleWorkspaceUser(
-                email="manderson@brookfieldr3.org",
+                email="manderson@example.com",
                 name="Matt Anderson",
                 synced_at=datetime.now(UTC),
             )
@@ -73,7 +73,7 @@ def test_create_rejects_email_not_in_roster(client, auth_headers, printer_id):
     response = client.post(
         f"/api/v1/printers/{printer_id}/quotas",
         headers=auth_headers,
-        json={"user_email": "nobody@brookfieldr3.org", "period": "monthly", "page_limit": 100},
+        json={"user_email": "nobody@example.com", "period": "monthly", "page_limit": 100},
     )
     assert response.status_code == 400
 
@@ -92,7 +92,7 @@ def test_create_allows_default_row_without_email(client, auth_headers, printer_i
 
 
 def test_create_duplicate_user_row_conflicts(client, auth_headers, printer_id):
-    payload = {"user_email": "manderson@brookfieldr3.org", "period": "monthly", "page_limit": 50}
+    payload = {"user_email": "manderson@example.com", "period": "monthly", "page_limit": 50}
     first = client.post(f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers, json=payload)
     assert first.status_code == 201
     second = client.post(
@@ -115,14 +115,14 @@ def test_list_reflects_usage(client, auth_headers, backend_headers, printer_id):
     create = client.post(
         f"/api/v1/printers/{printer_id}/quotas",
         headers=auth_headers,
-        json={"user_email": "manderson@brookfieldr3.org", "period": "monthly", "page_limit": 50},
+        json={"user_email": "manderson@example.com", "period": "monthly", "page_limit": 50},
     )
     assert create.status_code == 201
 
     job = client.post(
         "/api/v1/jobs",
         headers=backend_headers,
-        json={"printer_id": printer_id, "submitted_by": "manderson@brookfieldr3.org"},
+        json={"printer_id": printer_id, "submitted_by": "manderson@example.com"},
     )
     job_id = job.json()["id"]
     client.patch(
@@ -142,7 +142,7 @@ def test_update_and_delete(client, auth_headers, printer_id):
     create = client.post(
         f"/api/v1/printers/{printer_id}/quotas",
         headers=auth_headers,
-        json={"user_email": "manderson@brookfieldr3.org", "period": "monthly", "page_limit": 50},
+        json={"user_email": "manderson@example.com", "period": "monthly", "page_limit": 50},
     )
     quota_id = create.json()["id"]
 

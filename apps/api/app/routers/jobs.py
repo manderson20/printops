@@ -301,7 +301,7 @@ def _usage_out(
 
 def _usage_row_matches(row: UserUsageOut, search: str) -> bool:
     """Supports a leading "*" for a domain-suffix filter (e.g.
-    "*brookfieldr3.org" -> only emails ending "@brookfieldr3.org", the
+    "*example.com" -> only emails ending "@example.com", the
     quickest way to split staff from students when the two groups use
     different domains) — otherwise a plain substring match against
     name/email, same as the frontend's previous client-side filter."""
