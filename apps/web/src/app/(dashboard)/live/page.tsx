@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { getLiveHourly, listJobs, type HourlyBucket, type Job } from "@/lib/api";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
@@ -9,21 +9,60 @@ import { Badge } from "@/components/ui/Badge";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
-import { VolumeBarChart } from "../insights/charts";
+import { StackedVolumeBarChart } from "../insights/charts";
 
 const POLL_INTERVAL_MS = 15 * 1000;
 const RECENT_JOBS_LIMIT = 20;
 
-function todayWindow(): { start: Date; end: Date } {
+// A true rolling 24h window ending at the top of the current (in-progress)
+// hour, not a fixed midnight-to-midnight day — the current hour is always
+// the rightmost bar, and as each new hour begins the whole window slides
+// forward, aging the oldest hour off the left edge. Rounds `end` up to the
+// next clock hour (e.g. 2:37pm -> 3:00pm) so every bucket boundary lines
+// up with a real clock hour instead of a "37 minutes past" offset, which
+// would make hourLabel below print confusing in-between times.
+function rollingWindow(): { start: Date; end: Date } {
   const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  const end = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    now.getHours() + 1,
+    0,
+    0,
+    0,
+  );
+  const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
   return { start, end };
 }
 
 function hourLabel(start: Date, hour: number): string {
   const d = new Date(start.getTime() + hour * 60 * 60 * 1000);
   return d.toLocaleTimeString([], { hour: "numeric" });
+}
+
+function ExpandIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
+      <path
+        d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CompressIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
+      <path
+        d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
 
 function StatTile({ label, value }: { label: string; value: string }) {
@@ -37,23 +76,51 @@ function StatTile({ label, value }: { label: string; value: string }) {
 
 type LoadState =
   | { phase: "loading" }
-  | { phase: "ok"; buckets: HourlyBucket[]; jobs: Job[] }
+  | { phase: "ok"; buckets: HourlyBucket[]; jobs: Job[]; windowStart: Date }
   | { phase: "error"; message: string };
 
 export default function LiveDashboardPage() {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [now, setNow] = useState<Date>(() => new Date());
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Fullscreens the page's own container (not the whole <body>), so the
+  // sidebar nav — a DOM sibling, not a descendant — simply isn't part of
+  // what the browser renders in fullscreen. Tracks state off the native
+  // fullscreenchange event, not just the button click, so Escape / browser
+  // chrome exits still flip the icon back correctly.
+  useEffect(() => {
+    function onFullscreenChange() {
+      setIsFullscreen(document.fullscreenElement === containerRef.current);
+    }
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    } else {
+      void containerRef.current?.requestFullscreen();
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
 
     function load() {
-      const { start, end } = todayWindow();
+      // Computed once per poll and carried on the "ok" state itself
+      // (windowStart) rather than recomputed at render time — a second,
+      // independent rollingWindow() call a few seconds later could round
+      // to a different hour and desync the bar labels from what was
+      // actually fetched.
+      const { start, end } = rollingWindow();
       Promise.all([getLiveHourly(start, end), listJobs({ limit: RECENT_JOBS_LIMIT })])
         .then(([buckets, jobs]) => {
           if (cancelled) return;
-          setState({ phase: "ok", buckets, jobs });
+          setState({ phase: "ok", buckets, jobs, windowStart: start });
           setLastUpdated(new Date());
         })
         .catch((error: unknown) => {
@@ -85,10 +152,13 @@ export default function LiveDashboardPage() {
     ? Math.max(0, Math.ceil((lastUpdated.getTime() + POLL_INTERVAL_MS - now.getTime()) / 1000))
     : null;
 
-  const { start } = todayWindow();
   const chartData =
     state.phase === "ok"
-      ? state.buckets.map((b) => ({ label: hourLabel(start, b.hour), value: b.total_pages }))
+      ? state.buckets.map((b) => ({
+          label: hourLabel(state.windowStart, b.hour),
+          print: b.total_pages,
+          copy: b.copy_pages,
+        }))
       : [];
 
   const totals =
@@ -99,28 +169,44 @@ export default function LiveDashboardPage() {
             pages: acc.pages + b.total_pages,
             color: acc.color + b.color_pages,
             duplex: acc.duplex + b.duplex_pages,
+            copyPages: acc.copyPages + b.copy_pages,
           }),
-          { jobs: 0, pages: 0, color: 0, duplex: 0 },
+          { jobs: 0, pages: 0, color: 0, duplex: 0, copyPages: 0 },
         )
       : null;
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
+    <div
+      ref={containerRef}
+      className="mx-auto flex w-full max-w-6xl flex-col gap-6 bg-white p-0 dark:bg-zinc-950 [&:fullscreen]:max-w-none [&:fullscreen]:overflow-y-auto [&:fullscreen]:p-6"
+    >
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Live Dashboard</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Today&rsquo;s print activity by hour — updates on its own every 15 seconds, no refresh
+            Rolling last 24 hours of print activity — the current hour is always the rightmost
+            bar, sliding forward as time passes. Updates on its own every 15 seconds, no refresh
             needed. Good for leaving up on a TV display.
           </p>
         </div>
-        {lastUpdated && (
-          <span className="flex items-center gap-2 text-xs text-zinc-400">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
-            Updated {lastUpdated.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}
-            {secondsUntilRefresh !== null && ` · next in ${secondsUntilRefresh}s`}
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {lastUpdated && (
+            <span className="flex items-center gap-2 text-xs text-zinc-400">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+              Updated {lastUpdated.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}
+              {secondsUntilRefresh !== null && ` · next in ${secondsUntilRefresh}s`}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            title={isFullscreen ? "Exit full screen" : "Full screen"}
+            aria-label={isFullscreen ? "Exit full screen" : "Full screen"}
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-black/[.1] text-zinc-500 hover:bg-black/[.04] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.08]"
+          >
+            {isFullscreen ? <CompressIcon /> : <ExpandIcon />}
+          </button>
+        </div>
       </div>
 
       {state.phase === "loading" && <Spinner label="Loading live dashboard…" />}
@@ -128,16 +214,17 @@ export default function LiveDashboardPage() {
 
       {state.phase === "ok" && totals && (
         <>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <StatTile label="Jobs Today" value={totals.jobs.toLocaleString()} />
-            <StatTile label="Pages Today" value={totals.pages.toLocaleString()} />
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
+            <StatTile label="Jobs (24h)" value={totals.jobs.toLocaleString()} />
+            <StatTile label="Pages (24h)" value={totals.pages.toLocaleString()} />
+            <StatTile label="Copy Pages (24h)" value={totals.copyPages.toLocaleString()} />
             <StatTile label="Color Pages" value={totals.color.toLocaleString()} />
             <StatTile label="Duplex Pages" value={totals.duplex.toLocaleString()} />
           </div>
 
           <Card>
-            <CardTitle className="mb-4">Pages by Hour</CardTitle>
-            <VolumeBarChart data={chartData} />
+            <CardTitle className="mb-4">Pages by Hour (Last 24h)</CardTitle>
+            <StackedVolumeBarChart data={chartData} />
           </Card>
 
           <Card className="overflow-hidden p-0">

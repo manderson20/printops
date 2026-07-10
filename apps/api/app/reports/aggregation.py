@@ -190,7 +190,15 @@ class HourlyBucket:
     Dashboard's intraday view (app/routers/reports.py's /live/hourly),
     distinct from get_timeline's day/week/month buckets above. `hour` is
     just an index (0-23), not a wall-clock hour-of-day in any particular
-    timezone — see get_hourly_timeline's docstring for why."""
+    timezone — see get_hourly_timeline's docstring for why.
+
+    copy_pages/copy_count cover only *tracked* walk-up copies
+    (CopierUsageRecord rows with a resolved staff identity — see
+    _fetch_raw_copy_rows below). Untracked/estimated copy volume (the
+    Untracked Copy Activity report) is SNMP counter-delta based and only
+    ever computed at daily granularity, so it's deliberately not folded
+    in here — an hourly split of a daily estimate would overstate its
+    precision."""
 
     hour: int
     total_pages: int = 0
@@ -199,6 +207,32 @@ class HourlyBucket:
     duplex_pages: int = 0
     simplex_pages: int = 0
     job_count: int = 0
+    copy_pages: int = 0
+    copy_count: int = 0
+
+
+@dataclass
+class _CopyRawRow:
+    created_at: datetime
+    page_count: int
+
+
+async def _fetch_raw_copy_rows(
+    db: AsyncSession, start: datetime, end: datetime
+) -> list[_CopyRawRow]:
+    """Tracked copies only — activity_type == 'copy' with a known page
+    count. Reuses _apply_copier_filters (see the Combined print + copy
+    reporting section below) so this agrees with every other copier
+    report on what start/end filtering means."""
+    stmt = _apply_copier_filters(
+        select(CopierUsageRecord.created_at, CopierUsageRecord.page_count),
+        ReportFilters(start=start, end=end),
+    ).where(
+        CopierUsageRecord.activity_type == "copy",
+        CopierUsageRecord.page_count.is_not(None),
+    )
+    rows = (await db.execute(stmt)).all()
+    return [_CopyRawRow(created_at=r.created_at, page_count=r.page_count or 0) for r in rows]
 
 
 async def get_hourly_timeline(
@@ -244,6 +278,17 @@ async def get_hourly_timeline(
             bucket.duplex_pages += r.page_count
         elif r.duplex is False:
             bucket.simplex_pages += r.page_count
+
+    copy_rows = await _fetch_raw_copy_rows(db, start, end)
+    for cr in copy_rows:
+        naive_created_at = cr.created_at.replace(tzinfo=None)
+        elapsed_hours = int((naive_created_at - naive_start).total_seconds() // 3600)
+        bucket = buckets.get(elapsed_hours)
+        if bucket is None:
+            continue
+        bucket.copy_count += 1
+        bucket.copy_pages += cr.page_count
+
     return [buckets[h] for h in range(hour_count)]
 
 

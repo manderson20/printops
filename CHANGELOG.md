@@ -5,6 +5,28 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.32.0] - 2026-07-10
+
+- **Live Dashboard: true rolling 24-hour window.** The hourly bar chart no
+  longer resets at local midnight — it now always shows the last 24 hours
+  with the current (in-progress) hour as the rightmost bar, sliding forward
+  continuously as time passes and aging the oldest hour off the left edge,
+  like a classic strip-chart. Stat tiles and copy relabeled "(24h)"
+  accordingly.
+- **Live Dashboard: full screen toggle.** A button in the header (four
+  arrows out to expand, four arrows in to collapse) puts just the dashboard
+  content into the browser's native full screen mode — the sidebar nav
+  drops away, which is the point for a wall-mounted TV display. Click again,
+  press Escape, or use the browser's own exit-fullscreen control to return
+  to normal.
+- **Live Dashboard: tracked copies on the hourly chart.** The bar chart now
+  stacks tracked walk-up copy pages (from the copier accounting connectors)
+  on top of print pages per hour, plus a new "Copy Pages (24h)" stat tile.
+  Untracked/estimated copy volume (SNMP counter-delta based) is only ever
+  computed at daily granularity and stays on the existing Untracked Copy
+  Activity report rather than being forced into an hourly view that would
+  overstate its precision.
+
 ## [0.31.0] - 2026-07-10
 
 - **New: Live Dashboard**, now the default landing page and top nav item,
