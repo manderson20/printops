@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { getLiveHourly, listJobs, type HourlyBucket, type Job } from "@/lib/api";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
@@ -14,14 +14,59 @@ import { StackedVolumeBarChart, type IntradayChartPoint } from "../insights/char
 const POLL_INTERVAL_MS = 15 * 1000;
 const RECENT_JOBS_LIMIT = 20;
 
-// A true rolling 24h window ending at the top of the current (in-progress)
+// The end-user's chosen window length — persisted in localStorage (not a
+// server-side user preference) since this is a per-browser/per-TV display
+// setting, not account data, and needs no backend schema change.
+const WINDOW_HOURS_OPTIONS = [3, 6, 12, 24] as const;
+type WindowHours = (typeof WINDOW_HOURS_OPTIONS)[number];
+const WINDOW_HOURS_STORAGE_KEY = "printops-live-window-hours";
+const DEFAULT_WINDOW_HOURS: WindowHours = 24;
+
+function isWindowHours(value: number): value is WindowHours {
+  return (WINDOW_HOURS_OPTIONS as readonly number[]).includes(value);
+}
+
+// useSyncExternalStore, not useState+useEffect — same pattern as
+// useIsDarkMode.ts for the same reason: localStorage is an external
+// store React doesn't own, and reading it needs a getServerSnapshot
+// fallback so the static-prerendered HTML and the client's first paint
+// agree (they can't both read localStorage, since it doesn't exist on
+// the server). Writes dispatch a custom event so the same tab that made
+// the change re-renders immediately, not just other tabs (which the
+// native "storage" event alone would cover).
+const WINDOW_HOURS_CHANGE_EVENT = "printops-live-window-hours-change";
+
+function subscribeWindowHours(onChange: () => void) {
+  window.addEventListener(WINDOW_HOURS_CHANGE_EVENT, onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    window.removeEventListener(WINDOW_HOURS_CHANGE_EVENT, onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
+function getWindowHoursSnapshot(): WindowHours {
+  const stored = Number(localStorage.getItem(WINDOW_HOURS_STORAGE_KEY));
+  return isWindowHours(stored) ? stored : DEFAULT_WINDOW_HOURS;
+}
+
+function getWindowHoursServerSnapshot(): WindowHours {
+  return DEFAULT_WINDOW_HOURS;
+}
+
+function setStoredWindowHours(value: WindowHours) {
+  localStorage.setItem(WINDOW_HOURS_STORAGE_KEY, String(value));
+  window.dispatchEvent(new Event(WINDOW_HOURS_CHANGE_EVENT));
+}
+
+// A true rolling window ending at the top of the current (in-progress)
 // hour, not a fixed midnight-to-midnight day — the current hour is always
 // the rightmost bar, and as each new hour begins the whole window slides
 // forward, aging the oldest hour off the left edge. Rounds `end` up to the
 // next clock hour (e.g. 2:37pm -> 3:00pm) so every bucket boundary lines
 // up with a real clock hour instead of a "37 minutes past" offset, which
 // would make hourLabel below print confusing in-between times.
-function rollingWindow(): { start: Date; end: Date } {
+function rollingWindow(windowHours: WindowHours): { start: Date; end: Date } {
   const now = new Date();
   const end = new Date(
     now.getFullYear(),
@@ -32,7 +77,7 @@ function rollingWindow(): { start: Date; end: Date } {
     0,
     0,
   );
-  const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+  const start = new Date(end.getTime() - windowHours * 60 * 60 * 1000);
   return { start, end };
 }
 
@@ -118,6 +163,11 @@ export default function LiveDashboardPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [now, setNow] = useState<Date>(() => new Date());
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const windowHours = useSyncExternalStore(
+    subscribeWindowHours,
+    getWindowHoursSnapshot,
+    getWindowHoursServerSnapshot,
+  );
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Fullscreens the page's own container (not the whole <body>), so the
@@ -150,7 +200,7 @@ export default function LiveDashboardPage() {
       // independent rollingWindow() call a few seconds later could round
       // to a different hour and desync the bar labels from what was
       // actually fetched.
-      const { start, end } = rollingWindow();
+      const { start, end } = rollingWindow(windowHours);
       Promise.all([getLiveHourly(start, end), listJobs({ limit: RECENT_JOBS_LIMIT })])
         .then(([buckets, jobs]) => {
           if (cancelled) return;
@@ -172,7 +222,7 @@ export default function LiveDashboardPage() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, []);
+  }, [windowHours]);
 
   // Separate 1s ticker just for the "last updated"/countdown display —
   // decoupled from the 15s data-poll interval above so the countdown
@@ -233,10 +283,24 @@ export default function LiveDashboardPage() {
         <div>
           <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Live Dashboard</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Rolling last 24 hours — updates automatically every 15 seconds.
+            Rolling last {windowHours} hours — updates automatically every 15 seconds.
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <label className="flex items-center gap-1.5 text-xs text-zinc-500">
+            Window
+            <select
+              value={windowHours}
+              onChange={(e) => setStoredWindowHours(Number(e.target.value) as WindowHours)}
+              className="rounded-md border border-black/[.1] bg-white px-2 py-1 text-xs text-zinc-700 dark:border-white/[.15] dark:bg-zinc-900 dark:text-zinc-300"
+            >
+              {WINDOW_HOURS_OPTIONS.map((h) => (
+                <option key={h} value={h}>
+                  Last {h} hours
+                </option>
+              ))}
+            </select>
+          </label>
           {lastUpdated && (
             <span className="flex items-center gap-2 text-xs text-zinc-400">
               <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
@@ -262,15 +326,18 @@ export default function LiveDashboardPage() {
       {state.phase === "ok" && totals && (
         <>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
-            <StatTile label="Jobs (24h)" value={totals.jobs.toLocaleString()} />
-            <StatTile label="Pages (24h)" value={totals.pages.toLocaleString()} />
-            <StatTile label="Copy Pages (24h)" value={totals.copyPages.toLocaleString()} />
+            <StatTile label={`Jobs (${windowHours}h)`} value={totals.jobs.toLocaleString()} />
+            <StatTile label={`Pages (${windowHours}h)`} value={totals.pages.toLocaleString()} />
+            <StatTile
+              label={`Copy Pages (${windowHours}h)`}
+              value={totals.copyPages.toLocaleString()}
+            />
             <StatTile label="Color Pages" value={totals.color.toLocaleString()} />
             <StatTile label="Duplex Pages" value={totals.duplex.toLocaleString()} />
           </div>
 
           <Card>
-            <CardTitle className="mb-4">Pages by Hour (Last 24h)</CardTitle>
+            <CardTitle className="mb-4">Pages by Hour (Last {windowHours}h)</CardTitle>
             <StackedVolumeBarChart data={chartData} />
           </Card>
 

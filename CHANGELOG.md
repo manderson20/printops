@@ -5,6 +5,14 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.34.0] - 2026-07-10
+
+- **Live Dashboard: window-length preference.** A "Window" dropdown in the
+  header lets you pick 3, 6, 12, or 24 hours instead of always showing the
+  last 24. The choice is saved per-browser and sticks until changed again
+  — useful for a TV display that only needs to show the last few hours of
+  activity rather than a full rolling day.
+
 ## [0.33.0] - 2026-07-10
 
 - **Live Dashboard: 30-minute bucket granularity.** The hourly chart now
