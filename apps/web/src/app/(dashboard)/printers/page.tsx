@@ -38,6 +38,50 @@ function searchHaystack(printer: Printer): string {
     .toLowerCase();
 }
 
+const CSV_COLUMNS: { header: string; value: (printer: Printer) => string }[] = [
+  { header: "Name", value: (p) => p.name },
+  { header: "Status", value: (p) => printerStatusInfo(p.status).label },
+  { header: "Manufacturer", value: (p) => p.manufacturer ?? "" },
+  { header: "Model", value: (p) => p.model ?? "" },
+  { header: "Serial Number", value: (p) => p.serial_number ?? "" },
+  { header: "IP Address", value: (p) => p.ip_address },
+  { header: "Hostname", value: (p) => p.hostname ?? "" },
+  { header: "Building", value: (p) => p.building ?? "" },
+  { header: "Room", value: (p) => p.room ?? "" },
+  { header: "Department", value: (p) => p.department ?? "" },
+  { header: "Page Count", value: (p) => p.page_count_total?.toString() ?? "" },
+  { header: "AirPrint", value: (p) => (p.airprint_enabled ? "Discoverable" : "Hidden") },
+  { header: "Archived", value: (p) => (p.archived_at ? "Yes" : "No") },
+];
+
+// Quote any field containing a comma, quote, or newline — the minimal
+// escaping CSV needs, per RFC 4180. Excel/Sheets/Numbers all read this.
+function csvField(value: string): string {
+  if (/[",\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+// Client-side, not a backend endpoint — same rationale as the search box
+// above: the full (filtered) list is already sitting in memory, so there's
+// nothing an API round-trip would add except latency.
+function downloadPrintersCsv(printers: Printer[]) {
+  const lines = [
+    CSV_COLUMNS.map((c) => csvField(c.header)).join(","),
+    ...printers.map((printer) =>
+      CSV_COLUMNS.map((c) => csvField(c.value(printer))).join(","),
+    ),
+  ];
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `printops-printers-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 type LoadState =
   | { phase: "loading" }
   | { phase: "ok"; printers: Printer[] }
@@ -131,6 +175,13 @@ export default function PrintersPage() {
             />
             Show archived
           </label>
+          <Button
+            variant="secondary"
+            disabled={filteredPrinters.length === 0}
+            onClick={() => downloadPrintersCsv(filteredPrinters)}
+          >
+            Export CSV
+          </Button>
           {isAdmin && (
             <Link href="/printers/new">
               <Button>Add Printer</Button>
