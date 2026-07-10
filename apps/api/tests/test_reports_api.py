@@ -1,3 +1,6 @@
+import uuid
+from datetime import UTC, datetime, timedelta
+
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
@@ -9,7 +12,10 @@ from app.db import get_db
 from app.main import app
 from app.models.base import Base
 from app.models.copier_usage import CopierUsageRecord
+from app.models.google_workspace import GoogleWorkspaceUser
+from app.models.job import Job
 from app.models.mfp_device import MfpDevice
+from app.models.mosyle import MosyleDevice
 from app.models.printer import Printer
 
 GOOGLE_CLAIMS = {
@@ -84,6 +90,14 @@ async def _make_copier_usage(db_session_factory, device_id, staff_email, page_co
                 raw_payload={},
             )
         )
+        await session.commit()
+
+
+async def _make_google_workspace_user(db_session_factory, email, name):
+    from datetime import UTC, datetime
+
+    async with db_session_factory() as session:
+        session.add(GoogleWorkspaceUser(email=email, name=name, synced_at=datetime.now(UTC)))
         await session.commit()
 
 
@@ -216,6 +230,140 @@ def test_viewer_cannot_override_submitted_by_filter(
 def test_timeline_rejects_bad_granularity(client, admin_headers):
     response = client.get("/api/v1/reports/timeline?granularity=fortnight", headers=admin_headers)
     assert response.status_code == 400
+
+
+async def _create_job_at(db_session_factory, printer_id, created_at, page_count=1, **kwargs):
+    async with db_session_factory() as session:
+        job = Job(
+            printer_id=uuid.UUID(printer_id),
+            status="forwarded",
+            page_count=page_count,
+            created_at=created_at,
+            **kwargs,
+        )
+        session.add(job)
+        await session.commit()
+
+
+async def test_live_hourly_buckets_by_elapsed_interval(
+    client, printer_id, admin_headers, db_session_factory
+):
+    start = datetime(2026, 7, 10, 0, 0, tzinfo=UTC)
+    end = start + timedelta(days=1)
+    # 9:00 and 9:45 fall in different 30-minute buckets (18 and 19).
+    await _create_job_at(db_session_factory, printer_id, start.replace(hour=9), page_count=5)
+    await _create_job_at(
+        db_session_factory, printer_id, start.replace(hour=9, minute=45), page_count=3
+    )
+    await _create_job_at(
+        db_session_factory,
+        printer_id,
+        start.replace(hour=14),
+        page_count=2,
+        color_mode="color",
+        duplex=True,
+    )
+
+    response = client.get(
+        "/api/v1/reports/live/hourly",
+        params={"start": start.isoformat(), "end": end.isoformat()},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    buckets = response.json()
+    assert len(buckets) == 48
+    assert [b["interval"] for b in buckets] == list(range(48))
+
+    interval_18 = buckets[18]  # 9:00-9:30
+    assert interval_18["job_count"] == 1
+    assert interval_18["total_pages"] == 5
+
+    interval_19 = buckets[19]  # 9:30-10:00
+    assert interval_19["job_count"] == 1
+    assert interval_19["total_pages"] == 3
+
+    interval_28 = buckets[28]  # 14:00-14:30
+    assert interval_28["job_count"] == 1
+    assert interval_28["color_pages"] == 2
+    assert interval_28["duplex_pages"] == 2
+
+    # Every other interval is zero-filled, not just absent.
+    assert buckets[0]["job_count"] == 0
+    assert buckets[0]["total_pages"] == 0
+
+
+async def _create_copy_at(
+    db_session_factory, device_id, created_at, page_count=1, activity_type="copy"
+):
+    async with db_session_factory() as session:
+        session.add(
+            CopierUsageRecord(
+                mfp_device_id=uuid.UUID(device_id),
+                vendor="canon",
+                external_identity_used="unknown",
+                source_connector="generic_csv",
+                page_count=page_count,
+                activity_type=activity_type,
+                created_at=created_at,
+                raw_payload={},
+            )
+        )
+        await session.commit()
+
+
+async def test_live_hourly_includes_tracked_copies(
+    client, printer_id, mfp_device_id, admin_headers, db_session_factory
+):
+    start = datetime(2026, 7, 10, 0, 0, tzinfo=UTC)
+    end = start + timedelta(days=1)
+    await _create_job_at(db_session_factory, printer_id, start.replace(hour=9), page_count=5)
+    await _create_copy_at(db_session_factory, mfp_device_id, start.replace(hour=9), page_count=4)
+    await _create_copy_at(
+        db_session_factory, mfp_device_id, start.replace(hour=9, minute=30), page_count=2
+    )
+    # A scan shouldn't be counted as a copy.
+    await _create_copy_at(
+        db_session_factory, mfp_device_id, start.replace(hour=9), page_count=9, activity_type="scan"
+    )
+
+    response = client.get(
+        "/api/v1/reports/live/hourly",
+        params={"start": start.isoformat(), "end": end.isoformat()},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    buckets = response.json()
+
+    interval_18 = buckets[18]  # 9:00-9:30
+    assert interval_18["job_count"] == 1
+    assert interval_18["total_pages"] == 5
+    assert interval_18["copy_count"] == 1
+    assert interval_18["copy_pages"] == 4
+
+    interval_19 = buckets[19]  # 9:30-10:00
+    assert interval_19["copy_count"] == 1
+    assert interval_19["copy_pages"] == 2
+
+    # Every other interval is zero-filled for copies too.
+    assert buckets[0]["copy_count"] == 0
+    assert buckets[0]["copy_pages"] == 0
+
+
+def test_live_hourly_rejects_end_before_start(client, admin_headers):
+    response = client.get(
+        "/api/v1/reports/live/hourly",
+        params={"start": "2026-07-10T12:00:00Z", "end": "2026-07-10T06:00:00Z"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 400
+
+
+def test_live_hourly_requires_auth(client):
+    response = client.get(
+        "/api/v1/reports/live/hourly",
+        params={"start": "2026-07-10T00:00:00Z", "end": "2026-07-11T00:00:00Z"},
+    )
+    assert response.status_code == 401
 
 
 def test_leaderboard_by_printer(client, printer_id, backend_headers, admin_headers):
@@ -399,15 +547,21 @@ def test_cost_breakdown_uses_real_cartridge_rate(
         json=[{"color": "black", "cost": 20.0, "yield_pages": 1000}],  # $0.02/page
     )
     _make_job(
-        client, printer_id, backend_headers, "alice@example.org", 10,
-        color_mode="monochrome", duplex=False,
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        10,
+        color_mode="monochrome",
+        duplex=False,
     )
 
     response = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers)
     assert response.status_code == 200
     body = response.json()
     assert len(body) == 1
-    assert body[0]["label"] == "alice@example.org"
+    # No GoogleWorkspaceUser row for alice in this test -> local-part fallback.
+    assert body[0]["label"] == "alice"
     assert body[0]["page_count"] == 10
     assert body[0]["toner_cost"] == 0.2  # 10 pages * $0.02
 
@@ -421,8 +575,13 @@ def test_cost_breakdown_falls_back_without_cartridges(
         json={"cost_per_page_mono": 0.05},
     )
     _make_job(
-        client, printer_id, backend_headers, "alice@example.org", 4,
-        color_mode="monochrome", duplex=False,
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        4,
+        color_mode="monochrome",
+        duplex=False,
     )
 
     response = client.get("/api/v1/reports/cost-breakdown?group_by=printer", headers=admin_headers)
@@ -439,12 +598,85 @@ def test_cost_breakdown_scopes_to_viewer_identity(
     response = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=viewer_headers)
     body = response.json()
     assert len(body) == 1
-    assert body[0]["label"] == "viewer@example.org"
+    # No GoogleWorkspaceUser row for viewer in this test -> local-part fallback.
+    assert body[0]["label"] == "viewer"
+
+
+async def test_cost_breakdown_by_user_uses_roster_name(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 10)
+    await _make_google_workspace_user(db_session_factory, "jane.smith@district.org", "Jane Smith")
+
+    response = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers)
+    body = response.json()
+    assert body[0]["label"] == "Jane Smith"
 
 
 def test_cost_breakdown_rejects_bad_group_by(client, admin_headers):
     response = client.get("/api/v1/reports/cost-breakdown?group_by=bogus", headers=admin_headers)
     assert response.status_code == 400
+
+
+async def _set_job_mac(db_session_factory, job_id, mac_address):
+    async with db_session_factory() as session:
+        job = await session.get(Job, uuid.UUID(job_id))
+        job.mac_address = mac_address
+        await session.commit()
+
+
+async def test_cost_breakdown_by_device_splits_same_user_across_devices(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """The whole point: the same person's Mac and iPad (same Workspace
+    account) must show up as two distinct device rows, not merged into
+    one -- unlike group_by=user, which would combine them."""
+    mac_job = _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 10)
+    ipad_job = _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 4)
+    await _set_job_mac(db_session_factory, mac_job, "AA:AA:AA:AA:AA:AA")
+    await _set_job_mac(db_session_factory, ipad_job, "BB:BB:BB:BB:BB:BB")
+    async with db_session_factory() as session:
+        session.add(
+            MosyleDevice(
+                mac_address="AA:AA:AA:AA:AA:AA",
+                device_name="Jane's MacBook",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            MosyleDevice(
+                mac_address="BB:BB:BB:BB:BB:BB",
+                device_name="Jane's iPad",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    response = client.get("/api/v1/reports/cost-breakdown?group_by=device", headers=admin_headers)
+    assert response.status_code == 200
+    body = {entry["label"]: entry for entry in response.json()}
+    assert body["Jane's MacBook"]["page_count"] == 10
+    assert body["Jane's iPad"]["page_count"] == 4
+
+
+async def test_cost_breakdown_by_device_falls_back_to_raw_mac(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    job_id = _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 10)
+    await _set_job_mac(db_session_factory, job_id, "AA:AA:AA:AA:AA:AA")
+
+    response = client.get("/api/v1/reports/cost-breakdown?group_by=device", headers=admin_headers)
+    body = response.json()
+    assert body[0]["label"] == "AA:AA:AA:AA:AA:AA"
+
+
+def test_cost_breakdown_by_device_excludes_jobs_with_no_mac(
+    client, printer_id, backend_headers, admin_headers
+):
+    _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 10)
+
+    response = client.get("/api/v1/reports/cost-breakdown?group_by=device", headers=admin_headers)
+    assert response.json() == []
 
 
 def test_summary_includes_paper_cost(client, printer_id, backend_headers, admin_headers):
@@ -491,6 +723,58 @@ async def test_combined_leaderboard_ranks_by_combined_total(
     assert entries["jane.smith@district.org"]["total_pages"] == 1070
     # Jane's combined total (1070) now outranks the print-only leader (900).
     assert response.json()[0]["key"] == "jane.smith@district.org"
+
+
+async def test_combined_leaderboard_label_uses_roster_name_or_local_part(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 10)
+    _make_job(client, printer_id, backend_headers, "not.in.roster@district.org", 5)
+    await _make_google_workspace_user(db_session_factory, "jane.smith@district.org", "Jane Smith")
+
+    response = client.get("/api/v1/reports/combined-leaderboard", headers=admin_headers)
+    entries = {e["key"]: e for e in response.json()}
+    assert entries["jane.smith@district.org"]["label"] == "Jane Smith"
+    # No roster row (e.g. before an attribution alias is merged) -> local-part fallback.
+    assert entries["not.in.roster@district.org"]["label"] == "not.in.roster"
+
+
+async def test_combined_leaderboard_color_and_duplex_breakdown(
+    client, printer_id, backend_headers, admin_headers
+):
+    _make_job(
+        client, printer_id, backend_headers, "jane.smith@district.org", 6,
+        color_mode="color", duplex=True,
+    )
+    _make_job(
+        client, printer_id, backend_headers, "jane.smith@district.org", 4,
+        color_mode="monochrome", duplex=False,
+    )
+
+    response = client.get("/api/v1/reports/combined-leaderboard", headers=admin_headers)
+    entry = response.json()[0]
+    assert entry["color_pages"] == 6
+    assert entry["mono_pages"] == 4
+    assert entry["duplex_pages"] == 6
+    assert entry["simplex_pages"] == 4
+
+
+async def test_combined_leaderboard_estimated_cost(
+    client, printer_id, backend_headers, admin_headers
+):
+    client.put(
+        "/api/v1/settings/report-formulas",
+        headers=admin_headers,
+        json={"cost_per_page_mono": 0.05, "cost_per_page_color": 0.0, "cost_per_sheet_paper": 0.0},
+    )
+    _make_job(
+        client, printer_id, backend_headers, "jane.smith@district.org", 10,
+        color_mode="monochrome",
+    )
+
+    response = client.get("/api/v1/reports/combined-leaderboard", headers=admin_headers)
+    entry = response.json()[0]
+    assert entry["estimated_cost"] == round(10 * 0.05, 2)
 
 
 async def test_combined_export_csv_includes_totals(

@@ -43,6 +43,11 @@ class PrinterCreate(BaseModel):
     room: str | None = None
     department: str | None = None
     notes: str | None = None
+    # Reference-only, e.g. "TN-227" — so an admin can look up which
+    # cartridge to order without hunting through a spreadsheet. Never used
+    # by PrintOps itself for anything (no vendor driver/supply-ordering
+    # integration).
+    toner_cartridge_model: str | None = None
 
     snmp_enabled: bool = True
     snmp_port: int | None = None
@@ -67,6 +72,7 @@ class PrinterUpdate(BaseModel):
     room: str | None = None
     department: str | None = None
     notes: str | None = None
+    toner_cartridge_model: str | None = None
 
     release_required: bool | None = None
 
@@ -78,9 +84,9 @@ class PrinterUpdate(BaseModel):
     # since Pydantic's Literal validation rejects it before that logic runs.
     snmp_version: Literal["v1", "v2c", ""] | None = None
     snmp_community: str | None = None
-    snmp_vendor_profile: Literal[
-        "canon", "konica_minolta", "hp", "lexmark", "kyocera", "generic", ""
-    ] | None = None
+    snmp_vendor_profile: (
+        Literal["canon", "konica_minolta", "hp", "lexmark", "kyocera", "generic", ""] | None
+    ) = None
 
     ldap_enabled: bool | None = None
     ldap_bind_username: str | None = None
@@ -88,6 +94,16 @@ class PrinterUpdate(BaseModel):
     # PrinterOut's has_ldap_bind_password), hashed (not encrypted) into
     # ldap_bind_password_hash on write (see routers/printers.py).
     ldap_bind_password: str | None = None
+
+    # Reference-only credential storage — see Printer's docstring
+    # (app/models/printer.py). web_login_password/scan_password are
+    # write-only like snmp_community above (never echoed back on write;
+    # GET /printers/{id} attaches the real decrypted value separately,
+    # admin-only — see PrinterOut).
+    web_login_username: str | None = None
+    web_login_password: str | None = None
+    scan_email_address: str | None = None
+    scan_password: str | None = None
 
 
 class PrinterConnectionOut(BaseModel):
@@ -138,6 +154,7 @@ class PrinterOut(BaseModel):
     room: str | None
     department: str | None
     notes: str | None
+    toner_cartridge_model: str | None
 
     capabilities: CapabilitiesOut | None
     capabilities_detected_at: datetime | None
@@ -148,6 +165,8 @@ class PrinterOut(BaseModel):
     status_reasons: list[str] | None
     status_message: str | None
     status_checked_at: datetime | None
+
+    archived_at: datetime | None
 
     release_required: bool
     release_token: str | None
@@ -161,6 +180,18 @@ class PrinterOut(BaseModel):
     ldap_enabled: bool
     ldap_bind_username: str | None
     has_ldap_bind_password: bool
+
+    # Reference-only credential storage (app/models/printer.py). The
+    # plaintext password fields are always None here except on
+    # GET /printers/{id} for an admin requester (routers/printers.py) --
+    # never on the list endpoint, never for a viewer. has_* booleans are
+    # always safe to show anyone, same as has_snmp_community above.
+    web_login_username: str | None
+    has_web_login_password: bool
+    web_login_password: str | None = None
+    scan_email_address: str | None
+    has_scan_password: bool
+    scan_password: str | None = None
 
     page_count_total: int | None
     page_count_copy: int | None

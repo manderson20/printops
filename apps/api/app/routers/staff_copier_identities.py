@@ -22,7 +22,9 @@ router = APIRouter(dependencies=[Depends(require_role("admin"))])
 async def _get_identity_or_404(identity_id: UUID, db: AsyncSession) -> StaffCopierIdentity:
     identity = await db.get(StaffCopierIdentity, identity_id)
     if identity is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Copier identity not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Copier identity not found"
+        )
     return identity
 
 
@@ -84,7 +86,9 @@ async def list_staff_copier_identities(
 ):
     stmt = select(StaffCopierIdentity)
     if staff_email is not None:
-        stmt = stmt.where(func.lower(StaffCopierIdentity.staff_email) == staff_email.strip().lower())
+        stmt = stmt.where(
+            func.lower(StaffCopierIdentity.staff_email) == staff_email.strip().lower()
+        )
     if identity_type is not None:
         stmt = stmt.where(StaffCopierIdentity.identity_type == identity_type)
     result = await db.execute(stmt.order_by(StaffCopierIdentity.staff_email))
@@ -103,7 +107,9 @@ async def list_staff_missing_copier_identity(db: AsyncSession = Depends(get_db))
     users_result = await db.execute(select(GoogleWorkspaceUser).order_by(GoogleWorkspaceUser.email))
     users = users_result.scalars().all()
     if settings and settings.staff_org_unit_path:
-        users = [u for u in users if org_unit_matches(u.org_unit_path, settings.staff_org_unit_path)]
+        users = [
+            u for u in users if org_unit_matches(u.org_unit_path, settings.staff_org_unit_path)
+        ]
 
     emails_with_identity = {
         row[0].strip().lower()
