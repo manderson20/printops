@@ -226,7 +226,7 @@ schedules an update.
   aggregate across many jobs. The user list is now server-paginated
   (50/page) instead of loading the full roster at once, and the search
   box accepts a leading `*` for a domain-suffix filter (e.g.
-  `*brookfieldr3.org`) to separate staff from students by domain in one
+  `*example.com`) to separate staff from students by domain in one
   district's real roster of 3,500+ synced accounts.
 - **Clicking a user on the Usage page** now opens a per-user detail page
   (stats panel — jobs, pages, duplex/simplex, mono/color, estimated cost
