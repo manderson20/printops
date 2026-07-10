@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime
+from sqlalchemy import JSON, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -34,10 +34,31 @@ class User(Base, TimestampMixin):
     # section). Unique since it's Google's stable per-account identifier.
     google_sub: Mapped[str | None] = mapped_column(unique=True, index=True, default=None)
 
-    # "admin" or "viewer" — enforced via app.deps.require_role. New SSO
-    # accounts default to "viewer" unless their email is in
+    # "admin", "viewer", or "ou_viewer" — enforced via app.deps.require_role.
+    # New SSO accounts default to "viewer" unless their email is in
     # settings.initial_admin_emails (see app/routers/auth.py's callback).
+    # "ou_viewer" is a read-only account scoped to Insights only, filtered
+    # to granted_ou_paths below — see app/routers/reports.py's
+    # _report_filters for the enforcement.
     role: Mapped[str] = mapped_column(default="viewer", server_default="viewer")
     is_active: Mapped[bool] = mapped_column(default=True, server_default="true")
+
+    # Google Workspace OU paths (e.g. "/Schools/Elementary/BuildingA") this
+    # "ou_viewer" account can see in Insights — matched against
+    # GoogleWorkspaceUser.org_unit_path via app.integrations.google_workspace
+    # .org_unit_matches, which also covers everything nested under a granted
+    # path. Ignored for "admin"/"viewer" roles. Null/empty means "sees
+    # nothing yet" — a safe default rather than showing everyone before an
+    # admin configures it.
+    granted_ou_paths: Mapped[list[str] | None] = mapped_column(JSON, default=None)
+
+    # Opts this account out of the idle timeout entirely (app/routers/
+    # auth.py's /auth/refresh mints a long-lived token instead of the
+    # admin-configured SessionSettings.idle_timeout_minutes for it) — e.g.
+    # a front-desk/shared login that should just stay signed in all day.
+    # Checked fresh from this row on every refresh, not baked into the
+    # JWT at login, so revoking it takes effect on the user's very next
+    # refresh instead of waiting for their token to expire.
+    exempt_from_timeout: Mapped[bool] = mapped_column(default=False, server_default="false")
 
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

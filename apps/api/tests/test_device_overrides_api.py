@@ -84,8 +84,16 @@ async def seeded_mosyle_device(db_session_factory):
 @pytest_asyncio.fixture
 async def seeded_roster(db_session_factory):
     async with db_session_factory() as session:
-        session.add(GoogleWorkspaceUser(email="matt.anderson@example.com", name="Matt Anderson", synced_at=datetime.now(UTC)))
-        session.add(GoogleWorkspaceUser(email="matt.jones@example.com", name="Matt Jones", synced_at=datetime.now(UTC)))
+        session.add(
+            GoogleWorkspaceUser(
+                email="matt.anderson@example.com", name="Matt Anderson", synced_at=datetime.now(UTC)
+            )
+        )
+        session.add(
+            GoogleWorkspaceUser(
+                email="matt.jones@example.com", name="Matt Jones", synced_at=datetime.now(UTC)
+            )
+        )
         await session.commit()
 
 
@@ -97,7 +105,9 @@ def test_list_devices_requires_auth(client, seeded_mosyle_device):
 def test_list_devices_merges_mosyle_cache(client, seeded_mosyle_device, auth_headers):
     response = client.get("/api/v1/devices", headers=auth_headers)
     assert response.status_code == 200
-    devices = response.json()
+    payload = response.json()
+    assert payload["total"] == 1
+    devices = payload["items"]
     assert len(devices) == 1
     assert devices[0]["mac_address"] == "AA:BB:CC:DD:EE:FF"
     assert devices[0]["source"] == "mosyle"
@@ -176,7 +186,7 @@ def test_delete_override_removes_it(client, seeded_mosyle_device, seeded_roster,
     response = client.delete("/api/v1/devices/AA:BB:CC:DD:EE:FF/override", headers=auth_headers)
     assert response.status_code == 204
 
-    devices = client.get("/api/v1/devices", headers=auth_headers).json()
+    devices = client.get("/api/v1/devices", headers=auth_headers).json()["items"]
     assert devices[0]["override_email"] is None
 
 

@@ -67,7 +67,9 @@ async def list_import_templates(db: AsyncSession = Depends(get_db)):
     return result.scalars().all()
 
 
-@router.post("/templates", response_model=CopierImportTemplateOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/templates", response_model=CopierImportTemplateOut, status_code=status.HTTP_201_CREATED
+)
 async def create_import_template(
     payload: CopierImportTemplateCreate,
     db: AsyncSession = Depends(get_db),
@@ -146,7 +148,10 @@ async def upload_import_file(
     delimiter = template.delimiter if template else ","
     header, raw_rows = parse_csv_rows(raw_bytes, delimiter)
     if not header:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not detect any columns in this file.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not detect any columns in this file.",
+        )
 
     if template is not None:
         missing = [col for col in template.column_mapping.values() if col not in header]
@@ -277,9 +282,7 @@ async def _parse_batch(
         try:
             normalized = normalize_csv_row(raw_row, mapping, row_number)
         except CsvParseError as exc:
-            rows.append(
-                ParsedRow(row_number, None, None, None, is_duplicate=False, error=str(exc))
-            )
+            rows.append(ParsedRow(row_number, None, None, None, is_duplicate=False, error=str(exc)))
             errored += 1
             continue
 
@@ -287,9 +290,7 @@ async def _parse_batch(
             db, batch.mfp_device_id, identity_type, normalized.external_identity_used
         )
         is_dup = await _is_duplicate(db, batch.mfp_device_id, normalized)
-        rows.append(
-            ParsedRow(row_number, normalized, staff_email, staff_employee_id, is_dup, None)
-        )
+        rows.append(ParsedRow(row_number, normalized, staff_email, staff_employee_id, is_dup, None))
         if is_dup:
             duplicate += 1
         else:
@@ -354,7 +355,9 @@ async def preview_import_batch(
         sample_rows=[
             PreviewRowOut(
                 row_number=r.row_number,
-                external_identity_used=r.normalized.external_identity_used if r.normalized else None,
+                external_identity_used=r.normalized.external_identity_used
+                if r.normalized
+                else None,
                 staff_email=r.staff_email,
                 is_duplicate=r.is_duplicate,
                 error=r.error,

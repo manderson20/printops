@@ -18,7 +18,11 @@ from app.deps import require_role
 from app.models.attribution_alias import AttributionAlias
 from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.job import Job
-from app.schemas.attribution_alias import AttributionAliasCreate, AttributionAliasOut, AttributionAliasPage
+from app.schemas.attribution_alias import (
+    AttributionAliasCreate,
+    AttributionAliasOut,
+    AttributionAliasPage,
+)
 
 router = APIRouter(dependencies=[Depends(require_role("admin"))])
 
@@ -33,7 +37,12 @@ async def list_attribution_aliases(
     filters = []
     if search:
         pattern = f"%{search}%"
-        filters.append(or_(AttributionAlias.alias.ilike(pattern), AttributionAlias.resolved_email.ilike(pattern)))
+        filters.append(
+            or_(
+                AttributionAlias.alias.ilike(pattern),
+                AttributionAlias.resolved_email.ilike(pattern),
+            )
+        )
 
     count_stmt = select(func.count()).select_from(AttributionAlias)
     items_stmt = select(AttributionAlias).order_by(AttributionAlias.alias)
@@ -65,7 +74,9 @@ async def list_attribution_aliases(
 
 
 @router.post("", response_model=AttributionAliasOut, status_code=status.HTTP_201_CREATED)
-async def create_attribution_alias(payload: AttributionAliasCreate, db: AsyncSession = Depends(get_db)):
+async def create_attribution_alias(
+    payload: AttributionAliasCreate, db: AsyncSession = Depends(get_db)
+):
     alias_key = payload.alias.strip().lower()
     email = payload.resolved_email.strip().lower()
     if not alias_key:
@@ -91,7 +102,9 @@ async def create_attribution_alias(payload: AttributionAliasCreate, db: AsyncSes
             detail=f"'{payload.alias}' is already mapped to {alias_row.resolved_email}.",
         )
 
-    alias_row = AttributionAlias(alias=alias_key, resolved_email=email, source="manual", note=payload.note)
+    alias_row = AttributionAlias(
+        alias=alias_key, resolved_email=email, source="manual", note=payload.note
+    )
     db.add(alias_row)
 
     backfill_result = await db.execute(

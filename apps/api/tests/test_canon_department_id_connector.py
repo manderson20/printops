@@ -24,7 +24,12 @@ CANON_SYS_DESCR_OUTPUT = '.1.3.6.1.2.1.1.1.0 = STRING: "Canon MF642C/643C/644C /
 
 
 def _device(**overrides) -> MfpDevice:
-    defaults = dict(name="Copy Room Canon", vendor="canon", connector_type="canon_department_id", ip_address="10.0.0.20")
+    defaults = dict(
+        name="Copy Room Canon",
+        vendor="canon",
+        connector_type="canon_department_id",
+        ip_address="10.0.0.20",
+    )
     defaults.update(overrides)
     return MfpDevice(**defaults)
 
@@ -68,7 +73,9 @@ async def test_get_meter_snapshot_reuses_verified_canon_snmp_breakdown():
 @pytest.mark.asyncio
 async def test_test_connection_forces_canon_profile_no_sysdescr_autodetect():
     connector = CanonDepartmentIdConnector()
-    with patch("app.printers.snmp_counters._run_snmp", return_value=CANON_SYS_DESCR_OUTPUT) as mock_run:
+    with patch(
+        "app.printers.snmp_counters._run_snmp", return_value=CANON_SYS_DESCR_OUTPUT
+    ) as mock_run:
         result = await connector.test_connection(_device())
     assert result.ok is True
     # Only one call (the connection check itself) — never a separate
