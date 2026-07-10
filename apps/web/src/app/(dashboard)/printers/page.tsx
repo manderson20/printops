@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ApiError, listPrinters, testPrintPrinter, type Printer } from "@/lib/api";
 import { capabilityBadges } from "@/lib/capabilities";
@@ -11,7 +11,32 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
+import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+
+// Every field an admin might plausibly search a printer by — name, network
+// identity, and hardware identity — flattened into one lowercased haystack
+// per printer. capabilities.make_model is the device's own self-reported
+// string (e.g. "MINOLTA bizhub C361i"), often more complete/accurate than
+// the stored manufacturer/model pair, so it's included too rather than
+// relying on just one or the other.
+function searchHaystack(printer: Printer): string {
+  return [
+    printer.name,
+    printer.ip_address,
+    printer.hostname,
+    printer.manufacturer,
+    printer.model,
+    printer.capabilities?.make_model,
+    printer.serial_number,
+    printer.building,
+    printer.room,
+    printer.department,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
 
 type LoadState =
   | { phase: "loading" }
@@ -32,6 +57,7 @@ export default function PrintersPage() {
   const [testPrints, setTestPrints] = useState<Record<string, TestPrintState>>({});
   const [expandedCapabilities, setExpandedCapabilities] = useState<Record<string, boolean>>({});
   const [showArchived, setShowArchived] = useState(false);
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     listPrinters({ includeArchived: showArchived })
@@ -71,11 +97,32 @@ export default function PrintersPage() {
     }
   }
 
+  // Client-side, not server-side — listPrinters has no search/pagination
+  // params to begin with (the full fleet is small enough to load at once),
+  // so filtering the already-loaded list is simplest and needs no API
+  // change. Every search word must appear somewhere in the haystack (AND,
+  // not OR) so e.g. "hp central" narrows rather than broadens.
+  const filteredPrinters = useMemo(() => {
+    if (state.phase !== "ok") return [];
+    const words = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return state.printers;
+    return state.printers.filter((printer) => {
+      const haystack = searchHaystack(printer);
+      return words.every((word) => haystack.includes(word));
+    });
+  }, [state, search]);
+
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Printers</h1>
         <div className="flex items-center gap-4">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name, IP, model, brand…"
+            className="w-64"
+          />
           <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
             <input
               type="checkbox"
@@ -97,7 +144,10 @@ export default function PrintersPage() {
       {state.phase === "ok" && state.printers.length === 0 && (
         <EmptyState>No printers yet. Add one to get started.</EmptyState>
       )}
-      {state.phase === "ok" && state.printers.length > 0 && (
+      {state.phase === "ok" && state.printers.length > 0 && filteredPrinters.length === 0 && (
+        <EmptyState>No printers match &quot;{search}&quot;.</EmptyState>
+      )}
+      {state.phase === "ok" && filteredPrinters.length > 0 && (
         <Card className="overflow-hidden p-0">
           <div className="overflow-x-auto">
           <table className="w-full min-w-[1100px] text-left text-sm">
@@ -116,7 +166,7 @@ export default function PrintersPage() {
               </tr>
             </thead>
             <tbody>
-              {state.printers.map((printer) => {
+              {filteredPrinters.map((printer) => {
                 const testPrint = testPrints[printer.id];
                 return (
                 <tr

@@ -5,6 +5,13 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.36.0] - 2026-07-10
+
+- **Printers: search box.** Filter the Printers list by name, IP address,
+  hostname, manufacturer, model, serial number, or building/room/department
+  — matches all typed words across any of those fields. Client-side, so it
+  applies instantly with no extra loading.
+
 ## [0.35.1] - 2026-07-10
 
 - **Fix color copiers reverting to grayscale for Word/Adobe (again).** The
