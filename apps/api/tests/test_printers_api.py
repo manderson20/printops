@@ -10,7 +10,17 @@ from app.models.base import Base
 from app.printers import discovery as printer_discovery
 from app.printers import status as printer_status
 from app.printers.ipp_client import PrinterProbeError, PrinterStateResult, ProbeResult
+from app.printers.snmp_counters import DetectedSupply, SnmpProbeError
 from app.routers import printers as printers_router
+
+GOOGLE_CLAIMS = {
+    "sub": "google-sub-viewer",
+    "email": "viewer@example.org",
+    "email_verified": True,
+    "hd": "example.org",
+    "name": "Viewer Person",
+    "picture": None,
+}
 
 
 @pytest_asyncio.fixture
@@ -46,6 +56,47 @@ def client(db_session_factory):
 def auth_headers(client):
     response = client.post("/auth/login", json={"username": "admin", "password": "changeme"})
     token = response.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def google_settings(client, auth_headers):
+    response = client.put(
+        "/api/v1/settings/google-sso",
+        headers=auth_headers,
+        json={
+            "client_id": "test-client-id",
+            "client_secret": "test-client-secret",
+            "workspace_domain": "example.org",
+            "initial_admin_emails": [],
+            "redirect_base_url": "https://printops.test",
+            "enabled": True,
+        },
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+@pytest.fixture
+def viewer_headers(client, google_settings, monkeypatch):
+    async def fake_exchange_code(**kwargs):
+        return {"id_token": "fake-id-token"}
+
+    def fake_verify_id_token(id_token, client_id):
+        return GOOGLE_CLAIMS
+
+    monkeypatch.setattr("app.routers.auth.exchange_code", fake_exchange_code)
+    monkeypatch.setattr("app.routers.auth.verify_id_token", fake_verify_id_token)
+
+    login_response = client.get("/auth/google/login", follow_redirects=False)
+    state = login_response.cookies["printops_oauth_state"]
+    response = client.get(
+        "/auth/google/callback",
+        params={"code": "fake-code", "state": state},
+        cookies={"printops_oauth_state": state},
+        follow_redirects=False,
+    )
+    token = response.headers["location"].split("token=", 1)[1]
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -114,6 +165,31 @@ def test_create_printer_offline_still_creates_record(client, auth_headers, mock_
     body = response.json()
     assert body["capabilities"] is None
     assert "Could not reach" in body["capabilities_error"]
+
+
+def test_toner_cartridge_model_set_at_create_and_edited_via_update(
+    client, auth_headers, mock_failed_probe
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={
+            "name": "Reference Printer",
+            "ip_address": "10.0.0.5",
+            "toner_cartridge_model": "TN-227",
+        },
+    )
+    assert create.status_code == 201
+    printer_id = create.json()["id"]
+    assert create.json()["toner_cartridge_model"] == "TN-227"
+
+    update = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"toner_cartridge_model": "TN-227XL"},
+    )
+    assert update.status_code == 200
+    assert update.json()["toner_cartridge_model"] == "TN-227XL"
 
 
 def test_list_get_update_delete(client, auth_headers, mock_successful_probe):
@@ -189,9 +265,7 @@ def test_check_status_rediscovers_capabilities_on_reconnect(
         raise PrinterProbeError("Could not reach an IPP printer at 10.0.0.8:631: timed out")
 
     monkeypatch.setattr(printer_status, "probe_printer_state", offline_state)
-    still_offline = client.post(
-        f"/api/v1/printers/{printer_id}/check-status", headers=auth_headers
-    )
+    still_offline = client.post(f"/api/v1/printers/{printer_id}/check-status", headers=auth_headers)
     assert still_offline.json()["status"] == "offline"
     assert still_offline.json()["capabilities"] is None
 
@@ -209,9 +283,7 @@ def test_check_status_rediscovers_capabilities_on_reconnect(
     monkeypatch.setattr(printer_status, "probe_printer_state", now_online_state)
     monkeypatch.setattr(printer_discovery, "probe_printer", now_online_capabilities)
 
-    reconnected = client.post(
-        f"/api/v1/printers/{printer_id}/check-status", headers=auth_headers
-    )
+    reconnected = client.post(f"/api/v1/printers/{printer_id}/check-status", headers=auth_headers)
     assert reconnected.json()["status"] == "online"
     assert reconnected.json()["model"] == "Swapped-In Model"
     assert len(probe_calls) == 1
@@ -256,7 +328,9 @@ def test_test_print_success(client, auth_headers, mock_failed_probe, monkeypatch
     assert "request id" in response.json()["message"]
 
 
-def test_test_print_translates_missing_queue_error(client, auth_headers, mock_failed_probe, monkeypatch):
+def test_test_print_translates_missing_queue_error(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
     from app.printers.test_print import TestPrintError
 
     create = client.post(
@@ -294,9 +368,7 @@ def test_mdm_connection_info(client, auth_headers, mock_failed_probe):
 
 
 def test_mdm_connection_requires_auth(client):
-    response = client.get(
-        "/api/v1/printers/00000000-0000-0000-0000-000000000000/mdm-connection"
-    )
+    response = client.get("/api/v1/printers/00000000-0000-0000-0000-000000000000/mdm-connection")
     assert response.status_code == 401
 
 
@@ -315,7 +387,9 @@ def test_create_printer_syncs_queue(client, auth_headers, mock_failed_probe, mon
     assert body["queue_sync_error"] is None
 
 
-def test_create_printer_records_queue_sync_error(client, auth_headers, mock_failed_probe, monkeypatch):
+def test_create_printer_records_queue_sync_error(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
     from app.printers.queue_sync import QueueSyncError
 
     def fake_sync_queue(printer_id):
@@ -363,7 +437,9 @@ def test_update_printer_resyncs_only_on_queue_affecting_fields(
 
 def test_delete_printer_removes_queue(client, auth_headers, mock_failed_probe, monkeypatch):
     calls = []
-    monkeypatch.setattr(printers_router, "remove_queue", lambda printer_id: calls.append(printer_id))
+    monkeypatch.setattr(
+        printers_router, "remove_queue", lambda printer_id: calls.append(printer_id)
+    )
 
     create = client.post(
         "/api/v1/printers",
@@ -618,6 +694,135 @@ def test_update_printer_ldap_bind_password_never_echoed(client, auth_headers, mo
     assert "top-secret" not in response.text
 
 
+def test_web_login_and_scan_credentials_never_echoed_on_write(
+    client, auth_headers, mock_failed_probe
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Reference Creds Printer", "ip_address": "10.0.0.31"},
+    )
+    printer_id = create.json()["id"]
+
+    response = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={
+            "web_login_username": "admin",
+            "web_login_password": "web-secret",
+            "scan_email_address": "cletus-scan@district.org",
+            "scan_password": "scan-secret",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["web_login_username"] == "admin"
+    assert body["scan_email_address"] == "cletus-scan@district.org"
+    assert body["has_web_login_password"] is True
+    assert body["has_scan_password"] is True
+    assert body["web_login_password"] is None  # never echoed on the write response
+    assert body["scan_password"] is None
+    assert "web-secret" not in response.text
+    assert "scan-secret" not in response.text
+
+
+def test_admin_can_read_back_web_login_and_scan_passwords(client, auth_headers, mock_failed_probe):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Reference Creds Printer", "ip_address": "10.0.0.31"},
+    )
+    printer_id = create.json()["id"]
+    client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"web_login_password": "web-secret", "scan_password": "scan-secret"},
+    )
+
+    response = client.get(f"/api/v1/printers/{printer_id}", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["web_login_password"] == "web-secret"
+    assert body["scan_password"] == "scan-secret"
+
+
+def test_viewer_never_sees_web_login_or_scan_passwords(
+    client, auth_headers, viewer_headers, mock_failed_probe
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Reference Creds Printer", "ip_address": "10.0.0.31"},
+    )
+    printer_id = create.json()["id"]
+    client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"web_login_password": "web-secret", "scan_password": "scan-secret"},
+    )
+
+    response = client.get(f"/api/v1/printers/{printer_id}", headers=viewer_headers)
+    assert response.status_code == 200
+    body = response.json()
+    # A viewer still learns *that* credentials are configured...
+    assert body["has_web_login_password"] is True
+    assert body["has_scan_password"] is True
+    # ...but never the real values.
+    assert body["web_login_password"] is None
+    assert body["scan_password"] is None
+    assert "web-secret" not in response.text
+    assert "scan-secret" not in response.text
+
+
+def test_list_printers_never_includes_plaintext_passwords_even_for_admin(
+    client, auth_headers, mock_failed_probe
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Reference Creds Printer", "ip_address": "10.0.0.31"},
+    )
+    printer_id = create.json()["id"]
+    client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"web_login_password": "web-secret", "scan_password": "scan-secret"},
+    )
+
+    response = client.get("/api/v1/printers", headers=auth_headers)
+    assert response.status_code == 200
+    entry = next(p for p in response.json() if p["id"] == printer_id)
+    assert entry["has_web_login_password"] is True
+    assert entry["web_login_password"] is None
+    assert entry["scan_password"] is None
+    assert "web-secret" not in response.text
+    assert "scan-secret" not in response.text
+
+
+def test_blank_string_clears_web_login_and_scan_passwords(client, auth_headers, mock_failed_probe):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Reference Creds Printer", "ip_address": "10.0.0.31"},
+    )
+    printer_id = create.json()["id"]
+    client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"web_login_password": "web-secret", "scan_password": "scan-secret"},
+    )
+
+    cleared = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"web_login_password": "", "scan_password": ""},
+    )
+    assert cleared.status_code == 200
+    body = cleared.json()
+    assert body["has_web_login_password"] is False
+    assert body["has_scan_password"] is False
+
+
 def test_update_printer_blank_string_clears_ldap_overrides(client, auth_headers, mock_failed_probe):
     create = client.post(
         "/api/v1/printers",
@@ -711,9 +916,7 @@ def test_check_counters_records_a_reading_on_success(
     client.post(f"/api/v1/printers/{printer_id}/check-counters", headers=auth_headers)
     client.post(f"/api/v1/printers/{printer_id}/check-counters", headers=auth_headers)
 
-    history = client.get(
-        f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers
-    )
+    history = client.get(f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers)
     assert history.status_code == 200
     # Two readings a day apart, both inside the default 30-day window —
     # two buckets. Yesterday's has no earlier reading to diff against
@@ -744,9 +947,7 @@ def test_check_counters_does_not_record_a_reading_on_failure(
     response = client.post(f"/api/v1/printers/{printer_id}/check-counters", headers=auth_headers)
     assert response.status_code == 200
 
-    history = client.get(
-        f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers
-    )
+    history = client.get(f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers)
     assert history.json() == []
 
 
@@ -758,9 +959,7 @@ def test_counter_history_defaults_to_30_days(client, auth_headers, mock_failed_p
     )
     printer_id = create.json()["id"]
 
-    response = client.get(
-        f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers
-    )
+    response = client.get(f"/api/v1/printers/{printer_id}/counter-history", headers=auth_headers)
     assert response.status_code == 200
     assert response.json() == []
 
@@ -769,3 +968,218 @@ def test_counter_history_requires_some_auth(client, mock_failed_probe):
     url = "/api/v1/printers/00000000-0000-0000-0000-000000000000/counter-history"
     response = client.get(url)
     assert response.status_code == 401
+
+
+def test_archive_printer_removes_queue_sets_archived_at_and_hides_from_default_list(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    remove_calls = []
+    monkeypatch.setattr(
+        printers_router, "remove_queue", lambda printer_id: remove_calls.append(printer_id)
+    )
+
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Retiring Printer", "ip_address": "10.0.0.16"},
+    )
+    printer_id = create.json()["id"]
+
+    response = client.post(f"/api/v1/printers/{printer_id}/archive", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["archived_at"] is not None
+    assert remove_calls == [printer_id]
+
+    default_list = client.get("/api/v1/printers", headers=auth_headers).json()
+    assert printer_id not in [p["id"] for p in default_list]
+
+    full_list = client.get(
+        "/api/v1/printers", params={"include_archived": True}, headers=auth_headers
+    ).json()
+    assert printer_id in [p["id"] for p in full_list]
+
+    # Still directly reachable — archiving must never delete the row or its
+    # (in this case nonexistent, but the point is the row survives) history.
+    detail = client.get(f"/api/v1/printers/{printer_id}", headers=auth_headers)
+    assert detail.status_code == 200
+
+
+def test_unarchive_printer_resyncs_queue_and_clears_archived_at(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    sync_calls = []
+    monkeypatch.setattr(printers_router, "remove_queue", lambda printer_id: None)
+    monkeypatch.setattr(
+        printers_router, "sync_queue", lambda printer_id: sync_calls.append(printer_id)
+    )
+
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Coming Back", "ip_address": "10.0.0.17"},
+    )
+    printer_id = create.json()["id"]
+    client.post(f"/api/v1/printers/{printer_id}/archive", headers=auth_headers)
+
+    response = client.post(f"/api/v1/printers/{printer_id}/unarchive", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json()["archived_at"] is None
+    assert printer_id in sync_calls
+
+    default_list = client.get("/api/v1/printers", headers=auth_headers).json()
+    assert printer_id in [p["id"] for p in default_list]
+
+
+def test_archive_printer_requires_admin(client, auth_headers, viewer_headers, mock_failed_probe):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Protected", "ip_address": "10.0.0.18"},
+    )
+    printer_id = create.json()["id"]
+
+    response = client.post(f"/api/v1/printers/{printer_id}/archive", headers=viewer_headers)
+    assert response.status_code == 403
+
+
+def test_detect_toner_cartridges_creates_and_updates_rows(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Cartridge Printer", "ip_address": "10.0.0.31"},
+    )
+    printer_id = create.json()["id"]
+
+    # An existing black cartridge with an admin-entered cost — detect must
+    # not touch cost/yield_pages, only the detected_* fields.
+    client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=auth_headers,
+        json=[{"color": "black", "cost": 55.0, "yield_pages": 3000}],
+    )
+
+    def fake_get_toner_supplies(ip, config):
+        return [
+            DetectedSupply(
+                description="410X High Yield Black", color="black", high_capacity=True
+            ),
+            DetectedSupply(description="CRG-069 Cyan", color="cyan", high_capacity=None),
+        ]
+
+    monkeypatch.setattr(printers_router, "get_toner_supplies", fake_get_toner_supplies)
+
+    response = client.post(
+        f"/api/v1/printers/{printer_id}/toner-cartridges/detect", headers=auth_headers
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["unmatched"] == []
+
+    by_color = {c["color"]: c for c in body["cartridges"]}
+    assert by_color["black"]["cost"] == 55.0  # untouched
+    assert by_color["black"]["detected_description"] == "410X High Yield Black"
+    assert by_color["black"]["detected_high_capacity"] is True
+    assert by_color["black"]["detected_at"] is not None
+
+    # cyan didn't exist before detect — created with a zero placeholder
+    # cost/yield, still safe per compute_printer_rate's "not configured"
+    # fallback rule.
+    assert by_color["cyan"]["cost"] == 0.0
+    assert by_color["cyan"]["yield_pages"] == 0
+    assert by_color["cyan"]["detected_description"] == "CRG-069 Cyan"
+    assert by_color["cyan"]["detected_high_capacity"] is None
+
+
+def test_detect_toner_cartridges_reports_unmatched_supplies(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Weird Supplies Printer", "ip_address": "10.0.0.32"},
+    )
+    printer_id = create.json()["id"]
+
+    def fake_get_toner_supplies(ip, config):
+        return [DetectedSupply(description="Unknown Part 4471", color=None, high_capacity=None)]
+
+    monkeypatch.setattr(printers_router, "get_toner_supplies", fake_get_toner_supplies)
+
+    response = client.post(
+        f"/api/v1/printers/{printer_id}/toner-cartridges/detect", headers=auth_headers
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cartridges"] == []
+    assert body["unmatched"] == [
+        {"description": "Unknown Part 4471", "color": None, "high_capacity": None}
+    ]
+
+
+def test_detect_toner_cartridges_snmp_failure_returns_502(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Unreachable Printer", "ip_address": "10.0.0.33"},
+    )
+    printer_id = create.json()["id"]
+
+    def fake_get_toner_supplies(ip, config):
+        raise SnmpProbeError("No response from device.")
+
+    monkeypatch.setattr(printers_router, "get_toner_supplies", fake_get_toner_supplies)
+
+    response = client.post(
+        f"/api/v1/printers/{printer_id}/toner-cartridges/detect", headers=auth_headers
+    )
+    assert response.status_code == 502
+
+
+def test_detect_toner_cartridges_requires_admin(
+    client, auth_headers, viewer_headers, mock_failed_probe
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Protected Cartridge Printer", "ip_address": "10.0.0.34"},
+    )
+    printer_id = create.json()["id"]
+
+    response = client.post(
+        f"/api/v1/printers/{printer_id}/toner-cartridges/detect", headers=viewer_headers
+    )
+    assert response.status_code == 403
+
+
+def test_update_toner_cartridges_preserves_detected_fields_across_put(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Repriced Printer", "ip_address": "10.0.0.35"},
+    )
+    printer_id = create.json()["id"]
+
+    def fake_get_toner_supplies(ip, config):
+        return [DetectedSupply(description="056H Black", color="black", high_capacity=None)]
+
+    monkeypatch.setattr(printers_router, "get_toner_supplies", fake_get_toner_supplies)
+    client.post(f"/api/v1/printers/{printer_id}/toner-cartridges/detect", headers=auth_headers)
+
+    # Admin edits cost via the normal full-replace PUT — detected_description
+    # must survive, not get wiped by the delete-and-recreate.
+    response = client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=auth_headers,
+        json=[{"color": "black", "cost": 62.5, "yield_pages": 3100}],
+    )
+    assert response.status_code == 200
+    body = response.json()[0]
+    assert body["cost"] == 62.5
+    assert body["detected_description"] == "056H Black"

@@ -53,7 +53,7 @@ function CopierImportsList() {
   }, [deviceId]);
 
   return (
-    <div className="flex w-full max-w-4xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Accounting Imports</h1>
         {isAdmin && (

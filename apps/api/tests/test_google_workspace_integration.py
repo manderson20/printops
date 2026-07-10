@@ -111,10 +111,14 @@ async def test_refresh_aliases_populates_from_google_and_backfills_jobs(db_sessi
         printer = Printer(name="Test Printer", ip_address="10.0.0.9")
         db.add(printer)
         await db.flush()
-        db.add(Job(printer_id=printer.id, submitted_by="old.address@district.org", status="forwarded"))
+        db.add(
+            Job(printer_id=printer.id, submitted_by="old.address@district.org", status="forwarded")
+        )
         await db.commit()
 
-        users = [{"primaryEmail": "new.address@district.org", "aliases": ["old.address@district.org"]}]
+        users = [
+            {"primaryEmail": "new.address@district.org", "aliases": ["old.address@district.org"]}
+        ]
         await _refresh_google_sourced_aliases(db, users)
         await db.commit()
 
@@ -134,7 +138,9 @@ async def test_refresh_aliases_populates_from_google_and_backfills_jobs(db_sessi
 @pytest.mark.asyncio
 async def test_refresh_aliases_never_overwrites_manual_alias(db_session_factory):
     async with db_session_factory() as db:
-        db.add(AttributionAlias(alias="matt", resolved_email="manderson@district.org", source="manual"))
+        db.add(
+            AttributionAlias(alias="matt", resolved_email="manderson@district.org", source="manual")
+        )
         await db.commit()
 
         # Google independently reports "matt" as an alias of a different account.

@@ -33,6 +33,18 @@ REAL_PATH=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ip
 REAL_URI="${REAL_SCHEME}://${REAL_IP}:${REAL_PORT}${REAL_PATH}"
 QUEUE_NAME="printops-release-${PRINTER_ID}"
 
+# This queue may already have a real, accurate PPD from a prior successful
+# sync — recorded *before* attempting -m everywhere below, so a failure
+# this time doesn't wrongly downgrade an already-working queue. See
+# sync_cups_queue.sh's matching block for the full reasoning (confirmed
+# live: MS - Cletus Copier's monochrome engine got dithered, pixelated
+# output for as long as its queue ran on this generic PPD's RGB default).
+PPD_FILE="/etc/cups/ppd/${QUEUE_NAME}.ppd"
+HAD_REAL_PPD=false
+if [ -f "$PPD_FILE" ] && ! sudo grep -q '^\*NickName: "Generic IPP Everywhere Printer"' "$PPD_FILE"; then
+    HAD_REAL_PPD=true
+fi
+
 # -m everywhere builds an accurate driverless PPD from what the device
 # actually reports, same as the client-facing queue — this queue talks to
 # the real printer directly, so device-uri is left pointed there (no
@@ -42,8 +54,18 @@ QUEUE_NAME="printops-release-${PRINTER_ID}"
 # that script's comment for why (confirmed live: a Kyocera ECOSYS can't
 # handle -m everywhere's full attribute probe on either queue).
 if ! timeout 30 sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m everywhere -D "${PRINTER_NAME} (internal release queue)"; then
-    echo "WARNING: -m everywhere failed/timed out for $REAL_URI — falling back to a generic IPP Everywhere PPD (reduced capability accuracy for this release queue)." >&2
-    sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m "drv:///cupsfilters.drv/pwgrast.ppd" -D "${PRINTER_NAME} (internal release queue)"
+    if [ "$HAD_REAL_PPD" = true ]; then
+        echo "WARNING: -m everywhere failed/timed out for $REAL_URI — keeping this release queue's existing real PPD from a prior successful sync instead of regressing it to the generic fallback." >&2
+        # Still repoint device-uri (without -m, so the existing PPD is left
+        # alone) — unlike the client-facing queue, this one's device-uri IS
+        # the real delivery target, not something a later step resets, so a
+        # printer IP change must still take effect even when the PPD probe
+        # itself failed.
+        sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -D "${PRINTER_NAME} (internal release queue)"
+    else
+        echo "WARNING: -m everywhere failed/timed out for $REAL_URI — falling back to a generic IPP Everywhere PPD (reduced capability accuracy for this release queue)." >&2
+        sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m "drv:///cupsfilters.drv/pwgrast.ppd" -D "${PRINTER_NAME} (internal release queue)"
+    fi
 fi
 
 # Deliberately NOT shared and NOT AirPrint-advertised — this queue only
@@ -56,6 +78,32 @@ sudo lpadmin -p "$QUEUE_NAME" -o printer-is-shared=false -E
 # explicitly, harmless no-op if already enabled/accepting.
 sudo cupsenable "$QUEUE_NAME"
 sudo cupsaccept "$QUEUE_NAME"
+
+# Same as the client-facing queue — force color-capable printers to default
+# to color rather than whatever driverless-PPD generation happened to land
+# on (confirmed live: 4 color copiers on this box had a stored
+# print-color-mode=monochrome default despite being genuine color devices).
+# See scripts/sync_cups_queue.sh's matching block for the full reasoning.
+COLOR_SUPPORTED=$(ipptool -X "ipp://localhost/printers/$QUEUE_NAME" /dev/stdin <<IPPTOOL_EOF 2>/dev/null | grep -A1 "<key>color-supported</key>" | grep -c "<true" || true
+{
+    OPERATION Get-Printer-Attributes
+    GROUP operation-attributes-tag
+    ATTR charset attributes-charset utf-8
+    ATTR language attributes-natural-language en
+    ATTR uri printer-uri ipp://localhost/printers/$QUEUE_NAME
+    ATTR keyword requested-attributes color-supported
+}
+IPPTOOL_EOF
+)
+if [ "$COLOR_SUPPORTED" -ge 1 ]; then
+    sudo lpadmin -p "$QUEUE_NAME" -o print-color-mode-default=color
+    # Same as the client-facing queue — print-color-mode-default alone
+    # doesn't cover the PPD's own *DefaultColorModel ("ColorModel" option),
+    # which `-m everywhere` above always (re)sets to Gray regardless of
+    # actual color capability (confirmed live). See
+    # scripts/sync_cups_queue.sh's matching block for the full reasoning.
+    sudo lpadmin -p "$QUEUE_NAME" -o ColorModel=RGB || true
+fi
 
 # Same as the client-facing queue — abort just the failing job instead of
 # cupsd's default retry-job, which would otherwise jam every other
