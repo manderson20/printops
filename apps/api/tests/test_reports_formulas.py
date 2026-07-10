@@ -83,9 +83,9 @@ def test_printer_rate_uses_black_cartridge_for_mono():
 
 def test_printer_rate_sums_all_four_cartridges_for_color():
     cartridges = [
-        FakeCartridge("black", cost=60.0, yield_pages=3000),   # 0.02/page
-        FakeCartridge("cyan", cost=80.0, yield_pages=2000),    # 0.04/page
-        FakeCartridge("magenta", cost=80.0, yield_pages=2000), # 0.04/page
+        FakeCartridge("black", cost=60.0, yield_pages=3000),  # 0.02/page
+        FakeCartridge("cyan", cost=80.0, yield_pages=2000),  # 0.04/page
+        FakeCartridge("magenta", cost=80.0, yield_pages=2000),  # 0.04/page
         FakeCartridge("yellow", cost=80.0, yield_pages=2000),  # 0.04/page
     ]
     rate = compute_printer_rate(cartridges, _formulas())

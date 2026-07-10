@@ -21,6 +21,10 @@ class JobCreate(BaseModel):
 class JobUpdate(BaseModel):
     status: str
     error_message: str | None = None
+    # Known at creation time when CUPS hands the backend a filename; only
+    # knowable here, after the fact, when CUPS instead piped the document
+    # over stdin — see infra/cups/backends/printops.
+    file_size_bytes: int | None = None
     # Physical sheets printed (CUPS job-media-sheets-completed), reported
     # best-effort by the CUPS backend script — see infra/cups/backends/printops.
     page_count: int | None = None
@@ -68,6 +72,16 @@ class JobOut(BaseModel):
 
 class JobListOut(JobOut):
     printer_name: str
+    # Resolved from Job.mac_address via app/reports/aggregation.py:
+    # resolve_device_names — the Mosyle/Google Workspace device name if
+    # known, the raw MAC if not resolved to a name yet, or None if this
+    # job never got a MAC at all (e.g. an unresolved/manual submission).
+    device_name: str | None = None
+    # Resolved from Job.submitted_by via app/reports/aggregation.py:
+    # resolve_display_names — the synced Google Workspace name if known,
+    # else the email's local-part (before @) as a readable stand-in, or
+    # None if this job has no submitted_by at all.
+    submitted_by_name: str | None = None
 
 
 class UserUsageOut(BaseModel):
@@ -84,3 +98,18 @@ class UserUsageOut(BaseModel):
     job_count: int
     total_pages: int
     total_bytes: int
+    duplex_pages: int
+    simplex_pages: int
+    mono_pages: int
+    color_pages: int
+    # Real per-job cost (app/reports/formulas.py:job_cost) — priced off
+    # each job's own printer's toner rate, same calculation the Insights
+    # cost-breakdown report uses, not a flat page-count multiplier.
+    estimated_cost: float
+
+
+class UserUsagePage(BaseModel):
+    items: list[UserUsageOut]
+    total: int
+    page: int
+    page_size: int

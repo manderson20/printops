@@ -9,7 +9,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-os.environ["PRINTOPS_COPIER_IMPORT_SPOOL_DIR"] = tempfile.mkdtemp(prefix="printops-copier-imports-test-")
+os.environ["PRINTOPS_COPIER_IMPORT_SPOOL_DIR"] = tempfile.mkdtemp(
+    prefix="printops-copier-imports-test-"
+)
 
 from app.db import get_db  # noqa: E402
 from app.main import app  # noqa: E402
@@ -93,7 +95,11 @@ def test_preview_flags_unmapped_and_no_duplicates_before_commit(client, auth_hea
     client.post(
         "/api/v1/staff-copier-identities",
         headers=auth_headers,
-        json={"staff_email": "jane.smith@district.org", "identity_type": "staff_id", "identity_value": "12345"},
+        json={
+            "staff_email": "jane.smith@district.org",
+            "identity_type": "staff_id",
+            "identity_value": "12345",
+        },
     )
     csv_content = "User Code,Date,Pages\n12345,2026-07-01,42\n99999,2026-07-01,7\n"
     batch_id = _upload(client, auth_headers, device["id"], csv_content).json()["batch_id"]
@@ -114,7 +120,11 @@ def test_commit_persists_rows_and_resolves_known_identities(client, auth_headers
     client.post(
         "/api/v1/staff-copier-identities",
         headers=auth_headers,
-        json={"staff_email": "jane.smith@district.org", "identity_type": "staff_id", "identity_value": "12345"},
+        json={
+            "staff_email": "jane.smith@district.org",
+            "identity_type": "staff_id",
+            "identity_value": "12345",
+        },
     )
     csv_content = "User Code,Date,Pages\n12345,2026-07-01,42\n99999,2026-07-01,7\n"
     batch_id = _upload(client, auth_headers, device["id"], csv_content).json()["batch_id"]
@@ -124,7 +134,9 @@ def test_commit_persists_rows_and_resolves_known_identities(client, auth_headers
         json={"column_mapping": DEFAULT_MAPPING, "identity_type": "staff_id"},
     )
     commit = client.post(
-        f"/api/v1/copier-imports/{batch_id}/commit", headers=auth_headers, json={"skip_duplicates": True}
+        f"/api/v1/copier-imports/{batch_id}/commit",
+        headers=auth_headers,
+        json={"skip_duplicates": True},
     )
     assert commit.status_code == 200, commit.text
     assert commit.json()["status"] == "committed"
@@ -145,7 +157,9 @@ def test_recommitting_same_file_is_detected_as_duplicate(client, auth_headers, d
         json={"column_mapping": DEFAULT_MAPPING, "identity_type": "staff_id"},
     )
     client.post(
-        f"/api/v1/copier-imports/{batch_id}/commit", headers=auth_headers, json={"skip_duplicates": True}
+        f"/api/v1/copier-imports/{batch_id}/commit",
+        headers=auth_headers,
+        json={"skip_duplicates": True},
     )
 
     batch_id_2 = _upload(client, auth_headers, device["id"], csv_content).json()["batch_id"]
@@ -173,7 +187,9 @@ def test_committed_batch_cannot_be_deleted(client, auth_headers, device):
         json={"column_mapping": DEFAULT_MAPPING, "identity_type": "staff_id"},
     )
     client.post(
-        f"/api/v1/copier-imports/{batch_id}/commit", headers=auth_headers, json={"skip_duplicates": True}
+        f"/api/v1/copier-imports/{batch_id}/commit",
+        headers=auth_headers,
+        json={"skip_duplicates": True},
     )
     deleted = client.delete(f"/api/v1/copier-imports/batches/{batch_id}", headers=auth_headers)
     assert deleted.status_code == 400

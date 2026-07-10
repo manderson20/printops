@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -5,8 +6,6 @@ import pytest_asyncio
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
-
-import json
 
 from app.db import get_db
 from app.integrations.classguard import ClassGuardClient
@@ -92,7 +91,9 @@ def test_update_settings_omitted_secret_keeps_previous_value(client, auth_header
     )
     # Edit again without touching the secret fields — should not clear them.
     response = client.put(
-        "/api/v1/settings/mosyle", headers=auth_headers, json={"base_url": "https://other.example/v1"}
+        "/api/v1/settings/mosyle",
+        headers=auth_headers,
+        json={"base_url": "https://other.example/v1"},
     )
     assert response.status_code == 200
     body = response.json()
@@ -169,7 +170,11 @@ def test_classguard_test_connection_hit(client, auth_headers, monkeypatch):
     response = client.post(
         "/api/v1/settings/classguard/test",
         headers=auth_headers,
-        json={"base_url": "https://classguard.example.org", "access_token": "tok", "test_ip": "10.0.0.42"},
+        json={
+            "base_url": "https://classguard.example.org",
+            "access_token": "tok",
+            "test_ip": "10.0.0.42",
+        },
     )
     assert response.status_code == 200
     body = response.json()
@@ -186,7 +191,11 @@ def test_classguard_test_connection_no_lease_still_ok(client, auth_headers, monk
     response = client.post(
         "/api/v1/settings/classguard/test",
         headers=auth_headers,
-        json={"base_url": "https://classguard.example.org", "access_token": "tok", "test_ip": "10.0.0.42"},
+        json={
+            "base_url": "https://classguard.example.org",
+            "access_token": "tok",
+            "test_ip": "10.0.0.42",
+        },
     )
     assert response.status_code == 200
     body = response.json()
@@ -204,7 +213,9 @@ def test_classguard_test_connection_missing_fields(client, auth_headers):
     assert "required" in body["error"]
 
 
-FAKE_SERVICE_ACCOUNT_JSON = json.dumps({"client_email": "svc@project.iam.gserviceaccount.com", "private_key": "fake"})
+FAKE_SERVICE_ACCOUNT_JSON = json.dumps(
+    {"client_email": "svc@project.iam.gserviceaccount.com", "private_key": "fake"}
+)
 
 
 def test_get_google_workspace_settings_creates_default_row(client, auth_headers):
@@ -242,7 +253,10 @@ def test_google_workspace_test_connection_success(client, auth_headers, monkeypa
     response = client.post(
         "/api/v1/settings/google-workspace/test",
         headers=auth_headers,
-        json={"service_account_json": FAKE_SERVICE_ACCOUNT_JSON, "admin_email": "admin@example.com"},
+        json={
+            "service_account_json": FAKE_SERVICE_ACCOUNT_JSON,
+            "admin_email": "admin@example.com",
+        },
     )
     assert response.status_code == 200
     body = response.json()
@@ -377,6 +391,69 @@ async def test_copier_pin_roster_filters_by_configured_staff_ou(
     body = response.text
     assert "teacher@example.com" in body
     assert "student@example.com" not in body
+
+
+async def test_org_units_endpoint_filters_by_configured_staff_ou(
+    client, auth_headers, db_session_factory
+):
+    client.put(
+        "/api/v1/settings/google-workspace",
+        headers=auth_headers,
+        json={"staff_org_unit_path": "/Employees"},
+    )
+    async with db_session_factory() as session:
+        session.add(
+            GoogleWorkspaceUser(
+                email="teacher@example.com",
+                name="Teacher",
+                org_unit_path="/Employees/Teachers",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            GoogleWorkspaceUser(
+                email="student@example.com",
+                name="Student",
+                org_unit_path="/Students/High School",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    response = client.get("/api/v1/settings/google-workspace/org-units", headers=auth_headers)
+    assert response.status_code == 200
+    org_units = response.json()
+    assert "/Employees/Teachers" in org_units
+    assert "/Students/High School" not in org_units
+
+
+async def test_org_units_endpoint_unfiltered_when_staff_ou_not_configured(
+    client, auth_headers, db_session_factory
+):
+    async with db_session_factory() as session:
+        session.add(
+            GoogleWorkspaceUser(
+                email="teacher@example.com",
+                name="Teacher",
+                org_unit_path="/Employees/Teachers",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            GoogleWorkspaceUser(
+                email="student@example.com",
+                name="Student",
+                org_unit_path="/Students/High School",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    response = client.get("/api/v1/settings/google-workspace/org-units", headers=auth_headers)
+    assert response.status_code == 200
+    org_units = response.json()
+    assert "/Employees/Teachers" in org_units
+    assert "/Students/High School" in org_units
 
 
 def test_staff_org_unit_path_can_be_cleared(client, auth_headers):

@@ -1,0 +1,24 @@
+[Unit]
+Description=PrintOps syslog collector for printers
+After=network.target printops-api.service
+Requires=printops-api.service
+
+[Service]
+Type=simple
+User=itadmin
+Group=itadmin
+WorkingDirectory=/home/itadmin/printops/infra/syslog-relay
+Environment="PRINTOPS_ENV_FILE=/home/itadmin/printops/apps/api/.env"
+Environment="PRINTOPS_API_BASE=http://localhost:8000"
+ExecStart=/home/itadmin/printops/infra/syslog-relay/.venv/bin/python server.py
+Restart=on-failure
+RestartSec=3
+# Port 514 (syslog's standard port — most printers' event-notification
+# config doesn't let you choose a different one) is privileged (<1024) —
+# this grants just enough capability to bind it without running the whole
+# process as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

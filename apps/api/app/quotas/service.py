@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.job import Job
 from app.models.printer import Printer
 from app.models.quota import PrinterUserQuota, QuotaSettings
+from app.models.release_bypass import PrinterReleaseBypass
 
 
 async def get_or_create_quota_settings(db: AsyncSession) -> QuotaSettings:
@@ -105,6 +106,19 @@ async def get_pages_used(
     return result.scalar_one()
 
 
+async def has_release_bypass(db: AsyncSession, printer_id: uuid.UUID, user_email: str) -> bool:
+    """Whether `user_email` skips the PIN-release hold at this printer
+    specifically (PrinterReleaseBypass, app/models/release_bypass.py) —
+    e.g. a secretary who sits next to the copier."""
+    result = await db.execute(
+        select(PrinterReleaseBypass).where(
+            PrinterReleaseBypass.printer_id == printer_id,
+            PrinterReleaseBypass.user_email == user_email,
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
 async def resolve_hold_reason(
     db: AsyncSession, printer: Printer, submitted_by: str | None
 ) -> str | None:
@@ -112,9 +126,16 @@ async def resolve_hold_reason(
     held, and why — called once from create_job, before the CUPS backend
     script's spool/PATCH step (infra/cups/backends/printops) acts on it.
     "pin_release" always wins over "quota" when both would apply, since a
-    release_required printer's PIN kiosk already handles delivery."""
+    release_required printer's PIN kiosk already handles delivery. A
+    bypassed user is treated exactly as if release_required were off for
+    them — they still fall through to ordinary quota resolution below,
+    rather than skipping every hold outright."""
     if printer.release_required:
-        return "pin_release"
+        bypassed = submitted_by is not None and await has_release_bypass(
+            db, printer.id, submitted_by
+        )
+        if not bypassed:
+            return "pin_release"
 
     if submitted_by is None:
         return None
