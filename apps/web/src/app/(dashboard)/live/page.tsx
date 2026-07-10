@@ -36,9 +36,16 @@ function rollingWindow(): { start: Date; end: Date } {
   return { start, end };
 }
 
-function hourLabel(start: Date, hour: number): string {
-  const d = new Date(start.getTime() + hour * 60 * 60 * 1000);
+function bucketTime(start: Date, hour: number): Date {
+  return new Date(start.getTime() + hour * 60 * 60 * 1000);
+}
+
+function hourLabel(d: Date): string {
   return d.toLocaleTimeString([], { hour: "numeric" });
+}
+
+function dateLabel(d: Date): string {
+  return d.toLocaleDateString([], { month: "numeric", day: "numeric" });
 }
 
 function ExpandIcon() {
@@ -154,11 +161,21 @@ export default function LiveDashboardPage() {
 
   const chartData =
     state.phase === "ok"
-      ? state.buckets.map((b) => ({
-          label: hourLabel(state.windowStart, b.hour),
-          print: b.total_pages,
-          copy: b.copy_pages,
-        }))
+      ? state.buckets.map((b, i) => {
+          const d = bucketTime(state.windowStart, b.hour);
+          const prevD =
+            i > 0 ? bucketTime(state.windowStart, state.buckets[i - 1].hour) : null;
+          // A rolling 24h window almost always crosses one calendar date —
+          // label the date only on the bar where it changes (and the very
+          // first bar), instead of on every bar, so the axis stays
+          // readable while still orienting "yesterday" vs "today".
+          const isNewDay = !prevD || d.toDateString() !== prevD.toDateString();
+          return {
+            label: isNewDay ? `${dateLabel(d)} ${hourLabel(d)}` : hourLabel(d),
+            print: b.total_pages,
+            copy: b.copy_pages,
+          };
+        })
       : [];
 
   const totals =
