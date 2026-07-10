@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { createPrinter, ApiError } from "@/lib/api";
+import { createPrinter, listPrinters, ApiError, type Printer } from "@/lib/api";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Textarea } from "@/components/ui/Field";
@@ -22,6 +23,42 @@ const initialForm = {
   notes: "",
 };
 
+type DuplicateMatch = { printer: Printer; fields: string[] };
+
+// Exact, case-insensitive match on any of these is a strong enough signal
+// to warn about — an IP/hostname/serial can't legitimately belong to two
+// distinct active printers, and a repeated name is very likely someone
+// re-adding the same physical device rather than a coincidence. Only
+// checked against active printers (listPrinters excludes archived by
+// default) — an archived printer sharing an IP/name with a new one is the
+// expected "replaced this device" pattern (see Printer.archived_at's
+// docstring), not a duplicate.
+function findDuplicates(form: typeof initialForm, existing: Printer[]): DuplicateMatch[] {
+  const norm = (s: string) => s.trim().toLowerCase();
+  const matches: DuplicateMatch[] = [];
+  for (const printer of existing) {
+    const fields: string[] = [];
+    if (norm(form.ip_address) && norm(form.ip_address) === norm(printer.ip_address)) {
+      fields.push("IP address");
+    }
+    if (norm(form.hostname) && printer.hostname && norm(form.hostname) === norm(printer.hostname)) {
+      fields.push("hostname");
+    }
+    if (
+      norm(form.serial_number) &&
+      printer.serial_number &&
+      norm(form.serial_number) === norm(printer.serial_number)
+    ) {
+      fields.push("serial number");
+    }
+    if (norm(form.name) && norm(form.name) === norm(printer.name)) {
+      fields.push("name");
+    }
+    if (fields.length > 0) matches.push({ printer, fields });
+  }
+  return matches;
+}
+
 export default function NewPrinterPage() {
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -29,6 +66,16 @@ export default function NewPrinterPage() {
   const [airprintEnabled, setAirprintEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [existingPrinters, setExistingPrinters] = useState<Printer[]>([]);
+
+  useEffect(() => {
+    listPrinters().then(setExistingPrinters).catch(() => setExistingPrinters([]));
+  }, []);
+
+  const duplicates = useMemo(
+    () => findDuplicates(form, existingPrinters),
+    [form, existingPrinters],
+  );
 
   useEffect(() => {
     if (currentUser && currentUser.role !== "admin") {
@@ -71,6 +118,36 @@ export default function NewPrinterPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col">
+      {duplicates.length > 0 && !submitting && (
+        // Fixed, not inline in the form — stays put in the viewport's top-right
+        // corner as the admin scrolls through the rest of the fields, rather
+        // than scrolling out of view right when it matters most (right before
+        // they hit Add). Disappears once they actually submit.
+        <div className="fixed right-4 top-4 z-50 w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-red-900 bg-red-700 p-4 text-xs text-white shadow-lg dark:border-red-950 dark:bg-red-800 dark:text-red-50">
+          <p className="text-base font-bold">Duplicate Printer Possible Match</p>
+          <p className="mt-1 font-medium">This might already be a printer in the system</p>
+          <ul className="mt-1 flex flex-col gap-1">
+            {duplicates.map(({ printer, fields }) => (
+              <li key={printer.id}>
+                Matches{" "}
+                <Link
+                  href={`/printers/${printer.id}`}
+                  target="_blank"
+                  className="font-medium underline"
+                >
+                  {printer.name}
+                </Link>{" "}
+                on {fields.join(", ")}.
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1">
+            If this is genuinely a different physical device, go ahead and add it — this is just
+            a heads-up, not a block.
+          </p>
+        </div>
+      )}
+
       <form
         onSubmit={handleSubmit}
         className="flex flex-col gap-4 rounded-xl border border-black/[.08] bg-white p-8 dark:border-white/[.145] dark:bg-black"

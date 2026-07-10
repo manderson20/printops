@@ -5,6 +5,18 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.41.0] - 2026-07-10
+
+- **Duplicate printer detection on Add Printer.** As you fill in the
+  form, a fixed "Duplicate Printer Possible Match" banner in the
+  top-right corner warns if the name, IP address, hostname, or serial
+  number exactly matches an existing active printer, with a link to the
+  match — a non-blocking heads-up, not a hard stop, since a handful of
+  legitimate reasons for an intentional duplicate exist. Archived
+  printers are excluded from the check, since re-adding a printer with
+  the same IP/name after archiving the old one is the expected
+  "replaced this device" pattern, not a duplicate.
+
 ## [0.40.1] - 2026-07-10
 
 - **Fix jobs showing the raw email instead of the resolved name.** The
