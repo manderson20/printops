@@ -1514,7 +1514,7 @@ export async function getReportTimeline(
 }
 
 export type HourlyBucket = {
-  hour: number;
+  interval: number;
   total_pages: number;
   color_pages: number;
   mono_pages: number;

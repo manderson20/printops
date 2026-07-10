@@ -38,7 +38,7 @@ class TimelineBucketOut(BaseModel):
 
 
 class HourlyBucketOut(BaseModel):
-    hour: int
+    interval: int
     total_pages: int
     color_pages: int
     mono_pages: int

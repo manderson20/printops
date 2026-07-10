@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
-import { StackedVolumeBarChart } from "../insights/charts";
+import { StackedVolumeBarChart, type IntradayChartPoint } from "../insights/charts";
 
 const POLL_INTERVAL_MS = 15 * 1000;
 const RECENT_JOBS_LIMIT = 20;
@@ -36,11 +36,23 @@ function rollingWindow(): { start: Date; end: Date } {
   return { start, end };
 }
 
-function bucketTime(start: Date, hour: number): Date {
-  return new Date(start.getTime() + hour * 60 * 60 * 1000);
+// Matches app/reports/aggregation.py's LIVE_INTERVAL_MINUTES — the
+// backend buckets by this same 30-minute step, so `interval` here means
+// the identical thing on both sides of the API.
+const LIVE_INTERVAL_MINUTES = 30;
+
+function bucketTime(start: Date, interval: number): Date {
+  return new Date(start.getTime() + interval * LIVE_INTERVAL_MINUTES * 60 * 1000);
 }
 
-function hourLabel(d: Date): string {
+// Precise, always includes minutes — used for the Tooltip regardless of
+// what the axis visually shows for a given bar (see IntradayTick).
+function preciseTimeLabel(d: Date): string {
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+// Compact, on-the-hour only — what's actually drawn on the axis.
+function hourTickLabel(d: Date): string {
   return d.toLocaleTimeString([], { hour: "numeric" });
 }
 
@@ -159,19 +171,24 @@ export default function LiveDashboardPage() {
     ? Math.max(0, Math.ceil((lastUpdated.getTime() + POLL_INTERVAL_MS - now.getTime()) / 1000))
     : null;
 
-  const chartData =
+  const chartData: IntradayChartPoint[] =
     state.phase === "ok"
       ? state.buckets.map((b, i) => {
-          const d = bucketTime(state.windowStart, b.hour);
+          const d = bucketTime(state.windowStart, b.interval);
           const prevD =
-            i > 0 ? bucketTime(state.windowStart, state.buckets[i - 1].hour) : null;
+            i > 0 ? bucketTime(state.windowStart, state.buckets[i - 1].interval) : null;
           // A rolling 24h window almost always crosses one calendar date —
-          // label the date only on the bar where it changes (and the very
-          // first bar), instead of on every bar, so the axis stays
+          // mark the bar where it changes (and the very first bar) so the
+          // chart can draw a divider + two-line date/time tick there,
+          // instead of labeling every bar, so the 48-bar axis stays
           // readable while still orienting "yesterday" vs "today".
-          const isNewDay = !prevD || d.toDateString() !== prevD.toDateString();
+          const isDateChange = !prevD || d.toDateString() !== prevD.toDateString();
+          const isHourMark = d.getMinutes() === 0;
           return {
-            label: isNewDay ? `${dateLabel(d)} ${hourLabel(d)}` : hourLabel(d),
+            label: preciseTimeLabel(d),
+            tickText: isDateChange || isHourMark ? hourTickLabel(d) : "",
+            isDateChange,
+            dateText: isDateChange ? dateLabel(d) : "",
             print: b.total_pages,
             copy: b.copy_pages,
           };
