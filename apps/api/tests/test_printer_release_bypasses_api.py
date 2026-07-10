@@ -27,7 +27,7 @@ async def db_session_factory():
     async with session_factory() as seed:
         seed.add(
             GoogleWorkspaceUser(
-                email="manderson@example.org",
+                email="manderson@example.com",
                 name="Matt Anderson",
                 synced_at=datetime.now(UTC),
             )
@@ -73,7 +73,7 @@ def test_create_rejects_email_not_in_roster(client, auth_headers, printer_id):
     response = client.post(
         f"/api/v1/printers/{printer_id}/release-bypasses",
         headers=auth_headers,
-        json={"user_email": "nobody@example.org"},
+        json={"user_email": "nobody@example.com"},
     )
     assert response.status_code == 400
 
@@ -82,11 +82,11 @@ def test_create_and_list(client, auth_headers, printer_id):
     response = client.post(
         f"/api/v1/printers/{printer_id}/release-bypasses",
         headers=auth_headers,
-        json={"user_email": "MAnderson@Example.org"},
+        json={"user_email": "MAnderson@Example.com"},
     )
     assert response.status_code == 201, response.text
     body = response.json()
-    assert body["user_email"] == "manderson@example.org"
+    assert body["user_email"] == "manderson@example.com"
 
     listing = client.get(f"/api/v1/printers/{printer_id}/release-bypasses", headers=auth_headers)
     assert listing.status_code == 200
@@ -94,7 +94,7 @@ def test_create_and_list(client, auth_headers, printer_id):
 
 
 def test_create_duplicate_conflicts(client, auth_headers, printer_id):
-    payload = {"user_email": "manderson@example.org"}
+    payload = {"user_email": "manderson@example.com"}
     first = client.post(
         f"/api/v1/printers/{printer_id}/release-bypasses", headers=auth_headers, json=payload
     )
@@ -109,7 +109,7 @@ def test_delete(client, auth_headers, printer_id):
     create = client.post(
         f"/api/v1/printers/{printer_id}/release-bypasses",
         headers=auth_headers,
-        json={"user_email": "manderson@example.org"},
+        json={"user_email": "manderson@example.com"},
     )
     bypass_id = create.json()["id"]
 
@@ -125,7 +125,7 @@ def test_delete(client, auth_headers, printer_id):
 def test_viewer_cannot_write(client, printer_id):
     response = client.post(
         f"/api/v1/printers/{printer_id}/release-bypasses",
-        json={"user_email": "manderson@example.org"},
+        json={"user_email": "manderson@example.com"},
     )
     assert response.status_code == 401
 
@@ -136,13 +136,13 @@ def test_bypassed_user_job_is_not_held(client, auth_headers, backend_headers, pr
     client.post(
         f"/api/v1/printers/{printer_id}/release-bypasses",
         headers=auth_headers,
-        json={"user_email": "manderson@example.org"},
+        json={"user_email": "manderson@example.com"},
     )
 
     bypassed_job = client.post(
         "/api/v1/jobs",
         headers=backend_headers,
-        json={"printer_id": printer_id, "submitted_by": "manderson@example.org"},
+        json={"printer_id": printer_id, "submitted_by": "manderson@example.com"},
     )
     # create_job always sets status="forwarding" at creation time regardless
     # of hold_reason — the CUPS backend script (infra/cups/backends/printops)
@@ -155,7 +155,7 @@ def test_bypassed_user_job_is_not_held(client, auth_headers, backend_headers, pr
     other_job = client.post(
         "/api/v1/jobs",
         headers=backend_headers,
-        json={"printer_id": printer_id, "submitted_by": "someoneelse@example.org"},
+        json={"printer_id": printer_id, "submitted_by": "someoneelse@example.com"},
     )
     assert other_job.status_code == 201
     assert other_job.json()["hold_reason"] == "pin_release"
