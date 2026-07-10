@@ -97,6 +97,12 @@ IPPTOOL_EOF
 )
 if [ "$COLOR_SUPPORTED" -ge 1 ]; then
     sudo lpadmin -p "$QUEUE_NAME" -o print-color-mode-default=color
+    # Same as the client-facing queue — print-color-mode-default alone
+    # doesn't cover the PPD's own *DefaultColorModel ("ColorModel" option),
+    # which `-m everywhere` above always (re)sets to Gray regardless of
+    # actual color capability (confirmed live). See
+    # scripts/sync_cups_queue.sh's matching block for the full reasoning.
+    sudo lpadmin -p "$QUEUE_NAME" -o ColorModel=RGB || true
 fi
 
 # Same as the client-facing queue — abort just the failing job instead of

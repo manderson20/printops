@@ -107,6 +107,22 @@ IPPTOOL_EOF
 )
 if [ "$COLOR_SUPPORTED" -ge 1 ]; then
     sudo lpadmin -p "$QUEUE_NAME" -o print-color-mode-default=color
+    # print-color-mode-default above only covers the modern IPP attribute.
+    # The driverless PPD `-m everywhere` just (re)generated above carries
+    # its OWN, separate color default — *DefaultColorModel, exposed here as
+    # the "ColorModel" option — which CUPS's classic PPD-based print path
+    # reads instead. `-m everywhere` always sets that to Gray regardless of
+    # the device's real color capability (confirmed live), so every time
+    # this script reruns for a color printer (e.g. an offline->online
+    # reconnect re-triggering the sync, not just an intentional edit), a
+    # queue previously fixed by the print-color-mode-default line above
+    # silently reverts to monochrome for these apps even though this script
+    # ran again and "should" have kept it fixed. RGB is consistently the
+    # PPD's "Color" choice label (confirmed live across all current color
+    # queues) — tolerate failure in case a future device's PPD names it
+    # differently, since print-color-mode-default above still covers the
+    # apps that use it.
+    sudo lpadmin -p "$QUEUE_NAME" -o ColorModel=RGB || true
 fi
 
 # cupsd.conf's global ErrorPolicy is retry-job, which keeps retrying the
