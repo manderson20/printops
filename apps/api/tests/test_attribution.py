@@ -12,7 +12,11 @@ from app.models.attribution_alias import AttributionAlias
 from app.models.base import Base
 from app.models.classguard import ClassGuardSettings
 from app.models.device_override import DeviceUserOverride
-from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceSettings, GoogleWorkspaceUser
+from app.models.google_workspace import (
+    GoogleWorkspaceDevice,
+    GoogleWorkspaceSettings,
+    GoogleWorkspaceUser,
+)
 from app.models.mosyle import MosyleDevice, MosyleSettings
 
 
@@ -140,7 +144,9 @@ async def test_resolves_via_classguard_mac_lookup(db_session_factory, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_mac_resolution_wins_over_ambiguous_bare_cups_username(db_session_factory, monkeypatch):
+async def test_mac_resolution_wins_over_ambiguous_bare_cups_username(
+    db_session_factory, monkeypatch
+):
     """The actual bug this precedence change fixes: a bare local username
     like "matt" is shared by multiple people, so MAC-based MDM resolution
     must be tried first rather than trusting "matt" outright."""
@@ -185,7 +191,9 @@ async def test_device_override_takes_priority_over_mosyle(db_session_factory, mo
             )
         )
         db.add(
-            DeviceUserOverride(mac_address="AA:BB:CC:DD:EE:FF", resolved_email="correct-matt@example.com")
+            DeviceUserOverride(
+                mac_address="AA:BB:CC:DD:EE:FF", resolved_email="correct-matt@example.com"
+            )
         )
         await db.commit()
         user, method, mac = await resolve_user(db, "matt", "10.0.0.5")
@@ -248,7 +256,11 @@ async def test_resolves_via_google_workspace_when_mosyle_misses(db_session_facto
 
     async with db_session_factory() as db:
         db.add(MosyleSettings(enabled=True))  # enabled, but no matching MosyleDevice row
-        db.add(GoogleWorkspaceSettings(enabled=True, service_account_json_encrypted=encrypt("{}"), admin_email="a@x.com"))
+        db.add(
+            GoogleWorkspaceSettings(
+                enabled=True, service_account_json_encrypted=encrypt("{}"), admin_email="a@x.com"
+            )
+        )
         db.add(ClassGuardSettings(enabled=True, access_token_encrypted=encrypt("tok")))
         db.add(
             GoogleWorkspaceDevice(
@@ -263,7 +275,9 @@ async def test_resolves_via_google_workspace_when_mosyle_misses(db_session_facto
 
 
 @pytest.mark.asyncio
-async def test_mosyle_email_confirmed_by_roster_wins_over_raw_value(db_session_factory, monkeypatch):
+async def test_mosyle_email_confirmed_by_roster_wins_over_raw_value(
+    db_session_factory, monkeypatch
+):
     """Roster has the same address but in a different case — the roster's
     canonical casing is what should be attributed, confirming the roster
     lookup actually ran rather than just trusting Mosyle's raw string."""
@@ -283,14 +297,20 @@ async def test_mosyle_email_confirmed_by_roster_wins_over_raw_value(db_session_f
                 synced_at=datetime.now(UTC),
             )
         )
-        db.add(GoogleWorkspaceUser(email="jane.doe@example.com", name="Jane Doe", synced_at=datetime.now(UTC)))
+        db.add(
+            GoogleWorkspaceUser(
+                email="jane.doe@example.com", name="Jane Doe", synced_at=datetime.now(UTC)
+            )
+        )
         await db.commit()
         user, method, mac = await resolve_user(db, None, "10.0.0.5")
     assert (user, method, mac) == ("jane.doe@example.com", "mosyle", "AA:BB:CC:DD:EE:FF")
 
 
 @pytest.mark.asyncio
-async def test_mosyle_username_reconciles_stale_email_against_roster(db_session_factory, monkeypatch):
+async def test_mosyle_username_reconciles_stale_email_against_roster(
+    db_session_factory, monkeypatch
+):
     """The real bug this reconciliation fixes: Mosyle's reported email is
     a stale/wrong alias, but its separately-reported username's local
     part uniquely matches a real Workspace roster address — that roster
@@ -312,7 +332,11 @@ async def test_mosyle_username_reconciles_stale_email_against_roster(db_session_
                 synced_at=datetime.now(UTC),
             )
         )
-        db.add(GoogleWorkspaceUser(email="jdoe@example.com", name="Jane Doe", synced_at=datetime.now(UTC)))
+        db.add(
+            GoogleWorkspaceUser(
+                email="jdoe@example.com", name="Jane Doe", synced_at=datetime.now(UTC)
+            )
+        )
         await db.commit()
         user, method, mac = await resolve_user(db, None, "10.0.0.5")
     assert (user, method, mac) == ("jdoe@example.com", "mosyle", "AA:BB:CC:DD:EE:FF")
@@ -340,8 +364,16 @@ async def test_mosyle_ambiguous_username_falls_back_to_raw_email(db_session_fact
                 synced_at=datetime.now(UTC),
             )
         )
-        db.add(GoogleWorkspaceUser(email="jdoe@students.example.com", name="J1", synced_at=datetime.now(UTC)))
-        db.add(GoogleWorkspaceUser(email="jdoe@staff.example.com", name="J2", synced_at=datetime.now(UTC)))
+        db.add(
+            GoogleWorkspaceUser(
+                email="jdoe@students.example.com", name="J1", synced_at=datetime.now(UTC)
+            )
+        )
+        db.add(
+            GoogleWorkspaceUser(
+                email="jdoe@staff.example.com", name="J2", synced_at=datetime.now(UTC)
+            )
+        )
         await db.commit()
         user, method, mac = await resolve_user(db, None, "10.0.0.5")
     assert (user, method, mac) == ("mosyle-reported@example.com", "mosyle", "AA:BB:CC:DD:EE:FF")
@@ -368,7 +400,11 @@ async def test_mosyle_username_only_reconciles_against_roster(db_session_factory
                 synced_at=datetime.now(UTC),
             )
         )
-        db.add(GoogleWorkspaceUser(email="jdoe@example.com", name="Jane Doe", synced_at=datetime.now(UTC)))
+        db.add(
+            GoogleWorkspaceUser(
+                email="jdoe@example.com", name="Jane Doe", synced_at=datetime.now(UTC)
+            )
+        )
         await db.commit()
         user, method, mac = await resolve_user(db, None, "10.0.0.5")
     assert (user, method, mac) == ("jdoe@example.com", "mosyle", "AA:BB:CC:DD:EE:FF")
@@ -383,16 +419,24 @@ async def test_mosyle_takes_priority_over_google_workspace(db_session_factory, m
 
     async with db_session_factory() as db:
         db.add(MosyleSettings(enabled=True))
-        db.add(GoogleWorkspaceSettings(enabled=True, service_account_json_encrypted=encrypt("{}"), admin_email="a@x.com"))
+        db.add(
+            GoogleWorkspaceSettings(
+                enabled=True, service_account_json_encrypted=encrypt("{}"), admin_email="a@x.com"
+            )
+        )
         db.add(ClassGuardSettings(enabled=True, access_token_encrypted=encrypt("tok")))
         db.add(
             MosyleDevice(
-                mac_address="AA:BB:CC:DD:EE:FF", user_email="mosyle-user@example.com", synced_at=datetime.now(UTC)
+                mac_address="AA:BB:CC:DD:EE:FF",
+                user_email="mosyle-user@example.com",
+                synced_at=datetime.now(UTC),
             )
         )
         db.add(
             GoogleWorkspaceDevice(
-                mac_address="AA:BB:CC:DD:EE:FF", user_email="gw-user@example.com", synced_at=datetime.now(UTC)
+                mac_address="AA:BB:CC:DD:EE:FF",
+                user_email="gw-user@example.com",
+                synced_at=datetime.now(UTC),
             )
         )
         await db.commit()
@@ -406,14 +450,20 @@ async def test_bare_username_alias_resolves_without_any_mac_lookup(db_session_fa
     machinery configured at all still resolves via a manual attribution
     alias (app/routers/attribution_aliases.py)."""
     async with db_session_factory() as db:
-        db.add(AttributionAlias(alias="matt", resolved_email="manderson@example.org", source="manual"))
+        db.add(
+            AttributionAlias(
+                alias="matt", resolved_email="manderson@example.org", source="manual"
+            )
+        )
         await db.commit()
         user, method, mac = await resolve_user(db, "matt", None)
     assert (user, method, mac) == ("manderson@example.org", "alias", None)
 
 
 @pytest.mark.asyncio
-async def test_email_shaped_alias_resolves_immediately_no_mac_lookup(db_session_factory, monkeypatch):
+async def test_email_shaped_alias_resolves_immediately_no_mac_lookup(
+    db_session_factory, monkeypatch
+):
     """A Google Workspace-synced alias email (an old/renamed address) is
     caught before the normal "any email wins outright" rule — and never
     triggers a ClassGuard lookup, matching the existing email-shaped-value
@@ -451,8 +501,16 @@ async def test_device_override_still_wins_over_username_alias(db_session_factory
 
     async with db_session_factory() as db:
         db.add(ClassGuardSettings(enabled=True, access_token_encrypted=encrypt("tok")))
-        db.add(DeviceUserOverride(mac_address="AA:BB:CC:DD:EE:FF", resolved_email="override@example.com"))
-        db.add(AttributionAlias(alias="matt", resolved_email="manderson@example.org", source="manual"))
+        db.add(
+            DeviceUserOverride(
+                mac_address="AA:BB:CC:DD:EE:FF", resolved_email="override@example.com"
+            )
+        )
+        db.add(
+            AttributionAlias(
+                alias="matt", resolved_email="manderson@example.org", source="manual"
+            )
+        )
         await db.commit()
         user, method, mac = await resolve_user(db, "matt", "10.0.0.5")
     assert (user, method, mac) == ("override@example.com", "override", "AA:BB:CC:DD:EE:FF")
@@ -461,7 +519,9 @@ async def test_device_override_still_wins_over_username_alias(db_session_factory
 @pytest.mark.asyncio
 async def test_no_matching_alias_falls_back_to_raw_cups_value(db_session_factory):
     async with db_session_factory() as db:
-        db.add(AttributionAlias(alias="someone-else", resolved_email="x@example.com", source="manual"))
+        db.add(
+            AttributionAlias(alias="someone-else", resolved_email="x@example.com", source="manual")
+        )
         await db.commit()
         user, method, mac = await resolve_user(db, "matt", None)
     assert (user, method, mac) == ("matt", "cups", None)

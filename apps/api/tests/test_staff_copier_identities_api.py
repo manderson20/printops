@@ -65,7 +65,11 @@ def test_create_rejects_email_not_in_roster(client, auth_headers):
     response = client.post(
         "/api/v1/staff-copier-identities",
         headers=auth_headers,
-        json={"staff_email": "nobody@district.org", "identity_type": "staff_id", "identity_value": "12345"},
+        json={
+            "staff_email": "nobody@district.org",
+            "identity_type": "staff_id",
+            "identity_value": "12345",
+        },
     )
     assert response.status_code == 400
 
@@ -74,12 +78,20 @@ def test_create_and_list_by_staff(client, auth_headers):
     client.post(
         "/api/v1/staff-copier-identities",
         headers=auth_headers,
-        json={"staff_email": "jane.smith@district.org", "identity_type": "staff_id", "identity_value": "12345"},
+        json={
+            "staff_email": "jane.smith@district.org",
+            "identity_type": "staff_id",
+            "identity_value": "12345",
+        },
     )
     client.post(
         "/api/v1/staff-copier-identities",
         headers=auth_headers,
-        json={"staff_email": "jane.smith@district.org", "identity_type": "badge_id", "identity_value": "0008473629"},
+        json={
+            "staff_email": "jane.smith@district.org",
+            "identity_type": "badge_id",
+            "identity_value": "0008473629",
+        },
     )
     response = client.get(
         "/api/v1/staff-copier-identities/by-staff/jane.smith@district.org", headers=auth_headers
@@ -88,7 +100,11 @@ def test_create_and_list_by_staff(client, auth_headers):
 
 
 def test_duplicate_org_wide_identity_conflicts(client, auth_headers):
-    payload = {"staff_email": "jane.smith@district.org", "identity_type": "staff_id", "identity_value": "12345"}
+    payload = {
+        "staff_email": "jane.smith@district.org",
+        "identity_type": "staff_id",
+        "identity_value": "12345",
+    }
     first = client.post("/api/v1/staff-copier-identities", headers=auth_headers, json=payload)
     assert first.status_code == 201
     second = client.post("/api/v1/staff-copier-identities", headers=auth_headers, json=payload)
@@ -99,7 +115,11 @@ def test_missing_identity_list_excludes_staff_with_one(client, auth_headers):
     client.post(
         "/api/v1/staff-copier-identities",
         headers=auth_headers,
-        json={"staff_email": "jane.smith@district.org", "identity_type": "staff_id", "identity_value": "12345"},
+        json={
+            "staff_email": "jane.smith@district.org",
+            "identity_type": "staff_id",
+            "identity_value": "12345",
+        },
     )
     response = client.get("/api/v1/staff-copier-identities/missing", headers=auth_headers)
     assert response.status_code == 200
@@ -111,7 +131,11 @@ def test_update_and_delete(client, auth_headers):
     identity_id = client.post(
         "/api/v1/staff-copier-identities",
         headers=auth_headers,
-        json={"staff_email": "jane.smith@district.org", "identity_type": "staff_id", "identity_value": "12345"},
+        json={
+            "staff_email": "jane.smith@district.org",
+            "identity_type": "staff_id",
+            "identity_value": "12345",
+        },
     ).json()["id"]
 
     updated = client.patch(
