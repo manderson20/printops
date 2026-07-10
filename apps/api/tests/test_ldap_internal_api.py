@@ -28,7 +28,7 @@ async def db_session_factory():
     async with session_factory() as seed:
         seed.add(
             GoogleWorkspaceUser(
-                email="matt.anderson@example.org",
+                email="matt.anderson@example.com",
                 name="Matt Anderson",
                 employee_id="1001",
                 synced_at=datetime.now(UTC),
@@ -36,7 +36,7 @@ async def db_session_factory():
         )
         seed.add(
             GoogleWorkspaceUser(
-                email="jane.smith@example.org",
+                email="jane.smith@example.com",
                 name="Jane Smith",
                 employee_id="1002",
                 synced_at=datetime.now(UTC),
@@ -182,7 +182,7 @@ def test_search_empty_when_relay_disabled(client, backend_headers):
         json={
             "filter_attr": "mail",
             "filter_type": "equality",
-            "filter_value": "matt.anderson@example.org",
+            "filter_value": "matt.anderson@example.com",
         },
     )
     assert response.status_code == 200
@@ -197,15 +197,15 @@ def test_search_equality_by_mail(client, auth_headers, backend_headers):
         json={
             "filter_attr": "mail",
             "filter_type": "equality",
-            "filter_value": "matt.anderson@example.org",
+            "filter_value": "matt.anderson@example.com",
         },
     )
     entries = response.json()["entries"]
     assert len(entries) == 1
     assert entries[0]["cn"] == "Matt Anderson"
-    assert entries[0]["mail"] == "matt.anderson@example.org"
+    assert entries[0]["mail"] == "matt.anderson@example.com"
     assert entries[0]["employee_number"] == "1001"
-    assert entries[0]["dn"] == "mail=matt.anderson@example.org,ou=people,dc=printops,dc=local"
+    assert entries[0]["dn"] == "mail=matt.anderson@example.com,ou=people,dc=printops,dc=local"
 
 
 def test_search_substring_by_cn(client, auth_headers, backend_headers):
@@ -217,7 +217,7 @@ def test_search_substring_by_cn(client, auth_headers, backend_headers):
     )
     entries = response.json()["entries"]
     assert len(entries) == 1
-    assert entries[0]["mail"] == "jane.smith@example.org"
+    assert entries[0]["mail"] == "jane.smith@example.com"
 
 
 def test_search_no_match(client, auth_headers, backend_headers):
@@ -234,7 +234,7 @@ def test_search_uses_configured_base_dn(client, auth_headers, backend_headers):
     update = client.put(
         "/api/v1/settings/ldap",
         headers=auth_headers,
-        json={"enabled": True, "base_dn": "dc=example,dc=org"},
+        json={"enabled": True, "base_dn": "dc=example,dc=com"},
     )
     assert update.status_code == 200
     response = client.post(
@@ -243,13 +243,11 @@ def test_search_uses_configured_base_dn(client, auth_headers, backend_headers):
         json={
             "filter_attr": "mail",
             "filter_type": "equality",
-            "filter_value": "matt.anderson@example.org",
+            "filter_value": "matt.anderson@example.com",
         },
     )
     entries = response.json()["entries"]
-    assert (
-        entries[0]["dn"] == "mail=matt.anderson@example.org,ou=people,dc=example,dc=org"
-    )
+    assert entries[0]["dn"] == "mail=matt.anderson@example.com,ou=people,dc=example,dc=com"
 
 
 def test_search_requires_backend_token(client):
