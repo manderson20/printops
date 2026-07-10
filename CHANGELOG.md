@@ -5,6 +5,131 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.31.0] - 2026-07-10
+
+- **New: Live Dashboard**, a self-updating page (Insights → Live Dashboard)
+  showing today's print activity — total jobs/pages/color/duplex tiles, an
+  hourly bar chart of pages printed so far today, and a recent-jobs feed
+  (user, printer, pages, color/mono, duplex/simplex, size) — refreshing on
+  its own every 15 seconds with no manual reload, meant to be left up on a
+  TV display. Deliberately built on plain polling rather than a
+  WebSocket/SSE push channel: this app has zero server-push infrastructure
+  today, and a wall-mounted dashboard doesn't need sub-second latency the
+  way a live ticker would. Hour buckets are computed from a caller-supplied
+  start/end window (the viewer's own local midnight, computed client-side)
+  rather than the server's UTC "today," so the bars line up with the actual
+  wall clock in the room regardless of the server's own timezone.
+
+## [0.30.0] - 2026-07-10
+
+- **New: idle-based session timeout, admin-adjustable, with a per-user
+  "no timeout" exemption.** Previously every session (Google SSO or the
+  local admin login) expired on a flat 60-minute timer from login,
+  activity or not. Sessions are still plain stateless JWTs — no new
+  server-side session store — but the browser now calls a new
+  `POST /auth/refresh` endpoint every couple of minutes, only while
+  there's been real mouse/keyboard/touch activity, reissuing the token
+  with a renewed expiry. Stop using the tab and the last-issued token's
+  own expiry simply lapses, triggering the existing expired-session
+  redirect — no new "last seen" tracking needed. The timeout duration is
+  now admin-configurable (Settings → Session Timeout, default 60
+  minutes), and a specific account (e.g. a shared front-desk login) can
+  be flagged "No timeout" on Settings → Users — checked fresh from the
+  database on every refresh, so revoking it takes effect on that user's
+  very next refresh rather than waiting for their token to expire.
+
+## [0.29.0] - 2026-07-10
+
+- **New: "Detect via SNMP" on each printer's Toner Cartridges card.**
+  Reads the standard Printer MIB's supplies table (RFC 3805 — not a
+  vendor-private MIB like this app's page-counter breakdowns) and parses
+  each cartridge's device-reported description for a color and a
+  high-capacity ("XL"/"High Yield") hint, so cost calculations can
+  eventually account for cheaper-per-page high-capacity cartridges. The
+  color/high-capacity read is explicitly best-effort — surfaced next to
+  the raw description string so it can be checked against the physical
+  cartridge — since it hasn't been verified against this district's full
+  fleet the way the existing SNMP counter code was before being trusted.
+  Also fixed a latent bug this surfaced: saving cost/yield via the
+  existing cartridge form fully deletes and recreates every row, which
+  would have silently wiped a detection result on the next manual edit;
+  detected fields now carry across that replace.
+
+## [0.28.0] - 2026-07-10
+
+- **New: Archive a printer** instead of deleting it, for when a physical
+  printer/copier is being swapped out but its job history needs to stay
+  intact. Deleting a printer cascades and deletes every Job row for it —
+  archiving instead tears down its CUPS queue (so it stops accepting new
+  jobs and drops off AirPrint discovery) while leaving the printer row and
+  all its historical jobs untouched. Archived printers are excluded from
+  the background status/SNMP poll loops and hidden from the default
+  printer list (with a "Show archived" toggle), but stay fully visible in
+  Jobs/Usage/Syslog/Insights for historical reporting. Reversible via an
+  "Unarchive" button, which re-syncs the CUPS queue.
+
+## [0.27.0] - 2026-07-10
+
+- **Printer detail page reorganized into tabs** (Overview, Connection,
+  Release & Quotas, Toner, Syslog, Credentials, Jobs) to cut down the
+  scrolling on a page that had accumulated a card per feature over many
+  releases. The tab bar is horizontal and sticky (stays visible while
+  scrolling a tab's content) rather than the vertical sidebar Settings
+  uses, per request. Fixed a real rendering bug along the way: a flex
+  `gap` sitting directly against a `sticky` element is a known Safari/iOS
+  glitch where scrolled-past content briefly shows through the gap before
+  the sticky element's background repaints — fixed with explicit margins
+  instead of `gap`, and applied to Settings' own (now also sticky) side
+  nav preemptively so it doesn't hit the same bug later.
+- **Centered page content app-wide and widened the data-dense list
+  pages.** Every page's content column was left-aligned inside its full-
+  width container, so on a wide monitor a narrow page (e.g. printer
+  detail) left most of the screen blank on one side rather than
+  distributing it evenly. All 25 top-level pages are now centered; the
+  eight table/list-heavy pages (Printers, MFP Devices, Devices, Copier
+  Unmapped, Quota Holds, Copier Imports, Staff Copier Identities,
+  Settings) were also widened to match Jobs/Usage/Syslog's existing
+  width, since a table benefits from extra width far more than a form
+  does.
+
+## [0.26.0] - 2026-07-10
+
+- **Usage page: Duplex/Simplex, Mono/Color, and real per-user cost
+  columns, plus pagination and a domain-suffix search.** Cost is the same
+  real per-printer-toner-rate calculation Insights' cost-breakdown report
+  already uses, not a flat estimate — reused via a small extracted
+  `app/reports/cost_rates.py` module instead of duplicating the
+  computation. The Size (bytes) column was dropped as low-value for an
+  aggregate across many jobs. The user list is now server-paginated
+  (50/page) instead of loading the full roster at once, and the search
+  box accepts a leading `*` for a domain-suffix filter (e.g.
+  `*brookfieldr3.org`) to separate staff from students by domain in one
+  district's real roster of 3,500+ synced accounts.
+- **Clicking a user on the Usage page** now opens a per-user detail page
+  (stats panel — jobs, pages, duplex/simplex, mono/color, estimated cost
+  — plus their full print job history with which printer each job went
+  to) instead of just showing their row in the aggregate table.
+- **Devices page: pagination**, for the same reason as Usage — one real
+  district's Google Workspace sync has 2,000+ Chromebooks, all previously
+  loaded and rendered in a single unpaginated table.
+
+## [0.25.0] - 2026-07-10
+
+- **New: syslog collection from printers.** Printers/MFPs that support
+  exporting their own event log via syslog (most do, over UDP, usually
+  configured on the device's own admin page) can now have those messages
+  captured and shown per-device and fleet-wide (new Syslog page), useful
+  for diagnosing a jam or an offline printer beyond what SNMP counters or
+  IPP status already show. Collection runs as its own small systemd
+  service (`infra/syslog-relay`, mirroring the existing LDAP relay's
+  "separate process for a privileged port" pattern — UDP 514 needs
+  `CAP_NET_BIND_SERVICE`) that parses RFC 3164/5424 messages and batches
+  them into printops-api rather than one HTTP call per UDP packet. Off by
+  default; a configurable severity floor and retention period keep chatty
+  device firmware from filling the database. Unmatched-source events
+  (from a device not yet registered as a Printer) are kept visible rather
+  than dropped, so a misconfigured target IP is easy to spot.
+
 ## [0.24.1] - 2026-07-09
 
 - **Fixed Untracked Copy Activity showing zero on the day it's enabled**,

@@ -20,6 +20,7 @@ from app.models.job import Job
 from app.models.mosyle import MosyleSettings
 from app.models.printer import Printer
 from app.models.snmp import PrinterCounterReading
+from app.models.syslog import PrinterSyslogEvent
 from app.printers.snmp_counters import (
     get_or_create_snmp_defaults,
     record_reading,
@@ -44,9 +45,9 @@ from app.routers import (
     updates,
     users,
 )
-from app.routers import (
-    settings as settings_router,
-)
+from app.routers import settings as settings_router
+from app.routers import syslog as syslog_router
+from app.syslog.service import get_or_create_syslog_settings
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -94,7 +95,11 @@ async def _printer_status_poll_loop() -> None:
     while True:
         try:
             async with AsyncSessionLocal() as db:
-                printers = (await db.execute(select(Printer))).scalars().all()
+                printers = (
+                    (await db.execute(select(Printer).where(Printer.archived_at.is_(None))))
+                    .scalars()
+                    .all()
+                )
 
                 async def _refresh_one(printer: Printer) -> None:
                     await refresh_printer_status_and_rediscover(printer)
@@ -126,7 +131,14 @@ async def _snmp_counter_poll_loop() -> None:
                 defaults = await get_or_create_snmp_defaults(db)
                 if defaults.enabled:
                     printers = (
-                        (await db.execute(select(Printer).where(Printer.snmp_enabled.is_(True))))
+                        (
+                            await db.execute(
+                                select(Printer).where(
+                                    Printer.snmp_enabled.is_(True),
+                                    Printer.archived_at.is_(None),
+                                )
+                            )
+                        )
                         .scalars()
                         .all()
                     )
@@ -167,6 +179,29 @@ async def _counter_reading_purge_loop() -> None:
         except Exception:
             logger.exception("Unexpected error in counter reading purge loop")
         await asyncio.sleep(COUNTER_READING_PURGE_INTERVAL_SECONDS)
+
+
+SYSLOG_EVENT_PURGE_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+async def _syslog_event_purge_loop() -> None:
+    """Deletes PrinterSyslogEvent rows older than
+    SyslogSettings.retention_days — same daily cadence and tolerant
+    per-cycle error handling as _counter_reading_purge_loop above, and for
+    the same reason: not time-sensitive, so a day's delay in pruning is
+    harmless."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                settings = await get_or_create_syslog_settings(db)
+                cutoff = datetime.now(UTC) - timedelta(days=settings.retention_days)
+                await db.execute(
+                    delete(PrinterSyslogEvent).where(PrinterSyslogEvent.received_at < cutoff)
+                )
+                await db.commit()
+        except Exception:
+            logger.exception("Unexpected error in syslog event purge loop")
+        await asyncio.sleep(SYSLOG_EVENT_PURGE_INTERVAL_SECONDS)
 
 
 HELD_JOB_PURGE_INTERVAL_SECONDS = 15 * 60
@@ -248,6 +283,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_printer_status_poll_loop()),
         asyncio.create_task(_snmp_counter_poll_loop()),
         asyncio.create_task(_counter_reading_purge_loop()),
+        asyncio.create_task(_syslog_event_purge_loop()),
         asyncio.create_task(_held_job_purge_loop()),
         asyncio.create_task(_failed_job_purge_loop()),
     ]
@@ -282,6 +318,7 @@ app.include_router(printers.router, prefix="/api/v1/printers", tags=["printers"]
 app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["jobs"])
 app.include_router(jobs.user_router, prefix="/api/v1/jobs", tags=["jobs"])
 app.include_router(internal.router, prefix="/api/v1/internal", tags=["internal"])
+app.include_router(syslog_router.router, prefix="/api/v1/syslog", tags=["syslog"])
 app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["settings"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(device_overrides.router, prefix="/api/v1/devices", tags=["devices"])

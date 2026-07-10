@@ -104,6 +104,7 @@ export type Printer = {
   status_reasons: string[] | null;
   status_message: string | null;
   status_checked_at: string | null;
+  archived_at: string | null;
   release_required: boolean;
   release_token: string | null;
   snmp_enabled: boolean;
@@ -180,8 +181,9 @@ export type PrinterUpdateInput = Partial<PrinterCreateInput> & {
   scan_password?: string | null;
 };
 
-export async function listPrinters(): Promise<Printer[]> {
-  const response = await authorizedFetch("/api/v1/printers");
+export async function listPrinters(params?: { includeArchived?: boolean }): Promise<Printer[]> {
+  const qs = params?.includeArchived ? "?include_archived=true" : "";
+  const response = await authorizedFetch(`/api/v1/printers${qs}`);
   return response.json();
 }
 
@@ -213,6 +215,20 @@ export async function updatePrinter(
 
 export async function deletePrinter(id: string): Promise<void> {
   await authorizedFetch(`/api/v1/printers/${id}`, { method: "DELETE" });
+}
+
+export async function archivePrinter(id: string): Promise<Printer> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/archive`, {
+    method: "POST",
+  });
+  return response.json();
+}
+
+export async function unarchivePrinter(id: string): Promise<Printer> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/unarchive`, {
+    method: "POST",
+  });
+  return response.json();
 }
 
 export async function rediscoverPrinter(id: string): Promise<Printer> {
@@ -874,10 +890,12 @@ export type Job = {
 
 export async function listJobs(params?: {
   printer_id?: string;
+  submitted_by?: string;
   limit?: number;
 }): Promise<Job[]> {
   const query = new URLSearchParams();
   if (params?.printer_id) query.set("printer_id", params.printer_id);
+  if (params?.submitted_by) query.set("submitted_by", params.submitted_by);
   if (params?.limit) query.set("limit", String(params.limit));
   const qs = query.toString();
   const response = await authorizedFetch(`/api/v1/jobs${qs ? `?${qs}` : ""}`);
@@ -906,10 +924,36 @@ export type UserUsage = {
   job_count: number;
   total_pages: number;
   total_bytes: number;
+  duplex_pages: number;
+  simplex_pages: number;
+  mono_pages: number;
+  color_pages: number;
+  estimated_cost: number;
 };
 
-export async function getJobUsage(): Promise<UserUsage[]> {
-  const response = await authorizedFetch("/api/v1/jobs/usage");
+export type UserUsagePage = {
+  items: UserUsage[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export async function getJobUsage(params?: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+}): Promise<UserUsagePage> {
+  const query = new URLSearchParams();
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.pageSize) query.set("page_size", String(params.pageSize));
+  if (params?.search) query.set("search", params.search);
+  const qs = query.toString();
+  const response = await authorizedFetch(`/api/v1/jobs/usage${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export async function getUserUsage(email: string): Promise<UserUsage> {
+  const response = await authorizedFetch(`/api/v1/jobs/usage/${encodeURIComponent(email)}`);
   return response.json();
 }
 
@@ -1108,6 +1152,7 @@ export type UserAccount = {
   role: Role;
   is_active: boolean;
   last_login_at: string | null;
+  exempt_from_timeout: boolean;
 };
 
 export type UserAccountPage = {
@@ -1133,7 +1178,7 @@ export async function listUsers(params?: {
 
 export async function updateUser(
   id: string,
-  input: { role?: Role; is_active?: boolean },
+  input: { role?: Role; is_active?: boolean; exempt_from_timeout?: boolean },
 ): Promise<UserAccount> {
   const response = await authorizedFetch(`/api/v1/users/${id}`, {
     method: "PATCH",
@@ -1153,8 +1198,24 @@ export type KnownDevice = {
   override_note: string | null;
 };
 
-export async function listKnownDevices(): Promise<KnownDevice[]> {
-  const response = await authorizedFetch("/api/v1/devices");
+export type KnownDevicePage = {
+  items: KnownDevice[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export async function listKnownDevices(params?: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+}): Promise<KnownDevicePage> {
+  const query = new URLSearchParams();
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.pageSize) query.set("page_size", String(params.pageSize));
+  if (params?.search) query.set("search", params.search);
+  const qs = query.toString();
+  const response = await authorizedFetch(`/api/v1/devices${qs ? `?${qs}` : ""}`);
   return response.json();
 }
 
@@ -1448,6 +1509,28 @@ export async function getReportTimeline(
   return response.json();
 }
 
+export type HourlyBucket = {
+  hour: number;
+  total_pages: number;
+  color_pages: number;
+  mono_pages: number;
+  duplex_pages: number;
+  simplex_pages: number;
+  job_count: number;
+};
+
+// start/end are full ISO instants (typically the viewer's local midnight
+// through now) — see app/reports/aggregation.py:get_hourly_timeline's
+// docstring for why this endpoint has no server-side notion of "today".
+export async function getLiveHourly(start: Date, end: Date): Promise<HourlyBucket[]> {
+  const query = new URLSearchParams({
+    start: start.toISOString(),
+    end: end.toISOString(),
+  });
+  const response = await authorizedFetch(`/api/v1/reports/live/hourly?${query.toString()}`);
+  return response.json();
+}
+
 export type LeaderboardEntry = {
   key: string;
   label: string;
@@ -1720,6 +1803,18 @@ export type Cartridge = {
   color: CartridgeColor;
   cost: number;
   yield_pages: number;
+  // SNMP-detected, read-only — see PrinterTonerCartridge.detected_*'s
+  // docstring (app/models/report.py). null until the first successful
+  // detectPrinterCartridges call.
+  detected_description: string | null;
+  detected_high_capacity: boolean | null;
+  detected_at: string | null;
+};
+
+export type CartridgeInput = {
+  color: CartridgeColor;
+  cost: number;
+  yield_pages: number;
 };
 
 export async function getPrinterCartridges(
@@ -1733,7 +1828,7 @@ export async function getPrinterCartridges(
 
 export async function updatePrinterCartridges(
   printerId: string,
-  cartridges: Cartridge[],
+  cartridges: CartridgeInput[],
 ): Promise<Cartridge[]> {
   const response = await authorizedFetch(
     `/api/v1/printers/${printerId}/toner-cartridges`,
@@ -1741,6 +1836,27 @@ export async function updatePrinterCartridges(
       method: "PUT",
       body: JSON.stringify(cartridges),
     },
+  );
+  return response.json();
+}
+
+export type DetectedSupply = {
+  description: string;
+  color: CartridgeColor | null;
+  high_capacity: boolean | null;
+};
+
+export type DetectCartridgesResult = {
+  cartridges: Cartridge[];
+  unmatched: DetectedSupply[];
+};
+
+export async function detectPrinterCartridges(
+  printerId: string,
+): Promise<DetectCartridgesResult> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/toner-cartridges/detect`,
+    { method: "POST" },
   );
   return response.json();
 }
@@ -1873,6 +1989,46 @@ export async function updateQuotaSettings(
   return response.json();
 }
 
+export type SessionSettings = {
+  idle_timeout_minutes: number;
+};
+
+export async function getSessionSettings(): Promise<SessionSettings> {
+  const response = await authorizedFetch("/api/v1/settings/session");
+  return response.json();
+}
+
+export async function updateSessionSettings(
+  input: Partial<SessionSettings>,
+): Promise<SessionSettings> {
+  const response = await authorizedFetch("/api/v1/settings/session", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+// Reissues the current token with a renewed expiry — see
+// apps/web/src/lib/idleRefresh.ts, which calls this periodically only
+// while there's been real activity, implementing the idle-timeout on the
+// frontend side (app/routers/auth.py's /auth/refresh docstring has the
+// other half). Deliberately NOT wrapped in authorizedFetch's usual 401 ->
+// redirect-to-login handling for this one call: a 401 here just means the
+// idle window already lapsed, which is the expected end state, not an
+// error to bounce on specially — the very next authorizedFetch call will
+// naturally hit that same 401 and redirect anyway.
+export async function refreshSession(): Promise<{ access_token: string }> {
+  const token = getToken();
+  const response = await fetch(`${API_URL}/auth/refresh`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "Session refresh failed");
+  }
+  return response.json();
+}
+
 export type PrintReleaseSettings = {
   hold_expiry_hours: number;
 };
@@ -1945,6 +2101,102 @@ export async function updateLdapRelaySettings(
     method: "PUT",
     body: JSON.stringify(input),
   });
+  return response.json();
+}
+
+export type SyslogSeverity =
+  | "emerg"
+  | "alert"
+  | "crit"
+  | "err"
+  | "warning"
+  | "notice"
+  | "info"
+  | "debug";
+
+export type SyslogSettings = {
+  enabled: boolean;
+  port: number;
+  min_severity: SyslogSeverity;
+  retention_days: number;
+};
+
+export type SyslogSettingsInput = Partial<SyslogSettings>;
+
+export async function getSyslogSettings(): Promise<SyslogSettings> {
+  const response = await authorizedFetch("/api/v1/settings/syslog");
+  return response.json();
+}
+
+export async function updateSyslogSettings(
+  input: SyslogSettingsInput,
+): Promise<SyslogSettings> {
+  const response = await authorizedFetch("/api/v1/settings/syslog", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export type SyslogEvent = {
+  id: string;
+  printer_id: string | null;
+  printer_name: string | null;
+  source_ip: string;
+  received_at: string;
+  device_timestamp: string | null;
+  severity: SyslogSeverity | null;
+  facility: number | null;
+  hostname: string | null;
+  app_name: string | null;
+  message: string;
+  raw: string;
+};
+
+export type SyslogEventPage = {
+  items: SyslogEvent[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export async function listPrinterSyslogEvents(
+  printerId: string,
+  params?: { severity?: SyslogSeverity; search?: string; page?: number; pageSize?: number },
+): Promise<SyslogEventPage> {
+  const query = new URLSearchParams();
+  if (params?.severity) query.set("severity", params.severity);
+  if (params?.search) query.set("search", params.search);
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.pageSize) query.set("page_size", String(params.pageSize));
+  const qs = query.toString();
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/syslog${qs ? `?${qs}` : ""}`,
+  );
+  return response.json();
+}
+
+export async function listSyslogEvents(params?: {
+  printerId?: string;
+  severity?: SyslogSeverity;
+  unmatchedOnly?: boolean;
+  search?: string;
+  since?: string;
+  until?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<SyslogEventPage> {
+  const query = new URLSearchParams();
+  if (params?.printerId) query.set("printer_id", params.printerId);
+  if (params?.severity) query.set("severity", params.severity);
+  if (params?.unmatchedOnly) query.set("unmatched_only", "true");
+  if (params?.search) query.set("search", params.search);
+  if (params?.since) query.set("since", params.since);
+  if (params?.until) query.set("until", params.until);
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.pageSize) query.set("page_size", String(params.pageSize));
+  const qs = query.toString();
+  const response = await authorizedFetch(`/api/v1/syslog${qs ? `?${qs}` : ""}`);
   return response.json();
 }
 

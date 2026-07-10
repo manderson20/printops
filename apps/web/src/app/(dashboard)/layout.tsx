@@ -8,16 +8,20 @@ import { getVersion } from "@/lib/api";
 import { logout } from "@/lib/auth";
 import { useAuthGuard } from "@/lib/useAuthGuard";
 import { useCurrentUser } from "@/lib/useCurrentUser";
+import { useIdleSessionRefresh } from "@/lib/idleRefresh";
 
 const NAV_LINKS = [
   { href: "/insights", label: "Insights" },
+  { href: "/live", label: "Live Dashboard" },
   { href: "/printers", label: "Printers" },
   { href: "/jobs", label: "Jobs" },
+  { href: "/syslog", label: "Syslog" },
   { href: "/integrations", label: "Integrations" },
 ] as const;
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   useAuthGuard();
+  useIdleSessionRefresh();
   const pathname = usePathname();
   const router = useRouter();
   const currentUser = useCurrentUser();

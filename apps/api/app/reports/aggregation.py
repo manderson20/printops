@@ -185,6 +185,69 @@ async def get_timeline(
 
 
 @dataclass
+class HourlyBucket:
+    """One hour's worth of activity within a single day — the Live
+    Dashboard's intraday view (app/routers/reports.py's /live/hourly),
+    distinct from get_timeline's day/week/month buckets above. `hour` is
+    just an index (0-23), not a wall-clock hour-of-day in any particular
+    timezone — see get_hourly_timeline's docstring for why."""
+
+    hour: int
+    total_pages: int = 0
+    color_pages: int = 0
+    mono_pages: int = 0
+    duplex_pages: int = 0
+    simplex_pages: int = 0
+    job_count: int = 0
+
+
+async def get_hourly_timeline(
+    db: AsyncSession, start: datetime, end: datetime
+) -> list[HourlyBucket]:
+    """24 (or however many actually fit between start/end) hourly
+    buckets, always fully zero-filled — a bar chart needs a stable x-axis
+    as the day progresses, not an array that grows hour by hour.
+
+    Deliberately timezone-naive here: `hour` is "hours elapsed since
+    start", not Job.created_at's UTC hour-of-day. This server only ever
+    stores UTC timestamps, but a TV-mounted live dashboard needs to line
+    up with the viewer's actual wall clock — so the caller (app/routers/
+    reports.py) is expected to pass a browser-local midnight-to-midnight
+    (or midnight-to-now) window as start/end, computed client-side, and
+    this just buckets relative to that, whatever timezone it represents."""
+    filters = ReportFilters(start=start, end=end)
+    rows = await _fetch_raw_rows(db, filters)
+
+    # .replace(tzinfo=None) before subtracting, not just for start/end here
+    # but for each row's created_at below too — SQLite (used in tests, see
+    # tests/test_reports_api.py) doesn't actually enforce DateTime(timezone=True)
+    # the way Postgres does and can hand back naive datetimes even though
+    # the column is declared aware; naive-minus-aware raises TypeError.
+    # Both sides represent the same UTC instant either way, so stripping
+    # tzinfo from both changes nothing about the actual elapsed-hours math.
+    naive_start = start.replace(tzinfo=None)
+    hour_count = max(1, int((end - start).total_seconds() // 3600))
+    buckets = {h: HourlyBucket(hour=h) for h in range(hour_count)}
+    for r in rows:
+        naive_created_at = r.created_at.replace(tzinfo=None)
+        elapsed_hours = int((naive_created_at - naive_start).total_seconds() // 3600)
+        bucket = buckets.get(elapsed_hours)
+        if bucket is None:
+            continue  # outside the requested window — shouldn't happen, but not fatal
+        bucket.job_count += 1
+        bucket.total_pages += r.page_count
+        if r.color_mode == "color":
+            bucket.color_pages += r.page_count
+        elif r.color_mode == "monochrome":
+            bucket.mono_pages += r.page_count
+        if r.duplex is True:
+            bucket.duplex_pages += r.page_count
+        elif r.duplex is False:
+            bucket.simplex_pages += r.page_count
+    return [buckets[h] for h in range(hour_count)]
+
+
+@dataclass
 class PeakTimes:
     by_day_of_week: dict[int, int] = field(default_factory=dict)  # 0=Monday .. 6=Sunday
     by_hour: dict[int, int] = field(default_factory=dict)  # 0..23
@@ -277,10 +340,13 @@ def physical_sheets_used(page_count: int, duplex: bool | None) -> int:
 
 @dataclass
 class CostRawRow:
-    """One job's worth of the fields needed to price it — printer identity
-    is included because toner rate is per-printer (see
-    app/reports/formulas.py:compute_printer_rate), unlike the plain
-    _RawRow above which only timeline/peak-times need."""
+    """One job's worth of the fields needed to price it (plus
+    file_size_bytes, used by app/routers/jobs.py:list_job_usage for its
+    byte totals — same row shape, just one more column, rather than a
+    second near-identical query) — printer identity is included because
+    toner rate is per-printer (see app/reports/formulas.py:
+    compute_printer_rate), unlike the plain _RawRow above which only
+    timeline/peak-times need."""
 
     printer_id: UUID
     printer_name: str
@@ -289,14 +355,16 @@ class CostRawRow:
     page_count: int
     color_mode: str | None
     duplex: bool | None
+    file_size_bytes: int | None
 
 
 async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[CostRawRow]:
     """Feeds real per-job cost calculation (app/routers/reports.py's
-    cost-breakdown endpoint) — kept in this module rather than computing
-    cost here directly so aggregation.py stays DB-query-only and
-    app/reports/formulas.py stays a pure, DB-free calculation module (it
-    already imports from here; importing back would be circular)."""
+    cost-breakdown endpoint, app/routers/jobs.py's usage report) — kept in
+    this module rather than computing cost here directly so aggregation.py
+    stays DB-query-only and app/reports/formulas.py stays a pure, DB-free
+    calculation module (it already imports from here; importing back would
+    be circular)."""
     stmt = _apply_filters(
         select(
             Job.printer_id,
@@ -306,6 +374,7 @@ async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[Co
             Job.page_count,
             Job.color_mode,
             Job.duplex,
+            Job.file_size_bytes,
         ),
         filters,
     )
@@ -319,6 +388,7 @@ async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[Co
             page_count=r.page_count or 0,
             color_mode=r.color_mode,
             duplex=r.duplex,
+            file_size_bytes=r.file_size_bytes,
         )
         for r in rows
     ]

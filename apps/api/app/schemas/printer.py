@@ -166,6 +166,8 @@ class PrinterOut(BaseModel):
     status_message: str | None
     status_checked_at: datetime | None
 
+    archived_at: datetime | None
+
     release_required: bool
     release_token: str | None
 

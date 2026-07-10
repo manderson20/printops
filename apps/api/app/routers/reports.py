@@ -10,13 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.deps import get_current_user, require_role
-from app.models.report import PrinterTonerCartridge, ReportFormulaSettings, ReportSnapshot
+from app.models.report import ReportFormulaSettings, ReportSnapshot
 from app.reports.aggregation import (
     CostRawRow,
     ReportFilters,
     get_combined_summary,
     get_combined_user_leaderboard,
     get_cost_raw_rows,
+    get_hourly_timeline,
     get_peak_times,
     get_printer_leaderboard,
     get_raw_rows_for_export,
@@ -26,12 +27,11 @@ from app.reports.aggregation import (
     resolve_device_names,
     resolve_display_names,
 )
+from app.reports.cost_rates import load_printer_rates
 from app.reports.formulas import (
     FormulaValues,
     JobCost,
-    PrinterTonerRate,
     compute_environmental_impact,
-    compute_printer_rate,
     job_cost,
 )
 from app.reports.fun_facts import generate_fun_facts
@@ -42,6 +42,7 @@ from app.schemas.report import (
     CombinedSummaryOut,
     CostEntryOut,
     FunFactsOut,
+    HourlyBucketOut,
     LeaderboardEntryOut,
     PeakTimesOut,
     SnapshotCreate,
@@ -140,26 +141,6 @@ def _accumulate(entry: _CostAccumulator, row: CostRawRow, cost: JobCost) -> None
     entry.paper_cost += cost.paper_cost
 
 
-async def _load_printer_rates(
-    db: AsyncSession, printer_ids: set[UUID], fallback: FormulaValues
-) -> dict[UUID, PrinterTonerRate]:
-    """One printer's cartridges price both its mono and color pages — see
-    app/reports/formulas.py:compute_printer_rate for the fallback rule
-    when a printer has no (or incomplete) cartridges configured yet."""
-    if not printer_ids:
-        return {}
-    result = await db.execute(
-        select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id.in_(printer_ids))
-    )
-    by_printer: dict[UUID, list[PrinterTonerCartridge]] = {}
-    for cartridge in result.scalars().all():
-        by_printer.setdefault(cartridge.printer_id, []).append(cartridge)
-    return {
-        printer_id: compute_printer_rate(by_printer.get(printer_id, []), fallback)
-        for printer_id in printer_ids
-    }
-
-
 async def _compute_cost_accumulators(
     db: AsyncSession,
     filters: ReportFilters,
@@ -181,7 +162,7 @@ async def _compute_cost_accumulators(
     submitted_by — is the grouping key."""
     rows = await get_cost_raw_rows(db, filters)
     printer_ids = {r.printer_id for r in rows}
-    rates = await _load_printer_rates(db, printer_ids, fallback)
+    rates = await load_printer_rates(db, printer_ids, fallback)
 
     by_printer: dict[str, _CostAccumulator] = {}
     by_user: dict[str, _CostAccumulator] = {}
@@ -284,6 +265,22 @@ async def report_timeline(
         )
     buckets = await get_timeline(db, filters, granularity=granularity)
     return [TimelineBucketOut(**vars(b)) for b in buckets]
+
+
+@router.get("/live/hourly", response_model=list[HourlyBucketOut])
+async def report_live_hourly(start: datetime, end: datetime, db: AsyncSession = Depends(get_db)):
+    """Intraday hourly buckets for the Live Dashboard (apps/web/.../live/
+    page.tsx) — distinct from /timeline's day/week/month view above.
+    start/end are required and computed client-side (typically the
+    viewer's local midnight through now) rather than defaulted here — see
+    app/reports/aggregation.py:get_hourly_timeline's docstring for why
+    this endpoint has no server-side notion of "today" at all."""
+    if end <= start:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="end must be after start"
+        )
+    buckets = await get_hourly_timeline(db, start, end)
+    return [HourlyBucketOut(**vars(b)) for b in buckets]
 
 
 @router.get("/leaderboard", response_model=list[LeaderboardEntryOut])

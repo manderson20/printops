@@ -16,11 +16,13 @@ class UserAccountOut(BaseModel):
     role: Role
     is_active: bool
     last_login_at: datetime | None
+    exempt_from_timeout: bool
 
 
 class UserAccountUpdate(BaseModel):
     role: Role | None = None
     is_active: bool | None = None
+    exempt_from_timeout: bool | None = None
 
 
 class UserAccountPage(BaseModel):

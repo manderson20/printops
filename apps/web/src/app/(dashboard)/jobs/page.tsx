@@ -53,7 +53,7 @@ function JobsList() {
   const [cancelErrors, setCancelErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    listPrinters()
+    listPrinters({ includeArchived: true })
       .then(setPrinters)
       .catch(() => setPrinters([]));
   }, []);
@@ -137,7 +137,7 @@ function JobsList() {
   }
 
   return (
-    <div className="flex w-full max-w-6xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Jobs</h1>
       </div>

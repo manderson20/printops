@@ -573,7 +573,9 @@ async def test_job_usage_aggregates_per_user(
 
     response = client.get("/api/v1/jobs/usage", headers=auth_headers)
     assert response.status_code == 200
-    rows = response.json()
+    payload = response.json()
+    rows = payload["items"]
+    assert payload["total"] == len(rows)
     by_email = {row["email"]: row for row in rows if not row["is_other"]}
 
     assert by_email["adele@example.com"]["job_count"] == 2
@@ -653,3 +655,18 @@ def test_job_usage_forbidden_for_viewer(client, printer_id, backend_headers, mon
 
     response = client.get("/api/v1/jobs/usage", headers={"Authorization": f"Bearer {viewer_token}"})
     assert response.status_code == 403
+
+
+async def test_create_job_rejects_archived_printer(
+    client, printer_id, backend_headers, db_session_factory
+):
+    async with db_session_factory() as session:
+        printer = await session.get(Printer, uuid.UUID(printer_id))
+        printer.archived_at = datetime.now(UTC)
+        await session.commit()
+
+    response = client.post(
+        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
+    )
+    assert response.status_code == 409
+    assert "archived" in response.json()["detail"].lower()

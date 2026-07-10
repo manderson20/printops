@@ -31,9 +31,10 @@ export default function PrintersPage() {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [testPrints, setTestPrints] = useState<Record<string, TestPrintState>>({});
   const [expandedCapabilities, setExpandedCapabilities] = useState<Record<string, boolean>>({});
+  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => {
-    listPrinters()
+    listPrinters({ includeArchived: showArchived })
       .then((printers) => setState({ phase: "ok", printers }))
       .catch((error: unknown) =>
         setState({
@@ -47,12 +48,12 @@ export default function PrintersPage() {
     // without a manual reload. Silent — doesn't reset to the loading phase,
     // so it never interrupts whatever the admin is doing on this page.
     const interval = setInterval(() => {
-      listPrinters()
+      listPrinters({ includeArchived: showArchived })
         .then((printers) => setState({ phase: "ok", printers }))
         .catch(() => {});
     }, 30_000);
     return () => clearInterval(interval);
-  }, []);
+  }, [showArchived]);
 
   async function handleTestPrint(printerId: string) {
     setTestPrints((prev) => ({ ...prev, [printerId]: { phase: "sending" } }));
@@ -71,14 +72,24 @@ export default function PrintersPage() {
   }
 
   return (
-    <div className="flex w-full max-w-5xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Printers</h1>
-        {isAdmin && (
-          <Link href="/printers/new">
-            <Button>Add Printer</Button>
-          </Link>
-        )}
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+            />
+            Show archived
+          </label>
+          {isAdmin && (
+            <Link href="/printers/new">
+              <Button>Add Printer</Button>
+            </Link>
+          )}
+        </div>
       </div>
 
       {state.phase === "loading" && <Spinner label="Loading printers…" />}
@@ -113,12 +124,15 @@ export default function PrintersPage() {
                   className="border-t border-black/[.08] hover:bg-black/[.02] dark:border-white/[.1] dark:hover:bg-white/[.03]"
                 >
                   <td className="px-4 py-3">
-                    <Link
-                      href={`/printers/${printer.id}`}
-                      className="font-medium text-black hover:underline dark:text-zinc-50"
-                    >
-                      {printer.name}
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/printers/${printer.id}`}
+                        className="font-medium text-black hover:underline dark:text-zinc-50"
+                      >
+                        {printer.name}
+                      </Link>
+                      {printer.archived_at && <Badge tone="neutral">Archived</Badge>}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     {(() => {

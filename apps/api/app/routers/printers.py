@@ -24,9 +24,12 @@ from app.printers.discovery import refresh_printer_capabilities
 from app.printers.job_control import JobControlError, purge_cups_queue
 from app.printers.queue_sync import QueueSyncError, remove_queue, sync_queue
 from app.printers.snmp_counters import (
+    SnmpProbeError,
     get_or_create_snmp_defaults,
+    get_toner_supplies,
     record_reading,
     refresh_printer_counters,
+    resolve_snmp_config,
 )
 from app.printers.status import refresh_printer_status_and_rediscover
 from app.printers.test_print import TestPrintError, submit_test_print
@@ -35,8 +38,15 @@ from app.schemas.auth import UserOut
 from app.schemas.printer import PrinterCreate, PrinterMdmConnectionOut, PrinterOut, PrinterUpdate
 from app.schemas.quota import PrinterUserQuotaCreate, PrinterUserQuotaOut, PrinterUserQuotaUpdate
 from app.schemas.release_bypass import PrinterReleaseBypassCreate, PrinterReleaseBypassOut
-from app.schemas.report import CartridgeIn, CartridgeOut
+from app.schemas.report import (
+    CartridgeIn,
+    CartridgeOut,
+    DetectCartridgesResult,
+    DetectedSupplyOut,
+)
 from app.schemas.snmp import DailyCounterDeltaOut
+from app.schemas.syslog import SyslogEventPage
+from app.syslog.service import list_events as list_syslog_events
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -129,8 +139,11 @@ async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_
 
 
 @router.get("", response_model=list[PrinterOut])
-async def list_printers(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Printer).order_by(Printer.name))
+async def list_printers(include_archived: bool = False, db: AsyncSession = Depends(get_db)):
+    stmt = select(Printer).order_by(Printer.name)
+    if not include_archived:
+        stmt = stmt.where(Printer.archived_at.is_(None))
+    result = await db.execute(stmt)
     return result.scalars().all()
 
 
@@ -227,6 +240,44 @@ async def delete_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.post(
+    "/{printer_id}/archive",
+    response_model=PrinterOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def archive_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Retires this printer without losing its history — see
+    Printer.archived_at's docstring. Tears down the CUPS queue (same
+    remove_queue() delete_printer uses) so it stops accepting jobs, but
+    the row and every Job row pointing at it stay put — unlike delete,
+    which cascade-deletes Job history along with the row."""
+    printer = await _get_printer_or_404(printer_id, db)
+    try:
+        await asyncio.to_thread(remove_queue, str(printer.id))
+    except QueueSyncError:
+        pass  # best-effort — don't block an archive the admin explicitly asked for
+    printer.archived_at = datetime.now(UTC)
+    await db.commit()
+    await db.refresh(printer)
+    return printer
+
+
+@router.post(
+    "/{printer_id}/unarchive",
+    response_model=PrinterOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def unarchive_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Reverses archive_printer — re-syncs the CUPS queue so the printer
+    accepts jobs again."""
+    printer = await _get_printer_or_404(printer_id, db)
+    printer.archived_at = None
+    await db.commit()
+    await db.refresh(printer)
+    await _apply_queue_sync(printer, db)
+    return printer
+
+
+@router.post(
     "/{printer_id}/discover",
     response_model=PrinterOut,
     dependencies=[Depends(require_role("admin"))],
@@ -306,6 +357,30 @@ async def counter_history(printer_id: UUID, days: int = 30, db: AsyncSession = D
     any logged-in user, matching check-counters/check-status."""
     await _get_printer_or_404(printer_id, db)
     return await get_daily_deltas(db, printer_id, days)
+
+
+@router.get("/{printer_id}/syslog", response_model=SyslogEventPage)
+async def printer_syslog_events(
+    printer_id: UUID,
+    severity: str | None = None,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    """Syslog events received from this printer (infra/syslog-relay/),
+    matched by source IP — see app/models/syslog.py. Read-only telemetry,
+    open to any logged-in user, matching counter-history/check-status."""
+    await _get_printer_or_404(printer_id, db)
+    items, total = await list_syslog_events(
+        db,
+        printer_id=printer_id,
+        severity=severity,
+        search=search,
+        page=page,
+        page_size=min(page_size, 200),
+    )
+    return SyslogEventPage(items=items, total=total, page=page, page_size=page_size)
 
 
 @router.post(
@@ -407,18 +482,36 @@ async def update_toner_cartridges(
             detail="Each cartridge color can only be listed once.",
         )
 
+    # Carry over each color's detected_* fields (app/printers/snmp_counters.py:
+    # get_toner_supplies via the /detect endpoint below) across this
+    # delete-and-recreate — an admin correcting the cost/yield_pages an
+    # SNMP detect just surfaced shouldn't wipe that same detect's result.
+    existing = await db.execute(
+        select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer_id)
+    )
+    detected_by_color = {
+        row.color: (row.detected_description, row.detected_high_capacity, row.detected_at)
+        for row in existing.scalars().all()
+    }
+
     await db.execute(
         PrinterTonerCartridge.__table__.delete().where(
             PrinterTonerCartridge.printer_id == printer_id
         )
     )
     for entry in payload:
+        detected_description, detected_high_capacity, detected_at = detected_by_color.get(
+            entry.color, (None, None, None)
+        )
         db.add(
             PrinterTonerCartridge(
                 printer_id=printer_id,
                 color=entry.color,
                 cost=entry.cost,
                 yield_pages=entry.yield_pages,
+                detected_description=detected_description,
+                detected_high_capacity=detected_high_capacity,
+                detected_at=detected_at,
             )
         )
     await db.commit()
@@ -427,6 +520,62 @@ async def update_toner_cartridges(
         select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer_id)
     )
     return result.scalars().all()
+
+
+@router.post(
+    "/{printer_id}/toner-cartridges/detect",
+    response_model=DetectCartridgesResult,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def detect_toner_cartridges(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Probes the printer's cartridge supplies over SNMP (see
+    app/printers/snmp_counters.py:get_toner_supplies for why color/
+    high-capacity are always a best-effort guess, never asserted as
+    confirmed) and upserts detected_* onto each matched color's row —
+    cost/yield_pages are left untouched (SNMP has no concept of a dollar
+    cost), creating a new row with cost=0/yield_pages=0 for any detected
+    color that doesn't have one yet. compute_printer_rate already treats
+    yield_pages=0 as "not configured" and falls back to the flat rate, so
+    a freshly-detected, not-yet-priced row is safe, not a silent zero
+    cost. Supplies the probe saw but couldn't confidently color-match are
+    returned in `unmatched` rather than dropped."""
+    printer = await _get_printer_or_404(printer_id, db)
+    defaults = await get_or_create_snmp_defaults(db)
+    config = resolve_snmp_config(printer, defaults)
+
+    try:
+        supplies = await asyncio.to_thread(get_toner_supplies, printer.ip_address, config)
+    except SnmpProbeError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    existing = await db.execute(
+        select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer_id)
+    )
+    rows_by_color = {row.color: row for row in existing.scalars().all()}
+
+    now = datetime.now(UTC)
+    unmatched: list[DetectedSupplyOut] = []
+    for supply in supplies:
+        if supply.color is None:
+            unmatched.append(DetectedSupplyOut(**vars(supply)))
+            continue
+        row = rows_by_color.get(supply.color)
+        if row is None:
+            row = PrinterTonerCartridge(
+                printer_id=printer_id, color=supply.color, cost=0.0, yield_pages=0
+            )
+            db.add(row)
+            rows_by_color[supply.color] = row
+        row.detected_description = supply.description
+        row.detected_high_capacity = supply.high_capacity
+        row.detected_at = now
+
+    await db.commit()
+
+    result = await db.execute(
+        select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer_id)
+    )
+    return DetectCartridgesResult(cartridges=result.scalars().all(), unmatched=unmatched)
 
 
 async def _quota_out(db: AsyncSession, quota: PrinterUserQuota) -> PrinterUserQuotaOut:

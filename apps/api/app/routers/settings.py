@@ -47,8 +47,12 @@ from app.schemas.mosyle import MosyleSettingsOut, MosyleSettingsUpdate, MosyleTe
 from app.schemas.quota import QuotaSettingsOut, QuotaSettingsUpdate
 from app.schemas.release import PrintReleaseSettingsOut, PrintReleaseSettingsUpdate
 from app.schemas.report import ReportFormulaSettingsOut, ReportFormulaSettingsUpdate
+from app.schemas.session import SessionSettingsOut, SessionSettingsUpdate
 from app.schemas.snmp import SnmpDefaultsOut, SnmpDefaultsUpdate
+from app.schemas.syslog import SyslogSettingsOut, SyslogSettingsUpdate
 from app.schemas.untracked_copies import UntrackedCopySettingsOut, UntrackedCopySettingsUpdate
+from app.sessions.service import get_or_create_session_settings
+from app.syslog.service import get_or_create_syslog_settings
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -281,6 +285,48 @@ async def update_snmp_defaults(payload: SnmpDefaultsUpdate, db: AsyncSession = D
     await db.commit()
     await db.refresh(settings)
     return _snmp_defaults_to_out(settings)
+
+
+@router.get("/syslog", response_model=SyslogSettingsOut)
+async def get_syslog_settings(db: AsyncSession = Depends(get_db)):
+    settings = await get_or_create_syslog_settings(db)
+    return SyslogSettingsOut(
+        enabled=settings.enabled,
+        port=settings.port,
+        min_severity=settings.min_severity,
+        retention_days=settings.retention_days,
+    )
+
+
+@router.put(
+    "/syslog", response_model=SyslogSettingsOut, dependencies=[Depends(require_role("admin"))]
+)
+async def update_syslog_settings(payload: SyslogSettingsUpdate, db: AsyncSession = Depends(get_db)):
+    """Org-wide kill switch + noise floor for the syslog collector
+    (infra/syslog-relay/) — off by default, matching SNMP defaults/LDAP
+    relay. `port` here is informational only for now: the relay actually
+    binds infra/syslog-relay/printops-syslog-relay.service's configured
+    port at process start, so changing it here doesn't move the listener
+    without also updating and restarting that service."""
+    settings = await get_or_create_syslog_settings(db)
+    updates = payload.model_dump(exclude_unset=True)
+    if updates.get("enabled") is not None:
+        settings.enabled = updates["enabled"]
+    if updates.get("port") is not None:
+        settings.port = updates["port"]
+    if updates.get("min_severity") is not None:
+        settings.min_severity = updates["min_severity"]
+    if updates.get("retention_days") is not None:
+        settings.retention_days = updates["retention_days"]
+
+    await db.commit()
+    await db.refresh(settings)
+    return SyslogSettingsOut(
+        enabled=settings.enabled,
+        port=settings.port,
+        min_severity=settings.min_severity,
+        retention_days=settings.retention_days,
+    )
 
 
 async def _get_or_create_google_workspace_settings(db: AsyncSession) -> GoogleWorkspaceSettings:
@@ -697,6 +743,33 @@ async def update_quota_settings(payload: QuotaSettingsUpdate, db: AsyncSession =
     await db.commit()
     await db.refresh(settings)
     return QuotaSettingsOut(enabled=settings.enabled)
+
+
+@router.get("/session", response_model=SessionSettingsOut)
+async def get_session_settings(db: AsyncSession = Depends(get_db)):
+    settings = await get_or_create_session_settings(db)
+    return SessionSettingsOut(idle_timeout_minutes=settings.idle_timeout_minutes)
+
+
+@router.put(
+    "/session",
+    response_model=SessionSettingsOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def update_session_settings(
+    payload: SessionSettingsUpdate, db: AsyncSession = Depends(get_db)
+):
+    """How long a session can sit idle before its token is allowed to
+    expire — POST /auth/refresh (app/routers/auth.py) is what actually
+    slides the window forward on activity; this just controls the
+    duration it slides by. Takes effect on each user's very next refresh,
+    not just future logins, since /auth/refresh reads this live."""
+    settings = await get_or_create_session_settings(db)
+    if payload.idle_timeout_minutes is not None:
+        settings.idle_timeout_minutes = payload.idle_timeout_minutes
+    await db.commit()
+    await db.refresh(settings)
+    return SessionSettingsOut(idle_timeout_minutes=settings.idle_timeout_minutes)
 
 
 @router.get("/ldap", response_model=LdapRelaySettingsOut)
