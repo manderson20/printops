@@ -37,6 +37,21 @@ class TimelineBucketOut(BaseModel):
     job_count: int
 
 
+class HourlyBucketOut(BaseModel):
+    interval: int
+    total_pages: int
+    color_pages: int
+    mono_pages: int
+    duplex_pages: int
+    simplex_pages: int
+    job_count: int
+    # Tracked walk-up copies only (CopierUsageRecord) — see
+    # HourlyBucket's docstring in app/reports/aggregation.py for why
+    # untracked/estimated copies aren't included here.
+    copy_pages: int
+    copy_count: int
+
+
 class LeaderboardEntryOut(BaseModel):
     key: str
     label: str
@@ -57,6 +72,12 @@ class CombinedLeaderboardEntryOut(BaseModel):
     print_pages: int
     copy_pages: int
     total_pages: int
+    color_pages: int
+    mono_pages: int
+    duplex_pages: int
+    simplex_pages: int
+    # Print-only — walk-up copy usage has no cost model.
+    estimated_cost: float
 
 
 class PeakTimesOut(BaseModel):
@@ -98,7 +119,31 @@ class CartridgeOut(BaseModel):
     cost: float
     yield_pages: int
 
+    # SNMP-detected, read-only — see PrinterTonerCartridge.detected_*'s
+    # docstring (app/models/report.py). None until the first successful
+    # POST /printers/{id}/toner-cartridges/detect.
+    detected_description: str | None = None
+    detected_high_capacity: bool | None = None
+    detected_at: datetime | None = None
+
     model_config = {"from_attributes": True}
+
+
+class DetectedSupplyOut(BaseModel):
+    """One raw supply row as read straight off the device — returned by
+    POST /printers/{id}/toner-cartridges/detect alongside the updated
+    CartridgeOut list, for supply types the probe saw but couldn't
+    confidently match to a color slot (color is None), so nothing gets
+    silently dropped."""
+
+    description: str
+    color: CartridgeColor | None
+    high_capacity: bool | None
+
+
+class DetectCartridgesResult(BaseModel):
+    cartridges: list[CartridgeOut]
+    unmatched: list[DetectedSupplyOut]
 
 
 class CostEntryOut(BaseModel):

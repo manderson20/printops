@@ -97,7 +97,9 @@ class MosyleClient:
         try:
             data = response.json()
         except ValueError as exc:
-            raise MosyleError(f"Mosyle API returned non-JSON response: {response.text[:300]}") from exc
+            raise MosyleError(
+                f"Mosyle API returned non-JSON response: {response.text[:300]}"
+            ) from exc
 
         if data.get("status") != "OK":
             raise MosyleError(f"Mosyle API did not return success: {json.dumps(data)[:300]}")
@@ -110,7 +112,9 @@ class MosyleClient:
         page = 0
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
             while True:
-                result = await self._post(client, "listdevices", {"options": {"os": os, "page": page}})
+                result = await self._post(
+                    client, "listdevices", {"options": {"os": os, "page": page}}
+                )
                 page_devices = result.get("devices")
                 if page_devices is None:
                     raise MosyleError(
@@ -132,7 +136,11 @@ async def _get_settings_row(db: AsyncSession) -> MosyleSettings | None:
 
 
 def _client_from_settings(settings: MosyleSettings) -> MosyleClient:
-    if not settings.access_token_encrypted or not settings.admin_email or not settings.admin_password_encrypted:
+    if (
+        not settings.access_token_encrypted
+        or not settings.admin_email
+        or not settings.admin_password_encrypted
+    ):
         raise MosyleError("Mosyle access token / admin credentials are not fully configured.")
     return MosyleClient(
         base_url=settings.base_url,

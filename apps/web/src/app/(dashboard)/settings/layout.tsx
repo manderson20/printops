@@ -7,12 +7,16 @@ import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Spinner } from "@/components/ui/Spinner";
 
 const SETTINGS_NAV = [
-  { href: "/settings/users", label: "Users" },
+  { href: "/settings/users", label: "Users & Permissions" },
+  { href: "/settings/integrations", label: "Integrations" },
+  { href: "/settings/session", label: "Session Timeout" },
   { href: "/settings/snmp", label: "SNMP" },
   { href: "/settings/aliases", label: "Attribution Aliases" },
   { href: "/settings/insights", label: "Insights" },
   { href: "/settings/quotas", label: "Quotas" },
   { href: "/settings/ldap", label: "LDAP Relay" },
+  { href: "/settings/syslog", label: "Syslog" },
+  { href: "/settings/mdm-resync", label: "MDM Printer Resync" },
 ] as const;
 
 export default function SettingsLayout({ children }: { children: ReactNode }) {
@@ -33,7 +37,7 @@ export default function SettingsLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex w-full max-w-5xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">
           Settings
@@ -45,7 +49,13 @@ export default function SettingsLayout({ children }: { children: ReactNode }) {
       </div>
 
       <div className="flex gap-8">
-        <nav className="flex w-44 shrink-0 flex-col gap-1">
+        {/* self-start stops the default flex `stretch` from making this
+            column as tall as the content beside it — without it, `sticky`
+            has no shorter box to actually "stick" within and does nothing.
+            Side-by-side with content (not stacked above it), so this
+            doesn't share the gap+sticky overlap issue printers/[id]/layout.tsx
+            works around — no vertical gap sits directly against it. */}
+        <nav className="sticky top-0 flex w-44 shrink-0 flex-col gap-1 self-start">
           {SETTINGS_NAV.map((link) => {
             const active =
               pathname === link.href || pathname.startsWith(`${link.href}/`);

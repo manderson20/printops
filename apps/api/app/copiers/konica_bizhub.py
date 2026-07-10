@@ -55,8 +55,8 @@ SETUP_NOTES = (
     "list (PageScope Web Connection > Maintenance/Counter, or the device's "
     "own report-print function), then use Accounting Imports here to bring "
     "in the CSV. Map each staff member's Account Name/User Name under Staff "
-    "Copier Identities (identity type \"Department ID\" for Account Track, "
-    "\"Vendor User ID\" for User Authentication) so the import can resolve "
+    'Copier Identities (identity type "Department ID" for Account Track, '
+    '"Vendor User ID" for User Authentication) so the import can resolve '
     "it to a real person."
 )
 
@@ -95,7 +95,9 @@ def _get_meter_snapshot_sync(device: MfpDevice) -> MeterSnapshot:
     total = get_standard_total(device.ip_address, config)
 
     try:
-        breakdown: VendorBreakdown = VENDOR_BREAKDOWN_FNS["konica_minolta"](device.ip_address, config)
+        breakdown: VendorBreakdown = VENDOR_BREAKDOWN_FNS["konica_minolta"](
+            device.ip_address, config
+        )
     except SnmpProbeError:
         breakdown = VendorBreakdown(copy=None, print=None, confidence="unsupported")
 
