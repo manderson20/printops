@@ -245,11 +245,12 @@ async def _create_job_at(db_session_factory, printer_id, created_at, page_count=
         await session.commit()
 
 
-async def test_live_hourly_buckets_by_elapsed_hour(
+async def test_live_hourly_buckets_by_elapsed_interval(
     client, printer_id, admin_headers, db_session_factory
 ):
     start = datetime(2026, 7, 10, 0, 0, tzinfo=UTC)
     end = start + timedelta(days=1)
+    # 9:00 and 9:45 fall in different 30-minute buckets (18 and 19).
     await _create_job_at(db_session_factory, printer_id, start.replace(hour=9), page_count=5)
     await _create_job_at(
         db_session_factory, printer_id, start.replace(hour=9, minute=45), page_count=3
@@ -270,19 +271,23 @@ async def test_live_hourly_buckets_by_elapsed_hour(
     )
     assert response.status_code == 200
     buckets = response.json()
-    assert len(buckets) == 24
-    assert [b["hour"] for b in buckets] == list(range(24))
+    assert len(buckets) == 48
+    assert [b["interval"] for b in buckets] == list(range(48))
 
-    hour_9 = buckets[9]
-    assert hour_9["job_count"] == 2
-    assert hour_9["total_pages"] == 8
+    interval_18 = buckets[18]  # 9:00-9:30
+    assert interval_18["job_count"] == 1
+    assert interval_18["total_pages"] == 5
 
-    hour_14 = buckets[14]
-    assert hour_14["job_count"] == 1
-    assert hour_14["color_pages"] == 2
-    assert hour_14["duplex_pages"] == 2
+    interval_19 = buckets[19]  # 9:30-10:00
+    assert interval_19["job_count"] == 1
+    assert interval_19["total_pages"] == 3
 
-    # Every other hour is zero-filled, not just absent.
+    interval_28 = buckets[28]  # 14:00-14:30
+    assert interval_28["job_count"] == 1
+    assert interval_28["color_pages"] == 2
+    assert interval_28["duplex_pages"] == 2
+
+    # Every other interval is zero-filled, not just absent.
     assert buckets[0]["job_count"] == 0
     assert buckets[0]["total_pages"] == 0
 
@@ -329,13 +334,17 @@ async def test_live_hourly_includes_tracked_copies(
     assert response.status_code == 200
     buckets = response.json()
 
-    hour_9 = buckets[9]
-    assert hour_9["job_count"] == 1
-    assert hour_9["total_pages"] == 5
-    assert hour_9["copy_count"] == 2
-    assert hour_9["copy_pages"] == 6
+    interval_18 = buckets[18]  # 9:00-9:30
+    assert interval_18["job_count"] == 1
+    assert interval_18["total_pages"] == 5
+    assert interval_18["copy_count"] == 1
+    assert interval_18["copy_pages"] == 4
 
-    # Every other hour is zero-filled for copies too.
+    interval_19 = buckets[19]  # 9:30-10:00
+    assert interval_19["copy_count"] == 1
+    assert interval_19["copy_pages"] == 2
+
+    # Every other interval is zero-filled for copies too.
     assert buckets[0]["copy_count"] == 0
     assert buckets[0]["copy_pages"] == 0
 

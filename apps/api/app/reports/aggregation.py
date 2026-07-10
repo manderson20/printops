@@ -184,23 +184,27 @@ async def get_timeline(
     return sorted(buckets.values(), key=lambda b: b.bucket_start)
 
 
+LIVE_INTERVAL_MINUTES = 30
+
+
 @dataclass
 class HourlyBucket:
-    """One hour's worth of activity within a single day — the Live
-    Dashboard's intraday view (app/routers/reports.py's /live/hourly),
-    distinct from get_timeline's day/week/month buckets above. `hour` is
-    just an index (0-23), not a wall-clock hour-of-day in any particular
-    timezone — see get_hourly_timeline's docstring for why.
+    """One 30-minute interval's worth of activity — the Live Dashboard's
+    intraday view (app/routers/reports.py's /live/hourly), distinct from
+    get_timeline's day/week/month buckets above. `interval` is just an
+    index (0, 1, 2, ...), counting LIVE_INTERVAL_MINUTES-minute steps
+    since the caller's `start`, not a wall-clock hour-of-day in any
+    particular timezone — see get_hourly_timeline's docstring for why.
 
     copy_pages/copy_count cover only *tracked* walk-up copies
     (CopierUsageRecord rows with a resolved staff identity — see
     _fetch_raw_copy_rows below). Untracked/estimated copy volume (the
     Untracked Copy Activity report) is SNMP counter-delta based and only
     ever computed at daily granularity, so it's deliberately not folded
-    in here — an hourly split of a daily estimate would overstate its
+    in here — a 30-minute split of a daily estimate would overstate its
     precision."""
 
-    hour: int
+    interval: int
     total_pages: int = 0
     color_pages: int = 0
     mono_pages: int = 0
@@ -238,17 +242,19 @@ async def _fetch_raw_copy_rows(
 async def get_hourly_timeline(
     db: AsyncSession, start: datetime, end: datetime
 ) -> list[HourlyBucket]:
-    """24 (or however many actually fit between start/end) hourly
-    buckets, always fully zero-filled — a bar chart needs a stable x-axis
-    as the day progresses, not an array that grows hour by hour.
+    """48 (or however many LIVE_INTERVAL_MINUTES-minute steps actually fit
+    between start/end) buckets, always fully zero-filled — a bar chart
+    needs a stable x-axis as the day progresses, not an array that grows
+    interval by interval.
 
-    Deliberately timezone-naive here: `hour` is "hours elapsed since
-    start", not Job.created_at's UTC hour-of-day. This server only ever
-    stores UTC timestamps, but a TV-mounted live dashboard needs to line
-    up with the viewer's actual wall clock — so the caller (app/routers/
-    reports.py) is expected to pass a browser-local midnight-to-midnight
-    (or midnight-to-now) window as start/end, computed client-side, and
-    this just buckets relative to that, whatever timezone it represents."""
+    Deliberately timezone-naive here: `interval` is "intervals elapsed
+    since start", not Job.created_at's UTC hour-of-day. This server only
+    ever stores UTC timestamps, but a TV-mounted live dashboard needs to
+    line up with the viewer's actual wall clock — so the caller (app/
+    routers/reports.py) is expected to pass a browser-local
+    midnight-to-midnight (or midnight-to-now) window as start/end,
+    computed client-side, and this just buckets relative to that,
+    whatever timezone it represents."""
     filters = ReportFilters(start=start, end=end)
     rows = await _fetch_raw_rows(db, filters)
 
@@ -258,14 +264,15 @@ async def get_hourly_timeline(
     # the way Postgres does and can hand back naive datetimes even though
     # the column is declared aware; naive-minus-aware raises TypeError.
     # Both sides represent the same UTC instant either way, so stripping
-    # tzinfo from both changes nothing about the actual elapsed-hours math.
+    # tzinfo from both changes nothing about the actual elapsed-interval math.
     naive_start = start.replace(tzinfo=None)
-    hour_count = max(1, int((end - start).total_seconds() // 3600))
-    buckets = {h: HourlyBucket(hour=h) for h in range(hour_count)}
+    interval_seconds = LIVE_INTERVAL_MINUTES * 60
+    interval_count = max(1, int((end - start).total_seconds() // interval_seconds))
+    buckets = {i: HourlyBucket(interval=i) for i in range(interval_count)}
     for r in rows:
         naive_created_at = r.created_at.replace(tzinfo=None)
-        elapsed_hours = int((naive_created_at - naive_start).total_seconds() // 3600)
-        bucket = buckets.get(elapsed_hours)
+        elapsed = int((naive_created_at - naive_start).total_seconds() // interval_seconds)
+        bucket = buckets.get(elapsed)
         if bucket is None:
             continue  # outside the requested window — shouldn't happen, but not fatal
         bucket.job_count += 1
@@ -282,14 +289,14 @@ async def get_hourly_timeline(
     copy_rows = await _fetch_raw_copy_rows(db, start, end)
     for cr in copy_rows:
         naive_created_at = cr.created_at.replace(tzinfo=None)
-        elapsed_hours = int((naive_created_at - naive_start).total_seconds() // 3600)
-        bucket = buckets.get(elapsed_hours)
+        elapsed = int((naive_created_at - naive_start).total_seconds() // interval_seconds)
+        bucket = buckets.get(elapsed)
         if bucket is None:
             continue
         bucket.copy_count += 1
         bucket.copy_pages += cr.page_count
 
-    return [buckets[h] for h in range(hour_count)]
+    return [buckets[i] for i in range(interval_count)]
 
 
 @dataclass

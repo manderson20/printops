@@ -5,6 +5,22 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.33.0] - 2026-07-10
+
+- **Live Dashboard: 30-minute bucket granularity.** The hourly chart now
+  buckets by 30-minute interval instead of a full hour (48 bars across the
+  rolling 24h window instead of 24), giving finer resolution on when
+  activity actually happened. Print jobs and tracked copies both have
+  precise per-event timestamps, so this doesn't introduce any of the
+  noise a shorter window would on the SNMP-counter-delta-based untracked
+  copy estimate (which stays daily-only, unaffected by this change).
+- **Live Dashboard: clearer date/time axis.** Only on-the-hour bars and
+  the single bar where the calendar date changes get an axis label now
+  (the 24 half-hour bars in between stay unlabeled to avoid clutter). The
+  date-change bar renders as a two-line tick (time on top, date below)
+  with a dashed vertical divider through the chart, so it's obvious at a
+  glance which bars are "yesterday" vs. "today."
+
 ## [0.32.0] - 2026-07-10
 
 - **Live Dashboard: true rolling 24-hour window.** The hourly bar chart no
