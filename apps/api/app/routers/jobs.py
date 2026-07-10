@@ -17,7 +17,12 @@ from app.models.release import PrintReleaseSettings
 from app.models.report import ReportFormulaSettings
 from app.printers.job_control import JobControlError, cancel_cups_job
 from app.quotas.service import resolve_hold_reason
-from app.reports.aggregation import ReportFilters, get_cost_raw_rows, resolve_device_names
+from app.reports.aggregation import (
+    ReportFilters,
+    get_cost_raw_rows,
+    resolve_device_names,
+    resolve_display_names,
+)
 from app.reports.cost_rates import load_printer_rates
 from app.reports.formulas import FormulaValues, job_cost
 from app.schemas.auth import UserOut
@@ -52,11 +57,17 @@ async def list_jobs(
     device_names = await resolve_device_names(
         db, {job.mac_address for job, _ in rows if job.mac_address}
     )
+    submitted_by_names = await resolve_display_names(
+        db, {job.submitted_by for job, _ in rows if job.submitted_by}
+    )
     return [
         JobListOut(
             **JobOut.model_validate(job).model_dump(),
             printer_name=printer_name,
             device_name=device_names.get(job.mac_address) if job.mac_address else None,
+            submitted_by_name=submitted_by_names.get(job.submitted_by)
+            if job.submitted_by
+            else None,
         )
         for job, printer_name in rows
     ]

@@ -871,6 +871,10 @@ export type Job = {
   device_name: string | null;
   cups_job_id: number | null;
   submitted_by: string | null;
+  // Resolved from submitted_by — the synced Google Workspace name if
+  // known, else the email's local-part as a readable stand-in, or null
+  // if this job has no submitted_by at all.
+  submitted_by_name: string | null;
   attribution_method: AttributionMethod;
   file_size_bytes: number | null;
   page_count: number | null;
