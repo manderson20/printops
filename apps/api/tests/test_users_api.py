@@ -163,3 +163,91 @@ def test_list_users_search(client, admin_headers, viewer_headers):
     response = client.get("/api/v1/users", headers=admin_headers, params={"search": "no-such-user"})
     assert response.status_code == 200
     assert response.json()["total"] == 0
+
+
+def test_list_users_filters_by_role(client, admin_headers, viewer_headers):
+    response = client.get("/api/v1/users", headers=admin_headers, params={"role": "admin"})
+    assert response.status_code == 200
+    emails = [u["email"] for u in response.json()["items"]]
+    assert "viewer@example.org" not in emails
+
+    response = client.get("/api/v1/users", headers=admin_headers, params={"role": "viewer"})
+    emails = [u["email"] for u in response.json()["items"]]
+    assert "viewer@example.org" in emails
+
+
+def test_admin_can_precreate_user(client, admin_headers):
+    response = client.post(
+        "/api/v1/users",
+        headers=admin_headers,
+        json={"email": "Future-Admin@Example.org", "role": "admin"},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    # Stored lowercased — case-insensitive matching on first login (see
+    # google_callback) assumes this.
+    assert body["email"] == "future-admin@example.org"
+    assert body["role"] == "admin"
+
+    users = client.get("/api/v1/users", headers=admin_headers).json()["items"]
+    assert any(u["email"] == "future-admin@example.org" for u in users)
+
+
+def test_precreate_user_rejects_duplicate_email(client, admin_headers, viewer_headers):
+    response = client.post(
+        "/api/v1/users",
+        headers=admin_headers,
+        json={"email": "viewer@example.org", "role": "admin"},
+    )
+    assert response.status_code == 409
+
+
+def test_precreated_admin_becomes_admin_on_first_login(
+    client, admin_headers, google_settings, monkeypatch
+):
+    """The core promise of pre-provisioning: granting a role before someone's
+    first sign-in must actually take effect on that sign-in, by matching the
+    pre-provisioned (google_sub=null) row by email instead of creating a
+    second, orphaned row."""
+    create_response = client.post(
+        "/api/v1/users",
+        headers=admin_headers,
+        json={"email": "new-admin@example.org", "role": "admin"},
+    )
+    assert create_response.status_code == 201
+    precreated_id = create_response.json()["id"]
+
+    async def fake_exchange_code(**kwargs):
+        return {"id_token": "fake-id-token"}
+
+    def fake_verify_id_token(id_token, client_id):
+        return {
+            "sub": "google-sub-new-admin",
+            "email": "new-admin@example.org",
+            "email_verified": True,
+            "hd": "example.org",
+            "name": "New Admin",
+            "picture": None,
+        }
+
+    monkeypatch.setattr("app.routers.auth.exchange_code", fake_exchange_code)
+    monkeypatch.setattr("app.routers.auth.verify_id_token", fake_verify_id_token)
+
+    login_response = client.get("/auth/google/login", follow_redirects=False)
+    state = login_response.cookies["printops_oauth_state"]
+    callback_response = client.get(
+        "/auth/google/callback",
+        params={"code": "fake-code", "state": state},
+        cookies={"printops_oauth_state": state},
+        follow_redirects=False,
+    )
+    token = callback_response.headers["location"].split("token=", 1)[1]
+
+    me_response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me_response.status_code == 200
+    assert me_response.json()["role"] == "admin"
+
+    users = client.get("/api/v1/users", headers=admin_headers).json()["items"]
+    matching = [u for u in users if u["email"] == "new-admin@example.org"]
+    assert len(matching) == 1
+    assert matching[0]["id"] == precreated_id

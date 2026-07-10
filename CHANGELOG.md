@@ -5,6 +5,16 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.37.0] - 2026-07-10
+
+- **Pre-provision accounts before first sign-in.** Admins can now add a
+  user by email + role from Settings > Users instead of waiting for that
+  person's first Google sign-in and promoting them afterward — the role
+  (and any OU grants) take effect the moment they actually sign in.
+- Added a staff-scoped org-units lookup (`/settings/google-workspace/org-units`)
+  and a `role` filter on the users list, both powering the Settings UX
+  changes below.
+
 ## [0.36.0] - 2026-07-10
 
 - **Printers: search box.** Filter the Printers list by name, IP address,

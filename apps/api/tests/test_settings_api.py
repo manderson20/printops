@@ -393,6 +393,69 @@ async def test_copier_pin_roster_filters_by_configured_staff_ou(
     assert "student@example.com" not in body
 
 
+async def test_org_units_endpoint_filters_by_configured_staff_ou(
+    client, auth_headers, db_session_factory
+):
+    client.put(
+        "/api/v1/settings/google-workspace",
+        headers=auth_headers,
+        json={"staff_org_unit_path": "/Employees"},
+    )
+    async with db_session_factory() as session:
+        session.add(
+            GoogleWorkspaceUser(
+                email="teacher@example.com",
+                name="Teacher",
+                org_unit_path="/Employees/Teachers",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            GoogleWorkspaceUser(
+                email="student@example.com",
+                name="Student",
+                org_unit_path="/Students/High School",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    response = client.get("/api/v1/settings/google-workspace/org-units", headers=auth_headers)
+    assert response.status_code == 200
+    org_units = response.json()
+    assert "/Employees/Teachers" in org_units
+    assert "/Students/High School" not in org_units
+
+
+async def test_org_units_endpoint_unfiltered_when_staff_ou_not_configured(
+    client, auth_headers, db_session_factory
+):
+    async with db_session_factory() as session:
+        session.add(
+            GoogleWorkspaceUser(
+                email="teacher@example.com",
+                name="Teacher",
+                org_unit_path="/Employees/Teachers",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            GoogleWorkspaceUser(
+                email="student@example.com",
+                name="Student",
+                org_unit_path="/Students/High School",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    response = client.get("/api/v1/settings/google-workspace/org-units", headers=auth_headers)
+    assert response.status_code == 200
+    org_units = response.json()
+    assert "/Employees/Teachers" in org_units
+    assert "/Students/High School" in org_units
+
+
 def test_staff_org_unit_path_can_be_cleared(client, auth_headers):
     set_response = client.put(
         "/api/v1/settings/google-workspace",

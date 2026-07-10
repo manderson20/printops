@@ -2,12 +2,19 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.deps import require_role
 from app.models.user import User
-from app.schemas.user import UserAccountOut, UserAccountPage, UserAccountUpdate
+from app.schemas.user import (
+    Role,
+    UserAccountCreate,
+    UserAccountOut,
+    UserAccountPage,
+    UserAccountUpdate,
+)
 
 router = APIRouter(dependencies=[Depends(require_role("admin"))])
 
@@ -17,12 +24,15 @@ async def list_users(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     search: str | None = Query(None),
+    role: Role | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     filters = []
     if search:
         pattern = f"%{search}%"
         filters.append(or_(User.email.ilike(pattern), User.name.ilike(pattern)))
+    if role:
+        filters.append(User.role == role)
 
     count_stmt = select(func.count()).select_from(User)
     items_stmt = select(User).order_by(User.email)
@@ -35,6 +45,35 @@ async def list_users(
     items = (await db.execute(items_stmt)).scalars().all()
 
     return UserAccountPage(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.post("", response_model=UserAccountOut, status_code=status.HTTP_201_CREATED)
+async def create_user(payload: UserAccountCreate, db: AsyncSession = Depends(get_db)):
+    """Pre-provisions an account by email, google_sub left null until this
+    person's first Google sign-in — see UserAccountCreate's docstring and
+    app/routers/auth.py's google_callback, which matches this row by email
+    on that first login instead of creating a duplicate."""
+    email = payload.email.strip().lower()
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Email is required"
+        )
+
+    user = User(
+        email=email,
+        role=payload.role,
+        granted_ou_paths=payload.granted_ou_paths,
+    )
+    db.add(user)
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="An account with this email already exists"
+        ) from exc
+    await db.refresh(user)
+    return user
 
 
 @router.patch("/{user_id}", response_model=UserAccountOut)

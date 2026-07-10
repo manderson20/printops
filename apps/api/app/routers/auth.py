@@ -190,7 +190,14 @@ async def google_callback(
     """Exchanges the authorization code, verifies the id_token, and
     upserts a User by google_sub — new users default to "viewer" unless
     their email is in sso.initial_admin_emails, existing users' role is
-    never touched here (only the Users admin page changes it)."""
+    never touched here (only the Users admin page changes it).
+
+    Falls back to matching by email (case-insensitive) when no row has
+    this google_sub yet — covers an account an admin pre-provisioned via
+    POST /api/v1/users (Settings > Users' "Add User") before this person
+    ever signed in, which has google_sub still null. Filling it in here
+    on this first login (rather than creating a second row) is what makes
+    the pre-provisioned role/OU grants actually take effect for them."""
     sso = await _get_google_sso_settings(db)
     if (
         not sso
@@ -231,9 +238,16 @@ async def google_callback(
     result = await db.execute(select(User).where(User.google_sub == google_sub))
     user = result.scalar_one_or_none()
     if user is None:
+        result = await db.execute(
+            select(User).where(User.google_sub.is_(None), func.lower(User.email) == email.lower())
+        )
+        user = result.scalar_one_or_none()
+    if user is None:
         role = "admin" if email in _admin_emails(sso) else "viewer"
         user = User(google_sub=google_sub, email=email, role=role)
         db.add(user)
+    else:
+        user.google_sub = google_sub
 
     user.email = email
     user.name = claims.get("name")
