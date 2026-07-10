@@ -5,6 +5,19 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.39.2] - 2026-07-10
+
+- **Fix intermittent bounce back to login after a successful Google
+  sign-in.** Live Dashboard's admin-only guard (added alongside the OU
+  Viewer role) redirected to `/login` on `currentUser === null`, which
+  raced against the same hook's own fetch settling right after
+  `/login/callback` sets the token — confirmed live: repeated login
+  attempts landed at inconsistent points (some stopped right after the
+  auth check, others loaded fully) rather than failing consistently, the
+  signature of a race rather than a real auth failure. The "no token"
+  case is already handled reliably by `useAuthGuard` one level up; removed
+  the redundant, racy check.
+
 ## [0.39.1] - 2026-07-10
 
 - **Security fix: PostCSS XSS (GHSA-qx2v-qp2m-jg93, CVE-2026-41305).**

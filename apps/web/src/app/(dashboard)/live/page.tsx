@@ -177,11 +177,14 @@ export default function LiveDashboardPage() {
   // /live/hourly is admin-only server-side (org-wide aggregate, not self-
   // or OU-scoped — see app/routers/reports.py's report_live_hourly
   // docstring), so bounce non-admins to Insights instead of showing them
-  // an error state.
+  // an error state. No-token/logged-out is already handled by
+  // useAuthGuard above — checking `currentUser === null` here too raced
+  // against useCurrentUser's own fetch settling (confirmed live: repeated
+  // login attempts landed at inconsistent depths — sometimes bouncing to
+  // /login before the admin-role fetch had a chance to resolve) and could
+  // bounce a real, successful admin login back to the login page.
   useEffect(() => {
-    if (currentUser === null) {
-      router.replace("/login");
-    } else if (currentUser && currentUser.role !== "admin") {
+    if (currentUser && currentUser.role !== "admin") {
       router.replace("/insights");
     }
   }, [currentUser, router]);
