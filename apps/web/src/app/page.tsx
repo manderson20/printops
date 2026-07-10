@@ -9,7 +9,7 @@ export default function Home() {
   const token = useToken();
 
   useEffect(() => {
-    router.replace(token ? "/insights" : "/login");
+    router.replace(token ? "/live" : "/login");
   }, [router, token]);
 
   return null;

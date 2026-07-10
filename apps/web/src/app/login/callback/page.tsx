@@ -23,7 +23,7 @@ export default function LoginCallbackPage() {
 
     if (token) {
       setToken(token);
-      router.replace("/insights");
+      router.replace("/live");
     } else {
       // Not props-derived state — this is a one-time reaction to the OAuth
       // callback fragment read off the URL on mount, not something that can
