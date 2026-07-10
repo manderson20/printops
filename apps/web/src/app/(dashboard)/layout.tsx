@@ -11,8 +11,8 @@ import { useCurrentUser } from "@/lib/useCurrentUser";
 import { useIdleSessionRefresh } from "@/lib/idleRefresh";
 
 const NAV_LINKS = [
-  { href: "/insights", label: "Insights" },
   { href: "/live", label: "Live Dashboard" },
+  { href: "/insights", label: "Insights" },
   { href: "/printers", label: "Printers" },
   { href: "/jobs", label: "Jobs" },
   { href: "/syslog", label: "Syslog" },
@@ -54,7 +54,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden bg-zinc-50 font-sans print:h-auto print:overflow-visible dark:bg-black">
       <aside className="flex w-56 shrink-0 flex-col overflow-y-auto border-r border-black/[.08] bg-white p-5 print:hidden dark:border-white/[.145] dark:bg-black">
-        <Link href="/insights" className="mb-8 flex items-center gap-2">
+        <Link href="/live" className="mb-8 flex items-center gap-2">
           <Image src="/printops-logo.png" alt="" width={28} height={28} />
           <span className="text-base font-semibold text-black dark:text-zinc-50">
             PrintOps

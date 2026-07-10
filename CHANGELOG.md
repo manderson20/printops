@@ -7,18 +7,20 @@ schedules an update.
 
 ## [0.31.0] - 2026-07-10
 
-- **New: Live Dashboard**, a self-updating page (Insights → Live Dashboard)
+- **New: Live Dashboard**, now the default landing page and top nav item,
   showing today's print activity — total jobs/pages/color/duplex tiles, an
   hourly bar chart of pages printed so far today, and a recent-jobs feed
   (user, printer, pages, color/mono, duplex/simplex, size) — refreshing on
   its own every 15 seconds with no manual reload, meant to be left up on a
-  TV display. Deliberately built on plain polling rather than a
-  WebSocket/SSE push channel: this app has zero server-push infrastructure
-  today, and a wall-mounted dashboard doesn't need sub-second latency the
-  way a live ticker would. Hour buckets are computed from a caller-supplied
-  start/end window (the viewer's own local midnight, computed client-side)
-  rather than the server's UTC "today," so the bars line up with the actual
-  wall clock in the room regardless of the server's own timezone.
+  TV display. Reads as all-zero (empty chart, "no jobs yet" panel) rather
+  than erroring when there's genuinely no activity yet. Deliberately built
+  on plain polling rather than a WebSocket/SSE push channel: this app has
+  zero server-push infrastructure today, and a wall-mounted dashboard
+  doesn't need sub-second latency the way a live ticker would. Hour
+  buckets are computed from a caller-supplied start/end window (the
+  viewer's own local midnight, computed client-side) rather than the
+  server's UTC "today," so the bars line up with the actual wall clock in
+  the room regardless of the server's own timezone.
 
 ## [0.30.0] - 2026-07-10
 
