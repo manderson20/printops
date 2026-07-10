@@ -48,7 +48,10 @@ async def test_list_devices_parses_real_shape_single_page(monkeypatch):
 
     async def fake_post(self, http_client, path, body):
         calls.append((path, body))
-        return {"devices": [{"serial_number": "SN1", "wifi_mac_address": "aa:bb:cc:dd:ee:ff"}], "rows": 1}
+        return {
+            "devices": [{"serial_number": "SN1", "wifi_mac_address": "aa:bb:cc:dd:ee:ff"}],
+            "rows": 1,
+        }
 
     monkeypatch.setattr(MosyleClient, "_post", fake_post)
     devices = await client.list_devices()
@@ -101,7 +104,9 @@ async def test_sync_devices_requires_enabled_settings(db_session_factory):
 
 
 @pytest.mark.asyncio
-async def test_sync_devices_populates_cache_from_embedded_user_fields(db_session_factory, monkeypatch):
+async def test_sync_devices_populates_cache_from_embedded_user_fields(
+    db_session_factory, monkeypatch
+):
     async def fake_list_devices(self, os="mac"):
         return [
             {
@@ -151,9 +156,21 @@ async def test_sync_devices_drops_ambiguous_shared_macs(db_session_factory, monk
 
     async def fake_list_devices(self, os="mac"):
         return [
-            {"wifi_mac_address": "aa:bb:cc:dd:ee:ff", "serial_number": "SN1", "useremail": "a@x.com"},
-            {"wifi_mac_address": "aa:bb:cc:dd:ee:ff", "serial_number": "SN2", "useremail": "b@x.com"},
-            {"wifi_mac_address": "11:22:33:44:55:66", "serial_number": "SN3", "useremail": "c@x.com"},
+            {
+                "wifi_mac_address": "aa:bb:cc:dd:ee:ff",
+                "serial_number": "SN1",
+                "useremail": "a@x.com",
+            },
+            {
+                "wifi_mac_address": "aa:bb:cc:dd:ee:ff",
+                "serial_number": "SN2",
+                "useremail": "b@x.com",
+            },
+            {
+                "wifi_mac_address": "11:22:33:44:55:66",
+                "serial_number": "SN3",
+                "useremail": "c@x.com",
+            },
         ]
 
     monkeypatch.setattr(MosyleClient, "list_devices", fake_list_devices)

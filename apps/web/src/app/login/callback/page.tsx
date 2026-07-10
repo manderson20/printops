@@ -23,8 +23,13 @@ export default function LoginCallbackPage() {
 
     if (token) {
       setToken(token);
-      router.replace("/insights");
+      router.replace("/live");
     } else {
+      // Not props-derived state — this is a one-time reaction to the OAuth
+      // callback fragment read off the URL on mount, not something that can
+      // be computed during render (there's nothing to render from until the
+      // fragment is parsed here).
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError(errorMessage ?? "Sign-in failed.");
     }
   }, [router]);

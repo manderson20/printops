@@ -51,8 +51,8 @@ SETUP_NOTES = (
     "on user provisioning). To bring usage into PrintOps: from CentreWare "
     "IS, export the XSA accounting report, then use Accounting Imports "
     "here to bring in the CSV. Map each staff member's User ID under Staff "
-    "Copier Identities (identity type \"Vendor User ID\") and, if you use "
-    "Account IDs too, a second row (identity type \"Department ID\") so "
+    'Copier Identities (identity type "Vendor User ID") and, if you use '
+    'Account IDs too, a second row (identity type "Department ID") so '
     "the import can resolve either to a real person."
 )
 
