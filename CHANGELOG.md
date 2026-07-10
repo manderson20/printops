@@ -5,6 +5,20 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.42.0] - 2026-07-10
+
+- **New: Zabbix integration.** Settings > Integrations > Zabbix lets an
+  external Zabbix server poll PrintOps for fleet-wide print stats
+  (rolling 24h job/page counts, by color/duplex) and per-printer health
+  (status, queue sync errors, page counts) — an alternative way to view
+  the same numbers Live Dashboard and Insights show. Fully UI-driven: an
+  admin-rotatable API token, a "Download Template" button for a generic
+  Zabbix template (works unmodified across any PrintOps install — actual
+  server URL/token are Zabbix host macros, not baked into the file), and
+  a two-sided setup guide (PrintOps side + Zabbix side). Zabbix's Low-Level
+  Discovery pulls in printers automatically. No CLI/SSH steps required on
+  the PrintOps side.
+
 ## [0.41.0] - 2026-07-10
 
 - **Duplicate printer detection on Add Printer.** As you fill in the

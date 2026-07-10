@@ -1,8 +1,10 @@
 import csv
 import io
+import secrets
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +12,7 @@ from app.core.crypto import decrypt, encrypt
 from app.db import get_db
 from app.deps import get_current_user, require_role
 from app.integrations.classguard import ClassGuardClient, ClassGuardError
+from app.integrations.git_update import REPO_ROOT
 from app.integrations.google_workspace import (
     GoogleWorkspaceClient,
     GoogleWorkspaceError,
@@ -26,6 +29,7 @@ from app.models.mosyle import MosyleSettings
 from app.models.release import PrintReleaseSettings
 from app.models.report import ReportFormulaSettings
 from app.models.snmp import SnmpDefaultsSettings
+from app.models.zabbix import ZabbixSettings
 from app.printers.snmp_counters import get_or_create_snmp_defaults
 from app.quotas.service import get_or_create_quota_settings
 from app.reports.untracked_copies import get_or_create_untracked_copy_settings
@@ -51,6 +55,7 @@ from app.schemas.session import SessionSettingsOut, SessionSettingsUpdate
 from app.schemas.snmp import SnmpDefaultsOut, SnmpDefaultsUpdate
 from app.schemas.syslog import SyslogSettingsOut, SyslogSettingsUpdate
 from app.schemas.untracked_copies import UntrackedCopySettingsOut, UntrackedCopySettingsUpdate
+from app.schemas.zabbix import ZabbixSettingsOut, ZabbixSettingsUpdate
 from app.sessions.service import get_or_create_session_settings
 from app.syslog.service import get_or_create_syslog_settings
 
@@ -641,6 +646,79 @@ async def update_google_sso_settings(
     await db.commit()
     await db.refresh(settings)
     return _google_sso_to_out(settings)
+
+
+async def _get_or_create_zabbix_settings(db: AsyncSession) -> ZabbixSettings:
+    result = await db.execute(select(ZabbixSettings).limit(1))
+    settings = result.scalar_one_or_none()
+    if settings is None:
+        settings = ZabbixSettings()
+        db.add(settings)
+        await db.commit()
+        await db.refresh(settings)
+    return settings
+
+
+def _zabbix_to_out(settings: ZabbixSettings) -> ZabbixSettingsOut:
+    return ZabbixSettingsOut(
+        enabled=settings.enabled, api_token=settings.api_token, base_url=settings.base_url
+    )
+
+
+@router.get("/zabbix", response_model=ZabbixSettingsOut)
+async def get_zabbix_settings(db: AsyncSession = Depends(get_db)):
+    return _zabbix_to_out(await _get_or_create_zabbix_settings(db))
+
+
+@router.put(
+    "/zabbix", response_model=ZabbixSettingsOut, dependencies=[Depends(require_role("admin"))]
+)
+async def update_zabbix_settings(payload: ZabbixSettingsUpdate, db: AsyncSession = Depends(get_db)):
+    settings = await _get_or_create_zabbix_settings(db)
+    updates = payload.model_dump(exclude_unset=True)
+    if updates.get("base_url") is not None:
+        settings.base_url = _normalize_redirect_base_url(updates["base_url"])
+    if updates.get("enabled") is not None:
+        # Generated lazily on first enable, not at row-creation time —
+        # mirrors Printer.release_token (app/routers/printers.py), so a
+        # never-enabled integration never has a live token sitting unused
+        # in the DB.
+        if updates["enabled"] and not settings.api_token:
+            settings.api_token = secrets.token_urlsafe(32)
+        settings.enabled = updates["enabled"]
+
+    await db.commit()
+    await db.refresh(settings)
+    return _zabbix_to_out(settings)
+
+
+@router.post(
+    "/zabbix/regenerate-token",
+    response_model=ZabbixSettingsOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def regenerate_zabbix_token(db: AsyncSession = Depends(get_db)):
+    """Immediately invalidates the old token — app.deps.verify_zabbix_token
+    looks it up live on every call, same as
+    regenerate_release_token (app/routers/printers.py)."""
+    settings = await _get_or_create_zabbix_settings(db)
+    settings.api_token = secrets.token_urlsafe(32)
+    await db.commit()
+    await db.refresh(settings)
+    return _zabbix_to_out(settings)
+
+
+@router.get("/zabbix/template", dependencies=[Depends(require_role("admin"))])
+async def download_zabbix_template():
+    """A static, generic Zabbix template (no per-install values baked in —
+    those are filled in as Zabbix host macros at import time, see the
+    Settings > Integrations > Zabbix setup guide) — the same file works
+    for any PrintOps install."""
+    return FileResponse(
+        REPO_ROOT / "infra" / "zabbix" / "printops_template.yaml",
+        media_type="application/x-yaml",
+        filename="printops_zabbix_template.yaml",
+    )
 
 
 async def _get_or_create_report_formula_settings(db: AsyncSession) -> ReportFormulaSettings:

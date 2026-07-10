@@ -3,13 +3,18 @@ import secrets
 from fastapi import Depends, HTTPException, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from jwt import PyJWTError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.security import decode_access_token
+from app.db import get_db
+from app.models.zabbix import ZabbixSettings
 from app.schemas.auth import UserOut
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 backend_token_header = APIKeyHeader(name="X-Backend-Token")
+zabbix_token_header = APIKeyHeader(name="X-Zabbix-Token")
 
 
 def get_current_user(
@@ -82,4 +87,32 @@ def verify_backend_token(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid backend token",
+        )
+
+
+async def verify_zabbix_token(
+    token: str = Depends(zabbix_token_header),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Authenticates an external Zabbix server's polls against
+    /api/v1/integrations/zabbix/* only — deliberately separate from
+    get_current_user/require_role/verify_backend_token. Nothing else in
+    the API accepts this token, so it's least-privilege by construction,
+    no RBAC role needed. Checked against the DB (not a static env secret
+    like verify_backend_token) since it must be admin-rotatable entirely
+    from the Integrations UI, per that page's no-CLI requirement.
+    Disabled or never-configured settings reject unconditionally — the
+    Integrations page's "Enabled" toggle is a real kill switch, not just
+    a UI hint."""
+    result = await db.execute(select(ZabbixSettings).limit(1))
+    settings = result.scalar_one_or_none()
+    if (
+        settings is None
+        or not settings.enabled
+        or not settings.api_token
+        or not secrets.compare_digest(token, settings.api_token)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Zabbix token",
         )

@@ -44,6 +44,7 @@ from app.routers import (
     staff_copier_identities,
     updates,
     users,
+    zabbix_integration,
 )
 from app.routers import settings as settings_router
 from app.routers import syslog as syslog_router
@@ -339,3 +340,6 @@ app.include_router(
     copier_unmapped.router, prefix="/api/v1/copier-unmapped", tags=["copier-unmapped"]
 )
 app.include_router(quota_holds.router, prefix="/api/v1/quota-holds", tags=["quota-holds"])
+app.include_router(
+    zabbix_integration.router, prefix="/api/v1/integrations/zabbix", tags=["zabbix"]
+)

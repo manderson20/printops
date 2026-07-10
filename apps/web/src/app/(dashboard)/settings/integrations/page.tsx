@@ -7,10 +7,12 @@ import {
   getGoogleSsoSettings,
   getGoogleWorkspaceSettings,
   getMosyleSettings,
+  getZabbixSettings,
   type ClassGuardSettings,
   type GoogleSsoSettings,
   type GoogleWorkspaceSettings,
   type MosyleSettings,
+  type ZabbixSettings,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
@@ -53,6 +55,7 @@ export default function IntegrationsPage() {
   const [classguard, setClassGuard] = useState<ClassGuardSettings | null>(null);
   const [googleWorkspace, setGoogleWorkspace] = useState<GoogleWorkspaceSettings | null>(null);
   const [googleSso, setGoogleSso] = useState<GoogleSsoSettings | null>(null);
+  const [zabbix, setZabbix] = useState<ZabbixSettings | null>(null);
 
   useEffect(() => {
     getMosyleSettings()
@@ -67,6 +70,9 @@ export default function IntegrationsPage() {
     getGoogleSsoSettings()
       .then(setGoogleSso)
       .catch(() => setGoogleSso(null));
+    getZabbixSettings()
+      .then(setZabbix)
+      .catch(() => setZabbix(null));
   }, []);
 
   return (
@@ -102,6 +108,12 @@ export default function IntegrationsPage() {
         name="ClassGuard"
         description="DHCP lease lookup — resolves a print job's source IP to a MAC address for Mosyle/Google Workspace matching."
         enabled={classguard?.enabled ?? null}
+      />
+      <IntegrationCard
+        href="/settings/integrations/zabbix"
+        name="Zabbix"
+        description="Lets an external Zabbix server poll fleet-wide print stats and per-printer health — an alternative way to view Live Dashboard/Insights data."
+        enabled={zabbix?.enabled ?? null}
       />
     </div>
   );

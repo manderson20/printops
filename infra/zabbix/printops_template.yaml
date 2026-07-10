@@ -1,0 +1,285 @@
+# PrintOps Zabbix template — generic, no per-install values baked in.
+#
+# Import this under Zabbix's Data collection > Templates > Import, then
+# create a Host, link this template to it, and set two host-level macros:
+#   {$PRINTOPS_URL}        e.g. https://printops.yourschool.org (no trailing slash)
+#   {$PRINTOPS_API_TOKEN}  from PrintOps > Settings > Integrations > Zabbix
+#
+# See that same PrintOps settings page for the full step-by-step setup
+# guide (both the PrintOps side and this Zabbix side).
+#
+# Written targeting Zabbix 6.4+ export schema. On an older Zabbix (5.0/6.0),
+# import may complain about the top-level `template_groups` key specifically
+# (older versions use a single `groups` list instead) — rename that one
+# section if so; everything else (items, discovery rule, macros, triggers)
+# should still apply as-is.
+zabbix_export:
+  version: '6.4'
+  template_groups:
+    - uuid: c45739c8e3bd4af591a9704b91d9c16f
+      name: Templates/PrintOps
+  templates:
+    - uuid: 17e9dc99387945abb06ade9fe598d071
+      template: PrintOps
+      name: PrintOps
+      description: >
+        Fleet-wide print stats and per-printer health, pulled from a
+        PrintOps server's Zabbix integration API — an alternative way of
+        viewing what PrintOps' own Live Dashboard/Insights pages show.
+        Requires {$PRINTOPS_URL} and {$PRINTOPS_API_TOKEN} to be set on
+        the host this template is linked to.
+      groups:
+        - name: Templates/PrintOps
+      macros:
+        - macro: '{$PRINTOPS_URL}'
+          value: 'https://printops.example.org'
+          description: 'Base URL of your PrintOps server, no trailing slash.'
+        - macro: '{$PRINTOPS_API_TOKEN}'
+          type: SECRET_TEXT
+          description: >
+            Zabbix API token from PrintOps > Settings > Integrations >
+            Zabbix. If this template's import doesn't accept a secret-type
+            value on a template macro, set the value and mark it "Secret
+            text" on this Host's own macro list after import instead —
+            either way works.
+      items:
+        - uuid: 1ef1d303a8834e22864dffab3e1cd65f
+          name: 'PrintOps: fleet summary (raw)'
+          type: HTTP_AGENT
+          key: printops.summary.raw
+          delay: 5m
+          history: 7d
+          trends: '0'
+          value_type: TEXT
+          url: '{$PRINTOPS_URL}/api/v1/integrations/zabbix/summary'
+          headers:
+            - name: X-Zabbix-Token
+              value: '{$PRINTOPS_API_TOKEN}'
+          description: >
+            One HTTP poll every 5 minutes; every other fleet-wide item
+            below reads from this cached response (JSONPath preprocessing)
+            instead of polling PrintOps again itself.
+          tags:
+            - tag: component
+              value: printops
+        - uuid: bfb45537eeb84d33bfdb138e05e83f27
+          name: 'PrintOps: total jobs (rolling 24h)'
+          type: DEPENDENT
+          key: printops.summary.total_jobs
+          value_type: UNSIGNED
+          master_item:
+            key: printops.summary.raw
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.total_jobs'
+          tags:
+            - tag: component
+              value: printops
+        - uuid: 180bedb3e4f249b8a2e6b15c4af0cbea
+          name: 'PrintOps: forwarded jobs (rolling 24h)'
+          type: DEPENDENT
+          key: printops.summary.forwarded_jobs
+          value_type: UNSIGNED
+          master_item:
+            key: printops.summary.raw
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.forwarded_jobs'
+          tags:
+            - tag: component
+              value: printops
+        - uuid: b50345256a6c45e3bdfabb8d2bf74d76
+          name: 'PrintOps: failed jobs (rolling 24h)'
+          type: DEPENDENT
+          key: printops.summary.failed_jobs
+          value_type: UNSIGNED
+          master_item:
+            key: printops.summary.raw
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.failed_jobs'
+          tags:
+            - tag: component
+              value: printops
+        - uuid: db14541059924a31a2672b5ce26cd036
+          name: 'PrintOps: cancelled jobs (rolling 24h)'
+          type: DEPENDENT
+          key: printops.summary.cancelled_jobs
+          value_type: UNSIGNED
+          master_item:
+            key: printops.summary.raw
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.cancelled_jobs'
+          tags:
+            - tag: component
+              value: printops
+        - uuid: 39e777afe5c6437b9fe2ce24c83449d1
+          name: 'PrintOps: total pages (rolling 24h)'
+          type: DEPENDENT
+          key: printops.summary.total_pages
+          value_type: UNSIGNED
+          master_item:
+            key: printops.summary.raw
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.total_pages'
+          tags:
+            - tag: component
+              value: printops
+        - uuid: d1501decc5ad4fdbbf08770319a8a610
+          name: 'PrintOps: color pages (rolling 24h)'
+          type: DEPENDENT
+          key: printops.summary.color_pages
+          value_type: UNSIGNED
+          master_item:
+            key: printops.summary.raw
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.color_pages'
+          tags:
+            - tag: component
+              value: printops
+        - uuid: b51386839bd94a53b493a6368091f51c
+          name: 'PrintOps: mono pages (rolling 24h)'
+          type: DEPENDENT
+          key: printops.summary.mono_pages
+          value_type: UNSIGNED
+          master_item:
+            key: printops.summary.raw
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.mono_pages'
+          tags:
+            - tag: component
+              value: printops
+        - uuid: 11c65a1ae8504a1cbf1f7ca9a9b14dcb
+          name: 'PrintOps: duplex pages (rolling 24h)'
+          type: DEPENDENT
+          key: printops.summary.duplex_pages
+          value_type: UNSIGNED
+          master_item:
+            key: printops.summary.raw
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.duplex_pages'
+          tags:
+            - tag: component
+              value: printops
+        - uuid: ce56d2c16db74bc4bc9cd93d0e5cb375
+          name: 'PrintOps: simplex pages (rolling 24h)'
+          type: DEPENDENT
+          key: printops.summary.simplex_pages
+          value_type: UNSIGNED
+          master_item:
+            key: printops.summary.raw
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.simplex_pages'
+          tags:
+            - tag: component
+              value: printops
+      discovery_rules:
+        - uuid: fdaf156366884315bc7bbcb511382ebf
+          name: 'PrintOps: printer discovery'
+          type: HTTP_AGENT
+          key: printops.printer.discovery
+          delay: 1h
+          url: '{$PRINTOPS_URL}/api/v1/integrations/zabbix/printers'
+          headers:
+            - name: X-Zabbix-Token
+              value: '{$PRINTOPS_API_TOKEN}'
+          description: >
+            Runs hourly (or trigger "Execute now" on this rule right after
+            import instead of waiting). Creates one set of items below per
+            active printer PrintOps reports.
+          item_prototypes:
+            - uuid: 6226d65156b1450ea6ec33062c704fb9
+              name: 'PrintOps: {#PRINTER_NAME} raw data'
+              type: HTTP_AGENT
+              key: 'printops.printer.raw[{#PRINTER_ID}]'
+              delay: 5m
+              history: 7d
+              trends: '0'
+              value_type: TEXT
+              url: '{$PRINTOPS_URL}/api/v1/integrations/zabbix/printers/{#PRINTER_ID}'
+              headers:
+                - name: X-Zabbix-Token
+                  value: '{$PRINTOPS_API_TOKEN}'
+              tags:
+                - tag: printer
+                  value: '{#PRINTER_NAME}'
+            - uuid: e42915f04f0849ecbc033e4a0df7cfa7
+              name: 'PrintOps: {#PRINTER_NAME} status'
+              type: DEPENDENT
+              key: 'printops.printer.status[{#PRINTER_ID}]'
+              value_type: TEXT
+              master_item:
+                key: 'printops.printer.raw[{#PRINTER_ID}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.status'
+              tags:
+                - tag: printer
+                  value: '{#PRINTER_NAME}'
+            - uuid: 515551d95d214753b47653fca70d588c
+              name: 'PrintOps: {#PRINTER_NAME} queue sync error'
+              type: DEPENDENT
+              key: 'printops.printer.queue_sync_error[{#PRINTER_ID}]'
+              value_type: TEXT
+              master_item:
+                key: 'printops.printer.raw[{#PRINTER_ID}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.queue_sync_error'
+              tags:
+                - tag: printer
+                  value: '{#PRINTER_NAME}'
+            - uuid: f5c2f22585e84b6782fa2dfed4178fdd
+              name: 'PrintOps: {#PRINTER_NAME} page count total'
+              type: DEPENDENT
+              key: 'printops.printer.page_count_total[{#PRINTER_ID}]'
+              value_type: UNSIGNED
+              master_item:
+                key: 'printops.printer.raw[{#PRINTER_ID}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.page_count_total'
+              tags:
+                - tag: printer
+                  value: '{#PRINTER_NAME}'
+            - uuid: d7b38ff7546d407896773f8a3149f5d7
+              name: 'PrintOps: {#PRINTER_NAME} page count confidence'
+              type: DEPENDENT
+              key: 'printops.printer.page_count_confidence[{#PRINTER_ID}]'
+              value_type: TEXT
+              master_item:
+                key: 'printops.printer.raw[{#PRINTER_ID}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$.page_count_confidence'
+              tags:
+                - tag: printer
+                  value: '{#PRINTER_NAME}'
+          trigger_prototypes:
+            - uuid: a9870bbe5e59444abc76878baf314700
+              expression: 'last(/PrintOps/printops.printer.status[{#PRINTER_ID}])<>"online"'
+              name: 'Printer {#PRINTER_NAME} is not online'
+              priority: AVERAGE
+            - uuid: 5c05d6934c7346119b05719041b6acb9
+              expression: 'last(/PrintOps/printops.printer.queue_sync_error[{#PRINTER_ID}])<>""'
+              name: 'Printer {#PRINTER_NAME} has a CUPS queue sync error'
+              priority: WARNING

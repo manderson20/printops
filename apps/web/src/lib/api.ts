@@ -1460,6 +1460,57 @@ export async function updateGoogleSsoSettings(
   return response.json();
 }
 
+export type ZabbixSettings = {
+  enabled: boolean;
+  // Always returned in full, never masked — a rotatable capability token
+  // meant to be copied into a Zabbix host macro, not a login secret (same
+  // convention as Printer.release_token).
+  api_token: string | null;
+  base_url: string | null;
+};
+
+export type ZabbixSettingsInput = {
+  enabled?: boolean;
+  base_url?: string;
+};
+
+export async function getZabbixSettings(): Promise<ZabbixSettings> {
+  const response = await authorizedFetch("/api/v1/settings/zabbix");
+  return response.json();
+}
+
+export async function updateZabbixSettings(
+  input: ZabbixSettingsInput,
+): Promise<ZabbixSettings> {
+  const response = await authorizedFetch("/api/v1/settings/zabbix", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function regenerateZabbixToken(): Promise<ZabbixSettings> {
+  const response = await authorizedFetch("/api/v1/settings/zabbix/regenerate-token", {
+    method: "POST",
+  });
+  return response.json();
+}
+
+/** Downloads the generic Zabbix template — routed through authorizedFetch
+ * + blob (not a plain <a href>), same as downloadCopierPinRoster, since
+ * this endpoint is admin-JWT-gated and a bare navigation link can't
+ * attach the Authorization header. */
+export async function downloadZabbixTemplate(): Promise<void> {
+  const response = await authorizedFetch("/api/v1/settings/zabbix/template");
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "printops_zabbix_template.yaml";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // --- Print Insights ---
 
 export type ReportFilters = {
