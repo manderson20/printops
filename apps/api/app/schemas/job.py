@@ -77,6 +77,11 @@ class JobListOut(JobOut):
     # known, the raw MAC if not resolved to a name yet, or None if this
     # job never got a MAC at all (e.g. an unresolved/manual submission).
     device_name: str | None = None
+    # Resolved from Job.submitted_by via app/reports/aggregation.py:
+    # resolve_display_names — the synced Google Workspace name if known,
+    # else the email's local-part (before @) as a readable stand-in, or
+    # None if this job has no submitted_by at all.
+    submitted_by_name: str | None = None
 
 
 class UserUsageOut(BaseModel):

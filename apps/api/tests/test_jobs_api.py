@@ -301,6 +301,66 @@ def test_list_jobs_device_name_none_when_no_mac(
     assert body[0]["printer_id"] == printer_id
 
 
+async def test_list_jobs_resolves_submitted_by_name_from_roster(
+    client, printer_id, backend_headers, auth_headers, db_session_factory
+):
+    async with db_session_factory() as session:
+        session.add(
+            GoogleWorkspaceUser(
+                email="jane@example.com", name="Jane Doe", synced_at=datetime.now(UTC)
+            )
+        )
+        await session.commit()
+
+    client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "jane@example.com"},
+        headers=backend_headers,
+    )
+
+    response = client.get("/api/v1/jobs", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["submitted_by"] == "jane@example.com"
+    assert body[0]["submitted_by_name"] == "Jane Doe"
+
+
+def test_list_jobs_submitted_by_name_falls_back_to_local_part_when_unresolved(
+    client, printer_id, backend_headers, auth_headers
+):
+    client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "some.local.user@example.com"},
+        headers=backend_headers,
+    )
+
+    response = client.get("/api/v1/jobs", headers=auth_headers)
+    body = response.json()
+    assert body[0]["submitted_by_name"] == "some.local.user"
+
+
+async def test_list_jobs_submitted_by_name_none_when_no_submitted_by(
+    client, printer_id, backend_headers, auth_headers, db_session_factory
+):
+    """resolve_user's own "unknown" fallback means a job created through
+    the normal API always ends up with *some* submitted_by string — the
+    genuinely-null case tested here (e.g. a very old row from before
+    Job.submitted_by existed) only happens via direct DB manipulation."""
+    create = client.post(
+        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
+    )
+    job_id = create.json()["id"]
+
+    async with db_session_factory() as session:
+        job = await session.get(Job, uuid.UUID(job_id))
+        job.submitted_by = None
+        await session.commit()
+
+    response = client.get("/api/v1/jobs", headers=auth_headers)
+    body = response.json()
+    assert body[0]["submitted_by_name"] is None
+
+
 def test_list_jobs_caps_limit(client, printer_id, backend_headers, auth_headers):
     for _ in range(3):
         client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)

@@ -43,6 +43,7 @@ type LoadState =
 export default function LiveDashboardPage() {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [now, setNow] = useState<Date>(() => new Date());
 
   useEffect(() => {
     let cancelled = false;
@@ -71,6 +72,18 @@ export default function LiveDashboardPage() {
       clearInterval(interval);
     };
   }, []);
+
+  // Separate 1s ticker just for the "last updated"/countdown display —
+  // decoupled from the 15s data-poll interval above so the countdown
+  // itself is smooth instead of only updating in 15s jumps.
+  useEffect(() => {
+    const tick = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(tick);
+  }, []);
+
+  const secondsUntilRefresh = lastUpdated
+    ? Math.max(0, Math.ceil((lastUpdated.getTime() + POLL_INTERVAL_MS - now.getTime()) / 1000))
+    : null;
 
   const { start } = todayWindow();
   const chartData =
@@ -104,7 +117,8 @@ export default function LiveDashboardPage() {
         {lastUpdated && (
           <span className="flex items-center gap-2 text-xs text-zinc-400">
             <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
-            Updated {formatRelativeTime(lastUpdated.toISOString())}
+            Updated {lastUpdated.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}
+            {secondsUntilRefresh !== null && ` · next in ${secondsUntilRefresh}s`}
           </span>
         )}
       </div>
@@ -160,7 +174,7 @@ export default function LiveDashboardPage() {
                         className="border-t border-black/[.08] dark:border-white/[.1]"
                       >
                         <td className="px-4 py-3 text-zinc-700 dark:text-zinc-300">
-                          {job.submitted_by ?? "Unknown"}
+                          {job.submitted_by_name ?? job.submitted_by ?? "Unknown"}
                         </td>
                         <td className="px-4 py-3">
                           <Link
