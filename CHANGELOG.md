@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.35.0] - 2026-07-10
+
+- **New "OU Viewer" role.** A read-only account type scoped to Insights
+  only, filtered to a set of granted Google Workspace org-unit paths (e.g.
+  a building or department) rather than the whole org or just one person's
+  own history. Grant OU paths per account from Settings > Users. Existing
+  admin/viewer accounts are unaffected.
+- Live Dashboard's org-wide hourly view is now admin-only (it was never
+  self- or OU-scoped, unlike every other report) — non-admins are routed
+  to Insights instead.
+
 ## [0.34.0] - 2026-07-10
 
 - **Live Dashboard: window-length preference.** A "Window" dropdown in the

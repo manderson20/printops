@@ -11,13 +11,17 @@ import { useCurrentUser } from "@/lib/useCurrentUser";
 import { useIdleSessionRefresh } from "@/lib/idleRefresh";
 
 const NAV_LINKS = [
-  { href: "/live", label: "Live Dashboard" },
   { href: "/insights", label: "Insights" },
   { href: "/printers", label: "Printers" },
   { href: "/jobs", label: "Jobs" },
   { href: "/syslog", label: "Syslog" },
   { href: "/integrations", label: "Integrations" },
 ] as const;
+
+// "ou_viewer" is read-only and scoped to Insights only — see
+// app/routers/reports.py's _report_filters and app/models/user.py's
+// granted_ou_paths docstring on the backend.
+const OU_VIEWER_NAV_LINKS = [{ href: "/insights", label: "Insights" }] as const;
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   useAuthGuard();
@@ -29,6 +33,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const navLinks =
     currentUser?.role === "admin"
       ? [
+          { href: "/live", label: "Live Dashboard" },
           ...NAV_LINKS,
           { href: "/usage", label: "Usage" },
           { href: "/devices", label: "Devices" },
@@ -37,7 +42,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           { href: "/settings", label: "Settings" },
           { href: "/updates", label: "Updates" },
         ]
-      : NAV_LINKS;
+      : currentUser?.role === "ou_viewer"
+        ? OU_VIEWER_NAV_LINKS
+        : NAV_LINKS;
 
   useEffect(() => {
     if (!currentUser) return;
@@ -45,6 +52,19 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       .then(setVersion)
       .catch(() => setVersion(null));
   }, [currentUser]);
+
+  // "ou_viewer" is read-only and scoped to Insights only (see
+  // OU_VIEWER_NAV_LINKS above) — bounce a direct URL hit to any other
+  // dashboard page back to Insights, not just hide the nav links.
+  useEffect(() => {
+    if (
+      currentUser?.role === "ou_viewer" &&
+      pathname !== "/insights" &&
+      !pathname.startsWith("/insights/")
+    ) {
+      router.replace("/insights");
+    }
+  }, [currentUser, pathname, router]);
 
   function handleLogout() {
     logout();
@@ -54,7 +74,10 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden bg-zinc-50 font-sans print:h-auto print:overflow-visible dark:bg-black">
       <aside className="flex w-56 shrink-0 flex-col overflow-y-auto border-r border-black/[.08] bg-white p-5 print:hidden dark:border-white/[.145] dark:bg-black">
-        <Link href="/live" className="mb-8 flex items-center gap-2">
+        <Link
+          href={currentUser?.role === "admin" ? "/live" : "/insights"}
+          className="mb-8 flex items-center gap-2"
+        >
           <Image src="/printops-logo.png" alt="" width={28} height={28} />
           <span className="text-base font-semibold text-black dark:text-zinc-50">
             PrintOps

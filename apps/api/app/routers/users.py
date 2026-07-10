@@ -52,6 +52,8 @@ async def update_user(
         user.is_active = updates["is_active"]
     if "exempt_from_timeout" in updates and updates["exempt_from_timeout"] is not None:
         user.exempt_from_timeout = updates["exempt_from_timeout"]
+    if "granted_ou_paths" in updates:
+        user.granted_ou_paths = updates["granted_ou_paths"]
 
     await db.commit()
     await db.refresh(user)

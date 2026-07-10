@@ -17,13 +17,18 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def create_access_token(
-    subject: str, role: str, settings: Settings, expires_minutes: int, **extra_claims: str
+    subject: str,
+    role: str,
+    settings: Settings,
+    expires_minutes: int,
+    **extra_claims: str | list[str],
 ) -> str:
-    """`role` (and any `extra_claims`, e.g. email/name for SSO logins) is
-    embedded in the token itself rather than looked up from the DB on every
-    request, so get_current_user never needs a DB call — the trade-off is
-    that a role change only takes effect on the user's next login/token
-    refresh, see app.deps.get_current_user.
+    """`role` (and any `extra_claims`, e.g. email/name for SSO logins, or
+    granted_ou_paths for an "ou_viewer" account) is embedded in the token
+    itself rather than looked up from the DB on every request, so
+    get_current_user never needs a DB call — the trade-off is that a role
+    change only takes effect on the user's next login/token refresh, see
+    app.deps.get_current_user.
 
     expires_minutes is caller-supplied (not read from settings internally)
     since it now varies per call: the admin-configured SessionSettings.

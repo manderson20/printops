@@ -85,28 +85,34 @@ async def refresh(
     expired one) — refreshing can extend a live session, never resurrect
     one that already timed out.
 
-    exempt_from_timeout is read fresh from the User row here, not from
-    whatever the token's claims said at login — an admin revoking it
-    takes effect on this user's very next refresh, not just their next
-    full login."""
+    exempt_from_timeout and granted_ou_paths are read fresh from the User
+    row here, not from whatever the token's claims said at login — an
+    admin revoking either takes effect on this user's very next refresh,
+    not just their next full login. (granted_ou_paths in the token is
+    display-only regardless — see app.deps.get_current_user — but keeping
+    it fresh here avoids a stale "scoped to" banner between refreshes.)"""
     session_settings = await get_or_create_session_settings(db)
     expires_minutes = session_settings.idle_timeout_minutes
 
-    if current_user.email:  # SSO user — dev break-glass login has no User row to check
-        result = await db.execute(
-            select(User.exempt_from_timeout).where(
-                func.lower(User.email) == current_user.email.lower()
-            )
-        )
-        exempt = result.scalar_one_or_none()
-        if exempt:
-            expires_minutes = EXEMPT_TOKEN_MINUTES
-
-    extra_claims = {}
+    extra_claims: dict[str, str | list[str]] = {}
     if current_user.email:
         extra_claims["email"] = current_user.email
     if current_user.name:
         extra_claims["name"] = current_user.name
+
+    if current_user.email:  # SSO user — dev break-glass login has no User row to check
+        result = await db.execute(
+            select(User.exempt_from_timeout, User.granted_ou_paths).where(
+                func.lower(User.email) == current_user.email.lower()
+            )
+        )
+        row = result.one_or_none()
+        if row is not None:
+            exempt, granted_ou_paths = row
+            if exempt:
+                expires_minutes = EXEMPT_TOKEN_MINUTES
+            if current_user.role == "ou_viewer":
+                extra_claims["granted_ou_paths"] = granted_ou_paths or []
 
     token = create_access_token(
         subject=current_user.subject,
@@ -242,13 +248,18 @@ async def google_callback(
     expires_minutes = (
         EXEMPT_TOKEN_MINUTES if user.exempt_from_timeout else session_settings.idle_timeout_minutes
     )
+    extra_claims: dict[str, str | list[str]] = {"email": user.email, "name": user.name or ""}
+    if user.role == "ou_viewer":
+        # Display-only (see app.deps.get_current_user's docstring) — the
+        # actual enforcement in reports.py's _report_filters always
+        # re-reads granted_ou_paths from this User row, never the token.
+        extra_claims["granted_ou_paths"] = user.granted_ou_paths or []
     token = create_access_token(
         subject=str(user.id),
         role=user.role,
         settings=settings,
         expires_minutes=expires_minutes,
-        email=user.email,
-        name=user.name or "",
+        **extra_claims,
     )
     fragment = urlencode({"token": token})
     return RedirectResponse(f"/login/callback#{fragment}")

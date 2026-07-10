@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { ApiError, listUsers, updateUser, type Role, type UserAccount } from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
-import { Input } from "@/components/ui/Field";
+import { Input, Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 
 const PAGE_SIZE = 50;
@@ -22,6 +22,8 @@ export default function UsersSettingsPage() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [editingOuFor, setEditingOuFor] = useState<string | null>(null);
+  const [ouDraft, setOuDraft] = useState("");
 
   function load() {
     listUsers({ page, pageSize: PAGE_SIZE, search: search || undefined })
@@ -49,6 +51,26 @@ export default function UsersSettingsPage() {
       load();
     } catch (err) {
       setRowError(err instanceof ApiError ? err.message : "Failed to update role");
+    }
+  }
+
+  function startEditingOus(user: UserAccount) {
+    setEditingOuFor(user.id);
+    setOuDraft((user.granted_ou_paths ?? []).join("\n"));
+  }
+
+  async function handleSaveOus(user: UserAccount) {
+    setRowError(null);
+    const granted_ou_paths = ouDraft
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    try {
+      await updateUser(user.id, { granted_ou_paths });
+      setEditingOuFor(null);
+      load();
+    } catch (err) {
+      setRowError(err instanceof ApiError ? err.message : "Failed to update granted OUs");
     }
   }
 
@@ -139,44 +161,77 @@ export default function UsersSettingsPage() {
               </thead>
               <tbody>
                 {state.users.map((user) => (
-                  <tr
-                    key={user.id}
-                    className="border-b border-black/[.08] last:border-0 dark:border-white/[.145]"
-                  >
-                    <td className="px-4 py-3 text-black dark:text-zinc-50">{user.email}</td>
-                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">{user.name ?? "—"}</td>
-                    <td className="px-4 py-3">
-                      <select
-                        value={user.role}
-                        onChange={(e) => handleRoleChange(user, e.target.value as Role)}
-                        className="rounded-lg border border-black/[.15] bg-white px-2 py-1 text-sm dark:border-white/[.2] dark:bg-black dark:text-zinc-50"
-                      >
-                        <option value="admin">Admin</option>
-                        <option value="viewer">Viewer</option>
-                      </select>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button onClick={() => handleActiveToggle(user)}>
-                        {user.is_active ? (
-                          <Badge tone="success">Active</Badge>
-                        ) : (
-                          <Badge tone="neutral">Deactivated</Badge>
+                  <Fragment key={user.id}>
+                    <tr className="border-b border-black/[.08] last:border-0 dark:border-white/[.145]">
+                      <td className="px-4 py-3 text-black dark:text-zinc-50">{user.email}</td>
+                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">{user.name ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <select
+                          value={user.role}
+                          onChange={(e) => handleRoleChange(user, e.target.value as Role)}
+                          className="rounded-lg border border-black/[.15] bg-white px-2 py-1 text-sm dark:border-white/[.2] dark:bg-black dark:text-zinc-50"
+                        >
+                          <option value="admin">Admin</option>
+                          <option value="viewer">Viewer</option>
+                          <option value="ou_viewer">OU Viewer</option>
+                        </select>
+                        {user.role === "ou_viewer" && editingOuFor !== user.id && (
+                          <button
+                            onClick={() => startEditingOus(user)}
+                            className="ml-2 text-xs text-accent underline"
+                          >
+                            {user.granted_ou_paths && user.granted_ou_paths.length > 0
+                              ? `${user.granted_ou_paths.length} OU${user.granted_ou_paths.length === 1 ? "" : "s"}`
+                              : "Set OUs…"}
+                          </button>
                         )}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button onClick={() => handleExemptToggle(user)} title="Toggle idle-timeout exemption">
-                        {user.exempt_from_timeout ? (
-                          <Badge tone="info">No timeout</Badge>
-                        ) : (
-                          <Badge tone="neutral">Normal</Badge>
-                        )}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
-                      {user.last_login_at ? new Date(user.last_login_at).toLocaleString() : "Never"}
-                    </td>
-                  </tr>
+                      </td>
+                      <td className="px-4 py-3">
+                        <button onClick={() => handleActiveToggle(user)}>
+                          {user.is_active ? (
+                            <Badge tone="success">Active</Badge>
+                          ) : (
+                            <Badge tone="neutral">Deactivated</Badge>
+                          )}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3">
+                        <button onClick={() => handleExemptToggle(user)} title="Toggle idle-timeout exemption">
+                          {user.exempt_from_timeout ? (
+                            <Badge tone="info">No timeout</Badge>
+                          ) : (
+                            <Badge tone="neutral">Normal</Badge>
+                          )}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
+                        {user.last_login_at ? new Date(user.last_login_at).toLocaleString() : "Never"}
+                      </td>
+                    </tr>
+                    {editingOuFor === user.id && (
+                      <tr className="border-b border-black/[.08] bg-black/[.02] last:border-0 dark:border-white/[.145] dark:bg-white/[.03]">
+                        <td colSpan={6} className="px-4 py-3">
+                          <label className="flex flex-col gap-1 text-sm text-zinc-700 dark:text-zinc-300">
+                            Granted OU paths for {user.email} — one per line (e.g. /Schools/Elementary/BuildingA).
+                            Nested sub-OUs are included automatically. Empty means this account sees no data yet.
+                            <Textarea
+                              value={ouDraft}
+                              onChange={(e) => setOuDraft(e.target.value)}
+                              rows={3}
+                              placeholder="/Schools/Elementary/BuildingA"
+                              className="max-w-md font-mono text-xs"
+                            />
+                          </label>
+                          <div className="mt-2 flex gap-2">
+                            <Button onClick={() => handleSaveOus(user)}>Save</Button>
+                            <Button variant="secondary" onClick={() => setEditingOuFor(null)}>
+                              Cancel
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

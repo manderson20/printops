@@ -5,12 +5,13 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.deps import get_current_user, require_role
 from app.models.report import ReportFormulaSettings, ReportSnapshot
+from app.models.user import User
 from app.reports.aggregation import (
     CostRawRow,
     ReportFilters,
@@ -26,6 +27,7 @@ from app.reports.aggregation import (
     get_user_leaderboard,
     resolve_device_names,
     resolve_display_names,
+    resolve_ou_scoped_emails,
 )
 from app.reports.cost_rates import load_printer_rates
 from app.reports.formulas import (
@@ -66,13 +68,30 @@ async def _report_filters(
     color_mode: str | None = None,
     duplex: bool | None = None,
     current_user: UserOut = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> ReportFilters:
     """Shared query-param parsing + RBAC scoping for every report endpoint.
-    A non-admin only ever sees their own print history — `submitted_by` is
-    force-set to their own identity (the same value Job.submitted_by stores
-    for them, since UserOut.username *is* their attributed email for SSO
-    logins — see app/schemas/auth.py), overriding whatever they passed."""
-    if current_user.role != "admin":
+    A plain "viewer" only ever sees their own print history —
+    `submitted_by` is force-set to their own identity (the same value
+    Job.submitted_by stores for them, since UserOut.username *is* their
+    attributed email for SSO logins — see app/schemas/auth.py), overriding
+    whatever they passed. An "ou_viewer" instead gets `submitted_by_in`
+    set to every roster email under their granted OUs — granted_ou_paths
+    is re-read from the User row here, never trusted from the JWT (see
+    app.deps.get_current_user's docstring), so a grant change an admin
+    makes takes effect on this account's very next request, not just its
+    next login. "admin" is unrestricted, as before."""
+    submitted_by_in = None
+    if current_user.role == "ou_viewer":
+        result = await db.execute(
+            select(User.granted_ou_paths).where(
+                func.lower(User.email) == (current_user.email or "").lower()
+            )
+        )
+        granted_ou_paths = result.scalar_one_or_none() or []
+        submitted_by_in = await resolve_ou_scoped_emails(db, granted_ou_paths)
+        submitted_by = None
+    elif current_user.role != "admin":
         submitted_by = current_user.username
     return ReportFilters(
         start=start,
@@ -81,6 +100,7 @@ async def _report_filters(
         department=department,
         printer_id=printer_id,
         submitted_by=submitted_by,
+        submitted_by_in=submitted_by_in,
         status=status_filter,
         color_mode=color_mode,
         duplex=duplex,
@@ -267,14 +287,23 @@ async def report_timeline(
     return [TimelineBucketOut(**vars(b)) for b in buckets]
 
 
-@router.get("/live/hourly", response_model=list[HourlyBucketOut])
+@router.get(
+    "/live/hourly",
+    response_model=list[HourlyBucketOut],
+    dependencies=[Depends(require_role("admin"))],
+)
 async def report_live_hourly(start: datetime, end: datetime, db: AsyncSession = Depends(get_db)):
     """Intraday hourly buckets for the Live Dashboard (apps/web/.../live/
     page.tsx) — distinct from /timeline's day/week/month view above.
     start/end are required and computed client-side (typically the
     viewer's local midnight through now) rather than defaulted here — see
     app/reports/aggregation.py:get_hourly_timeline's docstring for why
-    this endpoint has no server-side notion of "today" at all."""
+    this endpoint has no server-side notion of "today" at all.
+
+    Admin-only: this returns org-wide aggregate activity + (via the
+    frontend's separate GET /jobs call) a recent-jobs feed, with no
+    per-person scoping — it's an ops/TV-display view, not personal data,
+    so it's restricted by role rather than self- or OU-scoped."""
     if end <= start:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="end must be after start"

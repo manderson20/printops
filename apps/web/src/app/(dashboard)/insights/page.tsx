@@ -175,7 +175,9 @@ type LoadState =
   | { phase: "error"; message: string };
 
 export default function InsightsPage() {
-  const isAdmin = useCurrentUser()?.role === "admin";
+  const currentUser = useCurrentUser();
+  const isAdmin = currentUser?.role === "admin";
+  const isOuViewer = currentUser?.role === "ou_viewer";
 
   const [preset, setPreset] = useState<DatePreset>("month");
   const [customStart, setCustomStart] = useState("");
@@ -448,8 +450,20 @@ export default function InsightsPage() {
           </h1>
           <p className="mt-1 text-sm text-zinc-500">
             Printing activity, trends, and savings —{" "}
-            {isAdmin ? "org-wide" : "your own history"}.
+            {isAdmin
+              ? "org-wide"
+              : isOuViewer
+                ? "scoped to your granted org units"
+                : "your own history"}
+            .
           </p>
+          {isOuViewer && (
+            <p className="mt-1 text-xs text-zinc-500">
+              {currentUser?.granted_ou_paths && currentUser.granted_ou_paths.length > 0
+                ? `Insights scoped to: ${currentUser.granted_ou_paths.join(", ")}`
+                : "No org units granted yet — ask an admin to grant you one in Settings > Users."}
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           <Button

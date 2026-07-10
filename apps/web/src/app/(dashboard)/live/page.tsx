@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { getLiveHourly, listJobs, type HourlyBucket, type Job } from "@/lib/api";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
 import { jobStatusInfo } from "@/lib/jobStatus";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
@@ -159,6 +161,8 @@ type LoadState =
   | { phase: "error"; message: string };
 
 export default function LiveDashboardPage() {
+  const router = useRouter();
+  const currentUser = useCurrentUser();
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [now, setNow] = useState<Date>(() => new Date());
@@ -169,6 +173,18 @@ export default function LiveDashboardPage() {
     getWindowHoursServerSnapshot,
   );
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // /live/hourly is admin-only server-side (org-wide aggregate, not self-
+  // or OU-scoped — see app/routers/reports.py's report_live_hourly
+  // docstring), so bounce non-admins to Insights instead of showing them
+  // an error state.
+  useEffect(() => {
+    if (currentUser === null) {
+      router.replace("/login");
+    } else if (currentUser && currentUser.role !== "admin") {
+      router.replace("/insights");
+    }
+  }, [currentUser, router]);
 
   // Fullscreens the page's own container (not the whole <body>), so the
   // sidebar nav — a DOM sibling, not a descendant — simply isn't part of
@@ -192,6 +208,7 @@ export default function LiveDashboardPage() {
   }
 
   useEffect(() => {
+    if (currentUser?.role !== "admin") return;
     let cancelled = false;
 
     function load() {
@@ -222,7 +239,7 @@ export default function LiveDashboardPage() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [windowHours]);
+  }, [windowHours, currentUser]);
 
   // Separate 1s ticker just for the "last updated"/countdown display —
   // decoupled from the 15s data-poll interval above so the countdown
@@ -273,6 +290,10 @@ export default function LiveDashboardPage() {
           { jobs: 0, pages: 0, color: 0, duplex: 0, copyPages: 0 },
         )
       : null;
+
+  if (currentUser === undefined || currentUser?.role !== "admin") {
+    return <Spinner label="Loading…" />;
+  }
 
   return (
     <div
