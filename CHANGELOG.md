@@ -5,6 +5,15 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.40.0] - 2026-07-10
+
+- **Add Copier: pick an existing Printer to prefill the form.** The
+  "Linked Printer" selector on Add MFP Device now also fills in
+  name/model/serial number/IP/hostname/building/room/department (and a
+  best-guess vendor) from the picked printer instead of just linking the
+  two — fields stay editable after, so nothing has to be retyped for a
+  device that's already set up as a Printer.
+
 ## [0.39.2] - 2026-07-10
 
 - **Fix intermittent bounce back to login after a successful Google

@@ -29,6 +29,23 @@ const VENDORS: MfpVendor[] = [
   "generic",
 ];
 
+// Printer.manufacturer is freeform text (whatever the device/admin typed),
+// not the constrained MfpVendor enum — best-effort keyword match so
+// picking an existing printer also gets the vendor dropdown roughly
+// right, rather than always resetting it to "generic".
+function guessVendor(manufacturer: string | null): MfpVendor {
+  const m = (manufacturer ?? "").toLowerCase();
+  if (m.includes("konica") || m.includes("minolta")) return "konica_minolta";
+  if (m.includes("canon")) return "canon";
+  if (m.includes("hp") || m.includes("hewlett")) return "hp";
+  if (m.includes("lexmark")) return "lexmark";
+  if (m.includes("kyocera")) return "kyocera";
+  if (m.includes("ricoh")) return "ricoh";
+  if (m.includes("sharp")) return "sharp";
+  if (m.includes("xerox")) return "xerox";
+  return "generic";
+}
+
 const initialForm = {
   name: "",
   model: "",
@@ -66,6 +83,30 @@ export default function NewMfpDevicePage() {
 
   function update(field: keyof typeof initialForm, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  // The whole point of picking an existing printer here: this same
+  // physical device's name/model/network/location were already typed in
+  // once when it was added as a Printer — don't make the admin retype all
+  // of it for the Copier record too. Fields stay editable afterward, so
+  // picking the wrong printer (or wanting to tweak a value) isn't a dead
+  // end.
+  function handlePrinterSelect(id: string) {
+    setPrinterId(id);
+    const printer = printers.find((p) => p.id === id);
+    if (!printer) return;
+    setForm((prev) => ({
+      ...prev,
+      name: printer.name,
+      model: printer.model ?? prev.model,
+      serial_number: printer.serial_number ?? prev.serial_number,
+      ip_address: printer.ip_address,
+      hostname: printer.hostname ?? prev.hostname,
+      building: printer.building ?? prev.building,
+      room: printer.room ?? prev.room,
+      department: printer.department ?? prev.department,
+    }));
+    setVendor(guessVendor(printer.manufacturer));
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -107,9 +148,30 @@ export default function NewMfpDevicePage() {
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Add MFP Device</h1>
         <p className="text-sm text-zinc-500">
           Track a walk-up copier for copy accounting — separate from adding it as a print queue
-          (Printers). If this same physical device already has a CUPS queue, link it below so
-          meter reads aren&apos;t duplicated.
+          (Printers). If this same physical device already has a CUPS queue, pick it below to fill
+          in the fields below from it (still editable after) and link it so meter reads
+          aren&apos;t duplicated.
         </p>
+
+        <Field label="Existing Printer">
+          <select
+            value={printerId}
+            onChange={(e) => handlePrinterSelect(e.target.value)}
+            className="rounded border border-black/[.15] bg-transparent px-3 py-2 text-black dark:border-white/[.2] dark:text-zinc-50"
+          >
+            <option value="">None — type the details below manually</option>
+            {printers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <span className="text-xs text-zinc-500">
+            Picking a printer already set up here fills in its name/model/network/location below
+            instead of retyping them, and links the two so meter reads reuse that printer&apos;s
+            existing SNMP polling instead of polling twice.
+          </span>
+        </Field>
 
         <Field label="Name *">
           <Input value={form.name} onChange={(e) => update("name", e.target.value)} required />
@@ -159,25 +221,6 @@ export default function NewMfpDevicePage() {
               </div>
             ) : null;
           })()}
-        </Field>
-
-        <Field label="Linked Printer (optional)">
-          <select
-            value={printerId}
-            onChange={(e) => setPrinterId(e.target.value)}
-            className="rounded border border-black/[.15] bg-transparent px-3 py-2 text-black dark:border-white/[.2] dark:text-zinc-50"
-          >
-            <option value="">None — this device has no CUPS queue</option>
-            {printers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <span className="text-xs text-zinc-500">
-            Link only if this same physical device is already set up as a Printer — meter reads
-            then reuse that printer&apos;s existing SNMP polling instead of polling twice.
-          </span>
         </Field>
 
         <div className="grid grid-cols-2 gap-4">
