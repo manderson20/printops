@@ -7,7 +7,8 @@ import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Spinner } from "@/components/ui/Spinner";
 
 const SETTINGS_NAV = [
-  { href: "/settings/users", label: "Users" },
+  { href: "/settings/users", label: "Users & Permissions" },
+  { href: "/settings/integrations", label: "Integrations" },
   { href: "/settings/session", label: "Session Timeout" },
   { href: "/settings/snmp", label: "SNMP" },
   { href: "/settings/aliases", label: "Attribution Aliases" },

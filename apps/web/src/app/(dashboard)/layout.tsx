@@ -15,7 +15,6 @@ const NAV_LINKS = [
   { href: "/printers", label: "Printers" },
   { href: "/jobs", label: "Jobs" },
   { href: "/syslog", label: "Syslog" },
-  { href: "/integrations", label: "Integrations" },
 ] as const;
 
 // "ou_viewer" is read-only and scoped to Insights only — see

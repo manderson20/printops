@@ -1174,11 +1174,13 @@ export async function listUsers(params?: {
   page?: number;
   pageSize?: number;
   search?: string;
+  role?: Role;
 }): Promise<UserAccountPage> {
   const query = new URLSearchParams();
   if (params?.page) query.set("page", String(params.page));
   if (params?.pageSize) query.set("page_size", String(params.pageSize));
   if (params?.search) query.set("search", params.search);
+  if (params?.role) query.set("role", params.role);
   const qs = query.toString();
   const response = await authorizedFetch(`/api/v1/users${qs ? `?${qs}` : ""}`);
   return response.json();
@@ -1195,6 +1197,22 @@ export async function updateUser(
 ): Promise<UserAccount> {
   const response = await authorizedFetch(`/api/v1/users/${id}`, {
     method: "PATCH",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+// Pre-provisions an account by email before their first Google sign-in —
+// google_sub stays null until then; /auth/google/callback matches this row
+// by email on that first login instead of creating a duplicate (see that
+// endpoint's docstring on the backend).
+export async function createUser(input: {
+  email: string;
+  role: Role;
+  granted_ou_paths?: string[] | null;
+}): Promise<UserAccount> {
+  const response = await authorizedFetch("/api/v1/users", {
+    method: "POST",
     body: JSON.stringify(input),
   });
   return response.json();
@@ -1328,6 +1346,16 @@ export async function listGoogleWorkspaceUsers(): Promise<
 > {
   const response = await authorizedFetch(
     "/api/v1/settings/google-workspace/users",
+  );
+  return response.json();
+}
+
+// Distinct org_unit_path values from the synced roster — powers the OU
+// picker on Settings > Permissions so an admin picks from real, currently-
+// populated org units instead of typing a path blind.
+export async function listGoogleWorkspaceOrgUnits(): Promise<string[]> {
+  const response = await authorizedFetch(
+    "/api/v1/settings/google-workspace/org-units",
   );
   return response.json();
 }

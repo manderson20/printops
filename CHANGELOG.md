@@ -5,6 +5,25 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.38.0] - 2026-07-10
+
+- **Users & Permissions merged into one page.** OU grants for "OU Viewer"
+  accounts are now edited inline (an expandable org-unit picker per row)
+  instead of living on a separate Permissions page — one place to manage
+  an account's role and, if applicable, what it can see.
+- **Real org-unit picker, scoped to staff.** Granting OUs is now checkboxes
+  populated from your synced Google Workspace directory instead of typing
+  a path blind — and scoped to `staff_org_unit_path` (same setting the
+  copier PIN roster already uses), so it shows ~20 real staff org units
+  instead of all 70+ directory OUs (student grade levels, device OUs,
+  admin housekeeping OUs, etc. included).
+- **Email autocomplete when adding a user.** The Add User email field now
+  suggests matches from your synced directory as you type, instead of
+  requiring the exact address.
+- **Integrations moved under Settings.** Google Sign-In, Mosyle, Google
+  Workspace, and ClassGuard now live at Settings > Integrations instead of
+  their own top-level nav item.
+
 ## [0.37.0] - 2026-07-10
 
 - **Pre-provision accounts before first sign-in.** Admins can now add a
