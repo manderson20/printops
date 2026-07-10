@@ -114,18 +114,14 @@ class TestExtractStringValue:
 class TestGetSysDescrVendorProfile:
     def test_recognizes_real_canon_sys_descr(self):
         config = _fake_snmp_config(version="v1")
-        with patch(
-            "app.printers.snmp_counters._run_snmp", return_value=CANON_SYS_DESCR_OUTPUT
-        ):
+        with patch("app.printers.snmp_counters._run_snmp", return_value=CANON_SYS_DESCR_OUTPUT):
             assert get_sys_descr_vendor_profile("10.20.1.25", config) == "canon"
 
     def test_returns_none_not_generic_on_probe_failure(self):
         """Unreachable is not the same as unrecognized — the caller falls
         back to the DB-field heuristic only when this returns None."""
         config = _fake_snmp_config()
-        with patch(
-            "app.printers.snmp_counters._run_snmp", side_effect=SnmpProbeError("timed out")
-        ):
+        with patch("app.printers.snmp_counters._run_snmp", side_effect=SnmpProbeError("timed out")):
             assert get_sys_descr_vendor_profile("10.0.0.1", config) is None
 
     def test_returns_none_for_unrecognized_sys_descr(self):
@@ -212,10 +208,9 @@ class TestGracefulDegradation:
             community_encrypted=encrypt("public"), version="v2c", port=161
         )
 
-        with patch(
-            "app.printers.snmp_counters.get_standard_total", return_value=10291
-        ), patch(
-            "app.printers.snmp_counters.get_sys_descr_vendor_profile", return_value=None
+        with (
+            patch("app.printers.snmp_counters.get_standard_total", return_value=10291),
+            patch("app.printers.snmp_counters.get_sys_descr_vendor_profile", return_value=None),
         ):
             succeeded = _poll_counters_sync(printer, defaults)
 

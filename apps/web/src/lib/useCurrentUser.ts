@@ -9,17 +9,33 @@ import { useToken } from "@/lib/auth";
  * they'll bounce a real admin before the fetch resolves. */
 export function useCurrentUser(): CurrentUser | null | undefined {
   const token = useToken();
-  const [user, setUser] = useState<CurrentUser | null | undefined>(undefined);
+  const [fetchedUser, setFetchedUser] = useState<CurrentUser | null | undefined>(undefined);
+  const [prevToken, setPrevToken] = useState(token);
+
+  // Reset to "loading" the instant the token identity changes (login or
+  // logout), computed during render rather than via an effect + setState —
+  // this is what React's own docs recommend for "adjust state when a prop
+  // changes" instead of letting a stale previous user's data show through
+  // for a render or two while the new fetch is in flight.
+  if (token !== prevToken) {
+    setPrevToken(token);
+    setFetchedUser(undefined);
+  }
 
   useEffect(() => {
-    if (!token) {
-      setUser(null);
-      return;
-    }
+    if (!token) return;
+    let cancelled = false;
     getMe()
-      .then(setUser)
-      .catch(() => setUser(null));
+      .then((u) => {
+        if (!cancelled) setFetchedUser(u);
+      })
+      .catch(() => {
+        if (!cancelled) setFetchedUser(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [token]);
 
-  return user;
+  return token ? fetchedUser : null;
 }

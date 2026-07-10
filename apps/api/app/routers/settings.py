@@ -28,7 +28,13 @@ from app.models.report import ReportFormulaSettings
 from app.models.snmp import SnmpDefaultsSettings
 from app.printers.snmp_counters import get_or_create_snmp_defaults
 from app.quotas.service import get_or_create_quota_settings
-from app.schemas.classguard import ClassGuardSettingsOut, ClassGuardSettingsUpdate, ClassGuardTestRequest, ClassGuardTestResult
+from app.reports.untracked_copies import get_or_create_untracked_copy_settings
+from app.schemas.classguard import (
+    ClassGuardSettingsOut,
+    ClassGuardSettingsUpdate,
+    ClassGuardTestRequest,
+    ClassGuardTestResult,
+)
 from app.schemas.google_sso import GoogleSsoSettingsOut, GoogleSsoSettingsUpdate
 from app.schemas.google_workspace import (
     GoogleWorkspaceSettingsOut,
@@ -38,10 +44,15 @@ from app.schemas.google_workspace import (
 )
 from app.schemas.ldap_relay import LdapRelaySettingsOut, LdapRelaySettingsUpdate
 from app.schemas.mosyle import MosyleSettingsOut, MosyleSettingsUpdate, MosyleTestResult
-from app.schemas.release import PrintReleaseSettingsOut, PrintReleaseSettingsUpdate
 from app.schemas.quota import QuotaSettingsOut, QuotaSettingsUpdate
+from app.schemas.release import PrintReleaseSettingsOut, PrintReleaseSettingsUpdate
 from app.schemas.report import ReportFormulaSettingsOut, ReportFormulaSettingsUpdate
+from app.schemas.session import SessionSettingsOut, SessionSettingsUpdate
 from app.schemas.snmp import SnmpDefaultsOut, SnmpDefaultsUpdate
+from app.schemas.syslog import SyslogSettingsOut, SyslogSettingsUpdate
+from app.schemas.untracked_copies import UntrackedCopySettingsOut, UntrackedCopySettingsUpdate
+from app.sessions.service import get_or_create_session_settings
+from app.syslog.service import get_or_create_syslog_settings
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -75,10 +86,10 @@ async def get_mosyle_settings(db: AsyncSession = Depends(get_db)):
     return _to_out(await _get_or_create_settings(db))
 
 
-@router.put("/mosyle", response_model=MosyleSettingsOut, dependencies=[Depends(require_role("admin"))])
-async def update_mosyle_settings(
-    payload: MosyleSettingsUpdate, db: AsyncSession = Depends(get_db)
-):
+@router.put(
+    "/mosyle", response_model=MosyleSettingsOut, dependencies=[Depends(require_role("admin"))]
+)
+async def update_mosyle_settings(payload: MosyleSettingsUpdate, db: AsyncSession = Depends(get_db)):
     settings = await _get_or_create_settings(db)
     updates = payload.model_dump(exclude_unset=True)
     if "base_url" in updates and updates["base_url"] is not None:
@@ -101,10 +112,10 @@ async def update_mosyle_settings(
     return _to_out(settings)
 
 
-@router.post("/mosyle/test", response_model=MosyleTestResult, dependencies=[Depends(require_role("admin"))])
-async def test_mosyle_connection(
-    payload: MosyleSettingsUpdate, db: AsyncSession = Depends(get_db)
-):
+@router.post(
+    "/mosyle/test", response_model=MosyleTestResult, dependencies=[Depends(require_role("admin"))]
+)
+async def test_mosyle_connection(payload: MosyleSettingsUpdate, db: AsyncSession = Depends(get_db)):
     """Tests connectivity using the provided values, falling back to
     already-saved ones for anything omitted — lets an admin test with a
     newly-entered token without having to re-enter fields they didn't
@@ -120,10 +131,16 @@ async def test_mosyle_connection(
     )
 
     if not (base_url and admin_email and access_token and admin_password):
-        return MosyleTestResult(ok=False, error="Base URL, access token, admin email, and admin password are all required.")
+        return MosyleTestResult(
+            ok=False,
+            error="Base URL, access token, admin email, and admin password are all required.",
+        )
 
     client = MosyleClient(
-        base_url=base_url, access_token=access_token, admin_email=admin_email, admin_password=admin_password
+        base_url=base_url,
+        access_token=access_token,
+        admin_email=admin_email,
+        admin_password=admin_password,
     )
     try:
         devices = await client.list_devices()
@@ -132,7 +149,9 @@ async def test_mosyle_connection(
     return MosyleTestResult(ok=True, device_count=len(devices))
 
 
-@router.post("/mosyle/sync", response_model=MosyleSettingsOut, dependencies=[Depends(require_role("admin"))])
+@router.post(
+    "/mosyle/sync", response_model=MosyleSettingsOut, dependencies=[Depends(require_role("admin"))]
+)
 async def sync_mosyle_devices(db: AsyncSession = Depends(get_db)):
     settings = await _get_or_create_settings(db)
     try:
@@ -169,7 +188,11 @@ async def get_classguard_settings(db: AsyncSession = Depends(get_db)):
     return _classguard_to_out(await _get_or_create_classguard_settings(db))
 
 
-@router.put("/classguard", response_model=ClassGuardSettingsOut, dependencies=[Depends(require_role("admin"))])
+@router.put(
+    "/classguard",
+    response_model=ClassGuardSettingsOut,
+    dependencies=[Depends(require_role("admin"))],
+)
 async def update_classguard_settings(
     payload: ClassGuardSettingsUpdate, db: AsyncSession = Depends(get_db)
 ):
@@ -188,7 +211,9 @@ async def update_classguard_settings(
 
 
 @router.post(
-    "/classguard/test", response_model=ClassGuardTestResult, dependencies=[Depends(require_role("admin"))]
+    "/classguard/test",
+    response_model=ClassGuardTestResult,
+    dependencies=[Depends(require_role("admin"))],
 )
 async def test_classguard_connection(
     payload: ClassGuardTestRequest, db: AsyncSession = Depends(get_db)
@@ -222,7 +247,9 @@ async def test_classguard_connection(
     await db.commit()
     if mac:
         return ClassGuardTestResult(ok=True, mac_address=mac)
-    return ClassGuardTestResult(ok=True, error=f"Connected, but no active lease found for {payload.test_ip}.")
+    return ClassGuardTestResult(
+        ok=True, error=f"Connected, but no active lease found for {payload.test_ip}."
+    )
 
 
 def _snmp_defaults_to_out(settings: SnmpDefaultsSettings) -> SnmpDefaultsOut:
@@ -260,6 +287,48 @@ async def update_snmp_defaults(payload: SnmpDefaultsUpdate, db: AsyncSession = D
     return _snmp_defaults_to_out(settings)
 
 
+@router.get("/syslog", response_model=SyslogSettingsOut)
+async def get_syslog_settings(db: AsyncSession = Depends(get_db)):
+    settings = await get_or_create_syslog_settings(db)
+    return SyslogSettingsOut(
+        enabled=settings.enabled,
+        port=settings.port,
+        min_severity=settings.min_severity,
+        retention_days=settings.retention_days,
+    )
+
+
+@router.put(
+    "/syslog", response_model=SyslogSettingsOut, dependencies=[Depends(require_role("admin"))]
+)
+async def update_syslog_settings(payload: SyslogSettingsUpdate, db: AsyncSession = Depends(get_db)):
+    """Org-wide kill switch + noise floor for the syslog collector
+    (infra/syslog-relay/) — off by default, matching SNMP defaults/LDAP
+    relay. `port` here is informational only for now: the relay actually
+    binds infra/syslog-relay/printops-syslog-relay.service's configured
+    port at process start, so changing it here doesn't move the listener
+    without also updating and restarting that service."""
+    settings = await get_or_create_syslog_settings(db)
+    updates = payload.model_dump(exclude_unset=True)
+    if updates.get("enabled") is not None:
+        settings.enabled = updates["enabled"]
+    if updates.get("port") is not None:
+        settings.port = updates["port"]
+    if updates.get("min_severity") is not None:
+        settings.min_severity = updates["min_severity"]
+    if updates.get("retention_days") is not None:
+        settings.retention_days = updates["retention_days"]
+
+    await db.commit()
+    await db.refresh(settings)
+    return SyslogSettingsOut(
+        enabled=settings.enabled,
+        port=settings.port,
+        min_severity=settings.min_severity,
+        retention_days=settings.retention_days,
+    )
+
+
 async def _get_or_create_google_workspace_settings(db: AsyncSession) -> GoogleWorkspaceSettings:
     result = await db.execute(select(GoogleWorkspaceSettings).limit(1))
     settings = result.scalar_one_or_none()
@@ -292,7 +361,9 @@ async def get_google_workspace_settings(db: AsyncSession = Depends(get_db)):
 
 
 @router.put(
-    "/google-workspace", response_model=GoogleWorkspaceSettingsOut, dependencies=[Depends(require_role("admin"))]
+    "/google-workspace",
+    response_model=GoogleWorkspaceSettingsOut,
+    dependencies=[Depends(require_role("admin"))],
 )
 async def update_google_workspace_settings(
     payload: GoogleWorkspaceSettingsUpdate, db: AsyncSession = Depends(get_db)
@@ -335,7 +406,9 @@ async def test_google_workspace_connection(
     already-saved ones for anything omitted."""
     settings = await _get_or_create_google_workspace_settings(db)
     service_account_json = payload.service_account_json or (
-        decrypt(settings.service_account_json_encrypted) if settings.service_account_json_encrypted else None
+        decrypt(settings.service_account_json_encrypted)
+        if settings.service_account_json_encrypted
+        else None
     )
     admin_email = payload.admin_email or settings.admin_email
     customer_id = payload.customer_id or settings.customer_id
@@ -347,7 +420,9 @@ async def test_google_workspace_connection(
 
     try:
         client = GoogleWorkspaceClient(
-            service_account_json=service_account_json, admin_email=admin_email, customer_id=customer_id
+            service_account_json=service_account_json,
+            admin_email=admin_email,
+            customer_id=customer_id,
         )
         devices = await client.list_chromeos_devices()
     except GoogleWorkspaceError as exc:
@@ -381,9 +456,43 @@ async def list_google_workspace_users(db: AsyncSession = Depends(get_db)):
     a correction email against a real org address rather than free text."""
     result = await db.execute(select(GoogleWorkspaceUser).order_by(GoogleWorkspaceUser.email))
     return [
-        GoogleWorkspaceUserOut(email=u.email, name=u.name, employee_id=u.employee_id, aliases=u.aliases)
+        GoogleWorkspaceUserOut(
+            email=u.email, name=u.name, employee_id=u.employee_id, aliases=u.aliases
+        )
         for u in result.scalars().all()
     ]
+
+
+@router.get(
+    "/google-workspace/org-units",
+    response_model=list[str],
+    dependencies=[Depends(require_role("admin"))],
+)
+async def list_google_workspace_org_units(db: AsyncSession = Depends(get_db)):
+    """Distinct org_unit_path values from the synced roster (sync_users) —
+    powers the OU picker on Settings > Permissions (app/models/user.py's
+    granted_ou_paths), so an admin picks from real, currently-populated org
+    units instead of typing a path blind with no idea what actually exists
+    in the directory.
+
+    Filtered to GoogleWorkspaceSettings.staff_org_unit_path (and anything
+    nested under it) when configured — same reasoning as
+    export_copier_pin_roster below: unscoped, this directory's OU list is
+    dominated by non-staff structure (student grade levels, Classroom
+    Devices, Apple-VPP, IT test OUs, ...) that has nothing to do with who
+    an OU Viewer account should see report data for. Falls back to
+    everything only when that setting isn't configured, so the picker is
+    never empty."""
+    settings = await _get_or_create_google_workspace_settings(db)
+    result = await db.execute(
+        select(GoogleWorkspaceUser.org_unit_path).where(
+            GoogleWorkspaceUser.org_unit_path.is_not(None)
+        )
+    )
+    paths = {path for (path,) in result.all() if path}
+    if settings.staff_org_unit_path:
+        paths = {path for path in paths if org_unit_matches(path, settings.staff_org_unit_path)}
+    return sorted(paths)
 
 
 @router.get(
@@ -490,8 +599,8 @@ def _validate_client_secret(secret: str, client_id: str | None) -> None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Client Secret is identical to Client ID — you've likely pasted the wrong "
-            "value. The secret looks different (e.g. starts with \"GOCSPX-\"), not like "
-            "\"...apps.googleusercontent.com\".",
+            'value. The secret looks different (e.g. starts with "GOCSPX-"), not like '
+            '"...apps.googleusercontent.com".',
         )
     if secret.endswith(".apps.googleusercontent.com"):
         raise HTTPException(
@@ -502,8 +611,14 @@ def _validate_client_secret(secret: str, client_id: str | None) -> None:
         )
 
 
-@router.put("/google-sso", response_model=GoogleSsoSettingsOut, dependencies=[Depends(require_role("admin"))])
-async def update_google_sso_settings(payload: GoogleSsoSettingsUpdate, db: AsyncSession = Depends(get_db)):
+@router.put(
+    "/google-sso",
+    response_model=GoogleSsoSettingsOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def update_google_sso_settings(
+    payload: GoogleSsoSettingsUpdate, db: AsyncSession = Depends(get_db)
+):
     settings = await _get_or_create_google_sso_settings(db)
     updates = payload.model_dump(exclude_unset=True)
     if updates.get("client_secret"):
@@ -577,6 +692,34 @@ async def update_report_formula_settings(
     return _report_formula_settings_out(settings)
 
 
+@router.get("/untracked-copies", response_model=UntrackedCopySettingsOut)
+async def get_untracked_copy_settings(db: AsyncSession = Depends(get_db)):
+    settings = await get_or_create_untracked_copy_settings(db)
+    return UntrackedCopySettingsOut(enabled=settings.enabled, enabled_at=settings.enabled_at)
+
+
+@router.put(
+    "/untracked-copies",
+    response_model=UntrackedCopySettingsOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def update_untracked_copy_settings(
+    payload: UntrackedCopySettingsUpdate, db: AsyncSession = Depends(get_db)
+):
+    """A False -> True transition re-stamps enabled_at to now — see
+    UntrackedCopySettings' docstring (app/models/untracked_copies.py) for
+    why this must never reach back before the moment it's actually on."""
+    settings = await get_or_create_untracked_copy_settings(db)
+    if payload.enabled is not None:
+        if payload.enabled and not settings.enabled:
+            settings.enabled_at = datetime.now(UTC)
+        settings.enabled = payload.enabled
+
+    await db.commit()
+    await db.refresh(settings)
+    return UntrackedCopySettingsOut(enabled=settings.enabled, enabled_at=settings.enabled_at)
+
+
 async def _get_or_create_print_release_settings(db: AsyncSession) -> PrintReleaseSettings:
     result = await db.execute(select(PrintReleaseSettings).limit(1))
     settings = result.scalar_one_or_none()
@@ -634,10 +777,39 @@ async def update_quota_settings(payload: QuotaSettingsUpdate, db: AsyncSession =
     return QuotaSettingsOut(enabled=settings.enabled)
 
 
+@router.get("/session", response_model=SessionSettingsOut)
+async def get_session_settings(db: AsyncSession = Depends(get_db)):
+    settings = await get_or_create_session_settings(db)
+    return SessionSettingsOut(idle_timeout_minutes=settings.idle_timeout_minutes)
+
+
+@router.put(
+    "/session",
+    response_model=SessionSettingsOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def update_session_settings(
+    payload: SessionSettingsUpdate, db: AsyncSession = Depends(get_db)
+):
+    """How long a session can sit idle before its token is allowed to
+    expire — POST /auth/refresh (app/routers/auth.py) is what actually
+    slides the window forward on activity; this just controls the
+    duration it slides by. Takes effect on each user's very next refresh,
+    not just future logins, since /auth/refresh reads this live."""
+    settings = await get_or_create_session_settings(db)
+    if payload.idle_timeout_minutes is not None:
+        settings.idle_timeout_minutes = payload.idle_timeout_minutes
+    await db.commit()
+    await db.refresh(settings)
+    return SessionSettingsOut(idle_timeout_minutes=settings.idle_timeout_minutes)
+
+
 @router.get("/ldap", response_model=LdapRelaySettingsOut)
 async def get_ldap_relay_settings(db: AsyncSession = Depends(get_db)):
     settings = await get_or_create_ldap_relay_settings(db)
-    return LdapRelaySettingsOut(enabled=settings.enabled, base_dn=settings.base_dn, port=settings.port)
+    return LdapRelaySettingsOut(
+        enabled=settings.enabled, base_dn=settings.base_dn, port=settings.port
+    )
 
 
 @router.put(
@@ -661,4 +833,6 @@ async def update_ldap_relay_settings(
         settings.port = payload.port
     await db.commit()
     await db.refresh(settings)
-    return LdapRelaySettingsOut(enabled=settings.enabled, base_dn=settings.base_dn, port=settings.port)
+    return LdapRelaySettingsOut(
+        enabled=settings.enabled, base_dn=settings.base_dn, port=settings.port
+    )
