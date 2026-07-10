@@ -34,16 +34,25 @@ def get_current_user(
 
     subject = payload.get("sub")
     role = payload.get("role")
-    if not subject or role not in ("admin", "viewer"):
+    if not subject or role not in ("admin", "viewer", "ou_viewer"):
         raise credentials_exception
 
     if subject == settings.dev_username:
-        return UserOut(username=subject, role=role)
+        return UserOut(username=subject, role=role, subject=subject)
 
     email = payload.get("email")
     if not email:
         raise credentials_exception
-    return UserOut(username=email, role=role, email=email, name=payload.get("name"))
+    return UserOut(
+        username=email,
+        role=role,
+        email=email,
+        name=payload.get("name"),
+        subject=subject,
+        # Display-only — never trusted for enforcement, which always
+        # re-reads the User row fresh (see reports.py's _report_filters).
+        granted_ou_paths=payload.get("granted_ou_paths"),
+    )
 
 
 def require_role(*roles: str):

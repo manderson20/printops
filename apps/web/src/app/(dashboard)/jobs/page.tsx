@@ -53,7 +53,7 @@ function JobsList() {
   const [cancelErrors, setCancelErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    listPrinters()
+    listPrinters({ includeArchived: true })
       .then(setPrinters)
       .catch(() => setPrinters([]));
   }, []);
@@ -137,7 +137,7 @@ function JobsList() {
   }
 
   return (
-    <div className="flex w-full max-w-6xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Jobs</h1>
       </div>
@@ -197,7 +197,9 @@ function JobsList() {
                 <th className="cursor-pointer select-none px-4 py-3 font-medium" onClick={() => toggleSort("printer")}>
                   Printer{sortIndicator("printer")}
                 </th>
+                <th className="px-4 py-3 font-medium">Document</th>
                 <th className="px-4 py-3 font-medium">Submitted By</th>
+                <th className="px-4 py-3 font-medium">Device</th>
                 <th className="cursor-pointer select-none px-4 py-3 font-medium" onClick={() => toggleSort("status")}>
                   Status{sortIndicator("status")}
                 </th>
@@ -229,11 +231,17 @@ function JobsList() {
                         {job.printer_name}
                       </Link>
                     </td>
+                    <td className="max-w-[16rem] truncate px-4 py-3 text-zinc-600 dark:text-zinc-400" title={job.document_name ?? undefined}>
+                      {job.document_name ?? "—"}
+                    </td>
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                       <div className="flex items-center gap-2">
                         {job.submitted_by ?? "—"}
                         <Badge tone={attribution.tone}>{attribution.label}</Badge>
                       </div>
+                    </td>
+                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
+                      {job.device_name ?? "—"}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-1">

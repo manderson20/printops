@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import {
   ApiError,
   createReportSnapshot,
@@ -12,6 +13,7 @@ import {
   getReportPeakTimes,
   getReportSummary,
   getReportTimeline,
+  getUntrackedCopySummary,
   listGoogleWorkspaceUsers,
   listPrinters,
   listReportSnapshots,
@@ -24,7 +26,9 @@ import {
   type ReportSnapshot,
   type ReportSummary,
   type TimelineBucket,
+  type UntrackedCopySummary,
 } from "@/lib/api";
+import { formatCurrency } from "@/lib/format";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -133,10 +137,6 @@ function computeRange(
   }
 }
 
-function formatCurrency(value: number): string {
-  return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
 function StatCard({
   label,
   value,
@@ -163,8 +163,10 @@ type ReportData = {
   timeline: TimelineBucket[];
   printerCosts: CostEntry[];
   userCosts: CostEntry[];
+  deviceCosts: CostEntry[];
   peakTimes: PeakTimes;
   funFacts: string[];
+  untrackedCopies: UntrackedCopySummary;
 };
 
 type LoadState =
@@ -173,7 +175,9 @@ type LoadState =
   | { phase: "error"; message: string };
 
 export default function InsightsPage() {
-  const isAdmin = useCurrentUser()?.role === "admin";
+  const currentUser = useCurrentUser();
+  const isAdmin = currentUser?.role === "admin";
+  const isOuViewer = currentUser?.role === "ou_viewer";
 
   const [preset, setPreset] = useState<DatePreset>("month");
   const [customStart, setCustomStart] = useState("");
@@ -189,9 +193,9 @@ export default function InsightsPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [colorMode, setColorMode] = useState("");
   const [duplexFilter, setDuplexFilter] = useState("");
-  const [leaderboardType, setLeaderboardType] = useState<"printer" | "user">(
-    "printer",
-  );
+  const [leaderboardType, setLeaderboardType] = useState<
+    "printer" | "user" | "device"
+  >("printer");
 
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [exporting, setExporting] = useState(false);
@@ -217,7 +221,7 @@ export default function InsightsPage() {
   }, []);
 
   useEffect(() => {
-    listPrinters()
+    listPrinters({ includeArchived: true })
       .then(setPrinters)
       .catch(() => setPrinters([]));
     if (isAdmin) {
@@ -324,19 +328,43 @@ export default function InsightsPage() {
     ],
   );
 
+  // Reset to "loading" the instant any of this report's inputs change,
+  // computed during render rather than via an effect + setState — see
+  // useCurrentUser.ts for the same pattern and why (avoids a render or two
+  // of stale prior-filter data before the new fetch resolves). Bundled into
+  // one JSON key since there are several independent inputs here.
+  const loadKey = JSON.stringify([filters, granularity, periodLabel, preset, range]);
+  const [prevLoadKey, setPrevLoadKey] = useState(loadKey);
+  if (loadKey !== prevLoadKey) {
+    setPrevLoadKey(loadKey);
+    if (!(preset === "custom" && !range)) {
+      setState({ phase: "loading" });
+    }
+  }
+
   useEffect(() => {
     if (preset === "custom" && !range) return;
-    setState({ phase: "loading" });
     Promise.all([
       getReportSummary(filters),
       getReportTimeline(granularity, filters),
       getCostBreakdown("printer", filters),
       getCostBreakdown("user", filters),
+      getCostBreakdown("device", filters),
       getReportPeakTimes(filters),
       getReportFunFacts(periodLabel, filters),
+      getUntrackedCopySummary(filters),
     ])
       .then(
-        ([summary, timeline, printerCosts, userCosts, peakTimes, funFacts]) =>
+        ([
+          summary,
+          timeline,
+          printerCosts,
+          userCosts,
+          deviceCosts,
+          peakTimes,
+          funFacts,
+          untrackedCopies,
+        ]) =>
           setState({
             phase: "ok",
             data: {
@@ -344,8 +372,10 @@ export default function InsightsPage() {
               timeline,
               printerCosts,
               userCosts,
+              deviceCosts,
               peakTimes,
               funFacts,
+              untrackedCopies,
             },
           }),
       )
@@ -387,10 +417,16 @@ export default function InsightsPage() {
   }, [state]);
 
   return (
-    <div className="flex w-full max-w-7xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
       {/* Print-only report header — never shown on screen. */}
       <div className="hidden items-center gap-3 border-b border-black/20 pb-4 print:flex">
-        <Image src="/printops-logo.png" alt="PrintOps" width={40} height={40} />
+        <Image
+          src="/printops-logo.png"
+          alt="PrintOps"
+          width={40}
+          height={40}
+          priority
+        />
         <div>
           <p className="text-lg font-semibold text-black">
             PrintOps — Print Insights Report
@@ -414,8 +450,20 @@ export default function InsightsPage() {
           </h1>
           <p className="mt-1 text-sm text-zinc-500">
             Printing activity, trends, and savings —{" "}
-            {isAdmin ? "org-wide" : "your own history"}.
+            {isAdmin
+              ? "org-wide"
+              : isOuViewer
+                ? "scoped to your granted org units"
+                : "your own history"}
+            .
           </p>
+          {isOuViewer && (
+            <p className="mt-1 text-xs text-zinc-500">
+              {currentUser?.granted_ou_paths && currentUser.granted_ou_paths.length > 0
+                ? `Insights scoped to: ${currentUser.granted_ou_paths.join(", ")}`
+                : "No org units granted yet — ask an admin to grant you one in Settings > Users."}
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           <Button
@@ -647,9 +695,13 @@ export default function InsightsPage() {
               value={state.data.summary.simplex_pages.toLocaleString()}
             />
             <StatCard
-              label="Failed / cancelled"
-              value={`${state.data.summary.failed_jobs} / ${state.data.summary.cancelled_jobs}`}
+              label="Failed jobs"
+              value={state.data.summary.failed_jobs.toLocaleString()}
               tone={state.data.summary.failed_jobs > 0 ? "danger" : undefined}
+            />
+            <StatCard
+              label="Cancelled jobs"
+              value={state.data.summary.cancelled_jobs.toLocaleString()}
             />
             <StatCard
               label="Estimated cost"
@@ -757,59 +809,74 @@ export default function InsightsPage() {
                 >
                   Users
                 </Button>
+                <Button
+                  variant={
+                    leaderboardType === "device" ? "primary" : "secondary"
+                  }
+                  className="!px-3 !py-1 text-xs"
+                  onClick={() => setLeaderboardType("device")}
+                >
+                  Devices
+                </Button>
               </div>
             </div>
-            {(leaderboardType === "printer"
-              ? state.data.printerCosts
-              : state.data.userCosts
-            ).length === 0 ? (
-              <EmptyState>No data for this range.</EmptyState>
-            ) : (
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-black/[.08] text-xs uppercase tracking-wide text-zinc-500 dark:border-white/[.145]">
-                    <th className="py-2 font-medium">
-                      {leaderboardType === "printer" ? "Printer" : "User"}
-                    </th>
-                    <th className="py-2 font-medium">Jobs</th>
-                    <th className="py-2 font-medium">Pages</th>
-                    <th className="py-2 font-medium">Toner Cost</th>
-                    <th className="py-2 font-medium">Paper Cost</th>
-                    <th className="py-2 font-medium">Total Cost</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(leaderboardType === "printer"
-                    ? state.data.printerCosts
-                    : state.data.userCosts
-                  ).map((entry) => (
-                    <tr
-                      key={entry.key}
-                      className="border-b border-black/[.08] last:border-0 dark:border-white/[.145]"
-                    >
-                      <td className="py-2 text-black dark:text-zinc-50">
-                        {entry.label}
-                      </td>
-                      <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                        {entry.job_count}
-                      </td>
-                      <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                        {entry.page_count.toLocaleString()}
-                      </td>
-                      <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                        {formatCurrency(entry.toner_cost)}
-                      </td>
-                      <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                        {formatCurrency(entry.paper_cost)}
-                      </td>
-                      <td className="py-2 font-medium text-black dark:text-zinc-50">
-                        {formatCurrency(entry.total_cost)}
-                      </td>
+            {(() => {
+              const activeEntries =
+                leaderboardType === "printer"
+                  ? state.data.printerCosts
+                  : leaderboardType === "user"
+                    ? state.data.userCosts
+                    : state.data.deviceCosts;
+              const columnLabel =
+                leaderboardType === "printer"
+                  ? "Printer"
+                  : leaderboardType === "user"
+                    ? "User"
+                    : "Device";
+              return activeEntries.length === 0 ? (
+                <EmptyState>No data for this range.</EmptyState>
+              ) : (
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-black/[.08] text-xs uppercase tracking-wide text-zinc-500 dark:border-white/[.145]">
+                      <th className="py-2 font-medium">{columnLabel}</th>
+                      <th className="py-2 font-medium">Jobs</th>
+                      <th className="py-2 font-medium">Pages</th>
+                      <th className="py-2 font-medium">Toner Cost</th>
+                      <th className="py-2 font-medium">Paper Cost</th>
+                      <th className="py-2 font-medium">Total Cost</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+                  </thead>
+                  <tbody>
+                    {activeEntries.map((entry) => (
+                      <tr
+                        key={entry.key}
+                        className="border-b border-black/[.08] last:border-0 dark:border-white/[.145]"
+                      >
+                        <td className="py-2 text-black dark:text-zinc-50">
+                          {entry.label}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {entry.job_count}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {entry.page_count.toLocaleString()}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {formatCurrency(entry.toner_cost)}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {formatCurrency(entry.paper_cost)}
+                        </td>
+                        <td className="py-2 font-medium text-black dark:text-zinc-50">
+                          {formatCurrency(entry.total_cost)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              );
+            })()}
           </Card>
 
           <Card>
@@ -833,16 +900,101 @@ export default function InsightsPage() {
                 label="CO₂"
                 value={`${(state.data.summary.co2_grams / 1000).toFixed(1)} kg`}
               />
+              <StatCard
+                label="Mono cost"
+                value={formatCurrency(state.data.summary.estimated_cost_mono)}
+              />
+              <StatCard
+                label="Color cost"
+                value={formatCurrency(state.data.summary.estimated_cost_color)}
+              />
+              <StatCard
+                label="Paper cost"
+                value={formatCurrency(state.data.summary.estimated_cost_paper)}
+              />
             </div>
             <p className="mt-3 text-xs text-zinc-500">
-              Mono cost {formatCurrency(state.data.summary.estimated_cost_mono)}{" "}
-              · Color cost{" "}
-              {formatCurrency(state.data.summary.estimated_cost_color)} · Paper
-              cost {formatCurrency(state.data.summary.estimated_cost_paper)}.
               Toner cost uses each printer&rsquo;s real cartridge cost/yield
               when configured (see the printer&rsquo;s Toner Cartridges panel),
               falling back to the flat rates below otherwise.
             </p>
+          </Card>
+
+          <Card>
+            <CardTitle className="mb-3">Untracked Copy Activity</CardTitle>
+            {state.data.untrackedCopies.tracking_since ? (
+              <>
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                  <StatCard
+                    label="Unattributed copies"
+                    value={state.data.untrackedCopies.measured_copies.toLocaleString()}
+                  />
+                  <StatCard
+                    label="Estimated untracked activity"
+                    value={state.data.untrackedCopies.estimated_untracked.toLocaleString()}
+                  />
+                </div>
+
+                {state.data.untrackedCopies.printers.length > 0 && (
+                  <table className="mt-4 w-full text-left text-sm">
+                    <thead className="text-xs uppercase tracking-wide text-zinc-500">
+                      <tr>
+                        <th className="py-2 font-medium">Copier</th>
+                        <th className="py-2 font-medium">Unattributed copies</th>
+                        <th className="py-2 font-medium">Estimated untracked</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {state.data.untrackedCopies.printers.map((entry) => (
+                        <tr
+                          key={entry.printer_id}
+                          className="border-t border-black/[.08] dark:border-white/[.1]"
+                        >
+                          <td className="py-2 text-black dark:text-zinc-50">
+                            {entry.printer_name}
+                          </td>
+                          <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                            {entry.measured_copies.toLocaleString()}
+                          </td>
+                          <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                            {entry.estimated_untracked.toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+
+                <p className="mt-3 text-xs text-zinc-500">
+                  Walk-up copy activity PrintOps has no other visibility into,
+                  estimated from each printer&rsquo;s own SNMP counters — never
+                  attributed to a person, and never counted from before{" "}
+                  {new Date(
+                    state.data.untrackedCopies.tracking_since,
+                  ).toLocaleString()}{" "}
+                  (see Settings → Insights).
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-zinc-500">
+                Off by default.{" "}
+                {isAdmin ? (
+                  <>
+                    Turn it on in{" "}
+                    <Link
+                      href="/settings/insights"
+                      className="text-accent hover:underline"
+                    >
+                      Settings → Insights
+                    </Link>{" "}
+                    to start estimating walk-up copy activity PrintOps
+                    otherwise has no visibility into.
+                  </>
+                ) : (
+                  "An admin can turn this on in Settings to estimate walk-up copy activity PrintOps otherwise has no visibility into."
+                )}
+              </p>
+            )}
           </Card>
 
           <CombinedUsageSection filters={filters} />

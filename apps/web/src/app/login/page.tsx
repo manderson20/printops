@@ -23,7 +23,7 @@ function LoginForm() {
     setSubmitting(true);
     try {
       await login(username, password);
-      router.push("/insights");
+      router.push("/live");
     } catch {
       setError("Invalid username or password.");
     } finally {

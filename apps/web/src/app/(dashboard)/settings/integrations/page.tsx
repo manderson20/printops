@@ -70,35 +70,35 @@ export default function IntegrationsPage() {
   }, []);
 
   return (
-    <div className="flex w-full max-w-2xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Integrations</h1>
         <p className="mt-1 text-sm text-zinc-500">
           Third-party systems PrintOps connects to — device/user attribution, identity, and more
-          as they're added.
+          as they&rsquo;re added.
         </p>
       </div>
 
       <IntegrationCard
-        href="/integrations/google-sso"
+        href="/settings/integrations/google-sso"
         name="Google Sign-In"
         description="Lets staff log into PrintOps with their Google Workspace account, with role-based access."
         enabled={googleSso?.enabled ?? null}
       />
       <IntegrationCard
-        href="/integrations/mosyle"
+        href="/settings/integrations/mosyle"
         name="Mosyle"
         description="MDM device→user lookup for print job attribution."
         enabled={mosyle?.enabled ?? null}
       />
       <IntegrationCard
-        href="/integrations/google-workspace"
+        href="/settings/integrations/google-workspace"
         name="Google Workspace"
         description="ChromeOS device→user lookup for print job attribution (tried after Mosyle)."
         enabled={googleWorkspace?.enabled ?? null}
       />
       <IntegrationCard
-        href="/integrations/classguard"
+        href="/settings/integrations/classguard"
         name="ClassGuard"
         description="DHCP lease lookup — resolves a print job's source IP to a MAC address for Mosyle/Google Workspace matching."
         enabled={classguard?.enabled ?? null}
