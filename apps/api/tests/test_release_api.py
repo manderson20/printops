@@ -111,9 +111,7 @@ def test_unknown_token_404s(client):
 
 async def test_wrong_pin_401s(client, printer_with_release, alice, db_session_factory):
     await _make_held_job(db_session_factory, printer_with_release.id, alice.email)
-    response = client.post(
-        "/api/v1/release/test-token-123/jobs", json={"pin": "9999"}
-    )
+    response = client.post("/api/v1/release/test-token-123/jobs", json={"pin": "9999"})
     assert response.status_code == 401
 
 
@@ -165,9 +163,7 @@ async def test_release_failure_marks_job_failed(
 ):
     job = await _make_held_job(db_session_factory, printer_with_release.id, alice.email)
 
-    with patch(
-        "app.routers.release.submit_released_job", side_effect=ReleaseError("lp exploded")
-    ):
+    with patch("app.routers.release.submit_released_job", side_effect=ReleaseError("lp exploded")):
         response = client.post(
             f"/api/v1/release/test-token-123/jobs/{job.id}/release", json={"pin": "1001"}
         )

@@ -14,4 +14,4 @@ class PrintReleaseSettings(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
 
-    hold_expiry_hours: Mapped[float] = mapped_column(default=4.0, server_default="4.0")
+    hold_expiry_hours: Mapped[float] = mapped_column(default=48.0, server_default="48.0")
