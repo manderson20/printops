@@ -107,7 +107,7 @@ export default function QuotaHoldsPage() {
                     className="border-b border-black/[.08] last:border-0 dark:border-white/[.145]"
                   >
                     <td className="px-4 py-3 text-black dark:text-zinc-50">
-                      {job.submitted_by ?? "Unknown"}
+                      {job.submitted_by_name ?? job.submitted_by ?? "Unknown"}
                     </td>
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                       {job.printer_name}

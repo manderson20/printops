@@ -93,7 +93,7 @@ export default function PrinterJobsTab() {
               >
                 <div className="flex flex-col">
                   <span className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
-                    {job.submitted_by ?? "Unknown user"}
+                    {job.submitted_by_name ?? job.submitted_by ?? "Unknown user"}
                     <Badge tone={attribution.tone}>{attribution.label}</Badge>
                   </span>
                   <span className="text-xs text-zinc-400">

@@ -236,7 +236,7 @@ function JobsList() {
                     </td>
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                       <div className="flex items-center gap-2">
-                        {job.submitted_by ?? "—"}
+                        {job.submitted_by_name ?? job.submitted_by ?? "—"}
                         <Badge tone={attribution.tone}>{attribution.label}</Badge>
                       </div>
                     </td>

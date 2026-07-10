@@ -5,6 +5,15 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.40.1] - 2026-07-10
+
+- **Fix jobs showing the raw email instead of the resolved name.** The
+  printer detail page's Jobs tab, the main Jobs page, and Quota Holds all
+  showed `submitted_by` (email) directly instead of the already-resolved
+  `submitted_by_name` (Google Workspace display name), unlike Live
+  Dashboard's recent-jobs feed. All three now match that fallback:
+  resolved name, else email, else a placeholder.
+
 ## [0.40.0] - 2026-07-10
 
 - **Add Copier: pick an existing Printer to prefill the form.** The
