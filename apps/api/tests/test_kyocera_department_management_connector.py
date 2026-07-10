@@ -24,8 +24,12 @@ def _device(**overrides) -> MfpDevice:
 
 
 def test_registered_in_connector_registry():
-    assert CONNECTOR_REGISTRY["kyocera_department_management"] is KyoceraDepartmentManagementConnector
-    assert isinstance(get_connector("kyocera_department_management"), KyoceraDepartmentManagementConnector)
+    assert (
+        CONNECTOR_REGISTRY["kyocera_department_management"] is KyoceraDepartmentManagementConnector
+    )
+    assert isinstance(
+        get_connector("kyocera_department_management"), KyoceraDepartmentManagementConnector
+    )
 
 
 def test_has_setup_notes():
@@ -61,7 +65,9 @@ async def test_get_meter_snapshot_stays_unsupported_confidence():
 @pytest.mark.asyncio
 async def test_test_connection_forces_kyocera_profile():
     connector = KyoceraDepartmentManagementConnector()
-    with patch("app.printers.snmp_counters._run_snmp", return_value=KYOCERA_SYS_DESCR_OUTPUT) as mock_run:
+    with patch(
+        "app.printers.snmp_counters._run_snmp", return_value=KYOCERA_SYS_DESCR_OUTPUT
+    ) as mock_run:
         result = await connector.test_connection(_device())
     assert result.ok is True
     assert mock_run.call_count == 1

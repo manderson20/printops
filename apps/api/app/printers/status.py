@@ -5,11 +5,13 @@ Used both by the 60s background poll (app/main.py) and the manual
 POST /printers/{id}/check-status endpoint (app/routers/printers.py).
 """
 
+import asyncio
 from datetime import UTC, datetime
 
 from app.models.printer import Printer
 from app.printers.discovery import refresh_printer_capabilities
 from app.printers.ipp_client import PrinterProbeError, PrinterStateResult, probe_printer_state
+from app.printers.queue_sync import QueueSyncError, sync_queue
 
 # IPP printer-state values (RFC 8011 §5.4.12).
 PRINTER_STATE_STOPPED = 5
@@ -58,14 +60,22 @@ async def refresh_printer_status(printer: Printer) -> None:
 
 async def refresh_printer_status_and_rediscover(printer: Printer) -> None:
     """Refreshes status, then re-runs capability discovery
-    (app/printers/discovery.py) if the printer just came back online — a
-    device can be physically swapped, or gain/lose a module (finisher,
-    extra tray), while it was unreachable for maintenance, and the change
-    should surface without someone remembering to click "Rediscover" once
-    it's back. Used by both the 60s background loop and the manual
+    (app/printers/discovery.py) and retries the CUPS queue sync
+    (app/printers/queue_sync.py) if the printer just came back online — a
+    device can be physically swapped, gain/lose a module (finisher, extra
+    tray), or (confirmed live: MS - Cletus Copier) have had its queue built
+    from CUPS's generic degraded-capability fallback PPD because it was
+    offline the first time its queue was synced. None of that should require
+    someone remembering to click "Rediscover"/"Resync Queue" once the
+    printer is back. Used by both the 60s background loop and the manual
     check-status endpoint (app/main.py, app/routers/printers.py) so the two
-    behave identically, per check-status's own docstring."""
+    behave identically."""
     was_online = printer.status == "online"
     await refresh_printer_status(printer)
     if printer.status == "online" and not was_online:
         await refresh_printer_capabilities(printer)
+        try:
+            await asyncio.to_thread(sync_queue, str(printer.id))
+            printer.queue_sync_error = None
+        except QueueSyncError as exc:
+            printer.queue_sync_error = str(exc)

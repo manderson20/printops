@@ -29,5 +29,7 @@ class LdapRelaySettings(Base, TimestampMixin):
     # e.g. "dc=example,dc=org" — admin-chosen, shared across every
     # printer's LDAP address-book config so they can all point at the same
     # base DN. Entries are served at "ou=people,<base_dn>".
-    base_dn: Mapped[str] = mapped_column(default="dc=printops,dc=local", server_default="dc=printops,dc=local")
+    base_dn: Mapped[str] = mapped_column(
+        default="dc=printops,dc=local", server_default="dc=printops,dc=local"
+    )
     port: Mapped[int] = mapped_column(default=389, server_default="389")

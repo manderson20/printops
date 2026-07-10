@@ -6,6 +6,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -116,6 +117,129 @@ export function VolumeBarChart({ data }: { data: { label: string; value: number 
         <Bar dataKey="value" name="Pages" fill={color} radius={[4, 4, 0, 0]} maxBarSize={24} />
       </BarChart>
     </ResponsiveContainer>
+  );
+}
+
+export type IntradayChartPoint = {
+  // Precise time (e.g. "9:30 AM") — always populated, used for the
+  // Tooltip regardless of what the axis visually shows for this bar.
+  label: string;
+  // What to draw on the axis for this bar's tick, or "" to draw nothing
+  // (most half-hour bars are intentionally unlabeled to keep 48 bars
+  // readable — only on-the-hour bars and the date-change bar get text).
+  tickText: string;
+  isDateChange: boolean;
+  dateText: string;
+  print: number;
+  copy: number;
+};
+
+/** Two-line tick (time on top, date below) for the one bar per day where
+ * the calendar date changes; a plain single-line tick for on-the-hour
+ * bars; nothing at all for the half-hour bars in between — see
+ * IntradayChartPoint's tickText/isDateChange. SVG <text> can't render a
+ * literal "\n", so the second line is a second <text> element rather
+ * than a tickFormatter string. */
+function IntradayTick(props: {
+  x?: string | number;
+  y?: string | number;
+  index?: number;
+  payload?: { value: string };
+  chrome: ReturnType<typeof chartChrome>;
+  data: IntradayChartPoint[];
+}) {
+  const { index, chrome, data } = props;
+  const x = props.x === undefined ? undefined : Number(props.x);
+  const y = props.y === undefined ? undefined : Number(props.y);
+  if (x === undefined || y === undefined || index === undefined) return null;
+  const point = data[index];
+  if (!point) return null;
+  if (point.isDateChange) {
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <text x={0} y={0} dy={12} textAnchor="middle" fontSize={11} fill={chrome.mutedText}>
+          {point.tickText}
+        </text>
+        <text
+          x={0}
+          y={0}
+          dy={26}
+          textAnchor="middle"
+          fontSize={10}
+          fontWeight={600}
+          fill={chrome.mutedText}
+        >
+          {point.dateText}
+        </text>
+      </g>
+    );
+  }
+  if (!point.tickText) return null;
+  return (
+    <text x={x} y={y} dy={12} textAnchor="middle" fontSize={11} fill={chrome.mutedText}>
+      {point.tickText}
+    </text>
+  );
+}
+
+/** Print + tracked-copy volume per 30-minute interval, stacked — two
+ * series (identity: print vs copy), so a fixed-order legend per the
+ * color formula (blue is already print's slot on VolumeBarChart above;
+ * copy takes the next fixed slot, aqua, rather than a cycled/arbitrary
+ * hue). A dashed ReferenceLine marks the bar where the calendar date
+ * changes, reinforcing the two-line date/time tick drawn there. */
+export function StackedVolumeBarChart({ data }: { data: IntradayChartPoint[] }) {
+  const isDark = useIsDarkMode();
+  const chrome = chartChrome(isDark);
+  const printColor = hue("blue", isDark);
+  const copyColor = hue("aqua", isDark);
+  const dateChangePoint = data.find((d) => d.isDateChange);
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-4 text-xs text-zinc-600 dark:text-zinc-400">
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: printColor }} />
+          Print Pages
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: copyColor }} />
+          Copy Pages (tracked)
+        </span>
+      </div>
+      <ResponsiveContainer width="100%" height={240}>
+        <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 12 }} barCategoryGap={1}>
+          <CartesianGrid stroke={chrome.grid} vertical={false} />
+          <XAxis
+            dataKey="label"
+            tick={(tickProps) => <IntradayTick {...tickProps} chrome={chrome} data={data} />}
+            axisLine={{ stroke: chrome.axis }}
+            tickLine={false}
+            interval={0}
+            height={36}
+          />
+          <YAxis
+            tick={{ fill: chrome.mutedText, fontSize: 12 }}
+            axisLine={false}
+            tickLine={false}
+            width={44}
+            allowDecimals={false}
+          />
+          <Tooltip content={<ChartTooltip chrome={chrome} />} />
+          {dateChangePoint && (
+            <ReferenceLine x={dateChangePoint.label} stroke={chrome.axis} strokeDasharray="4 4" />
+          )}
+          <Bar dataKey="print" name="Print Pages" stackId="pages" fill={printColor} maxBarSize={12} />
+          <Bar
+            dataKey="copy"
+            name="Copy Pages (tracked)"
+            stackId="pages"
+            fill={copyColor}
+            radius={[3, 3, 0, 0]}
+            maxBarSize={12}
+          />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
