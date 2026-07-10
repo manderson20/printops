@@ -70,7 +70,7 @@ export default function NewPrinterPage() {
   }
 
   return (
-    <div className="flex w-full max-w-lg flex-col">
+    <div className="mx-auto flex w-full max-w-lg flex-col">
       <form
         onSubmit={handleSubmit}
         className="flex flex-col gap-4 rounded-xl border border-black/[.08] bg-white p-8 dark:border-white/[.145] dark:bg-black"

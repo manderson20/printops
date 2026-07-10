@@ -18,6 +18,13 @@ class KnownDeviceOut(BaseModel):
     override_note: str | None
 
 
+class KnownDevicePage(BaseModel):
+    items: list[KnownDeviceOut]
+    total: int
+    page: int
+    page_size: int
+
+
 class DeviceOverrideUpdate(BaseModel):
     resolved_email: str
     note: str | None = None

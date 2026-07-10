@@ -9,8 +9,8 @@ CopierUsageRecord rows (see MfpDevice/CopierUsageRecord docstrings)."""
 
 import asyncio
 
-from app.core.crypto import decrypt
 from app.copiers.connector import ConnectionTestResult, CopierConnector, MeterSnapshot
+from app.core.crypto import decrypt
 from app.models.mfp_device import MfpDevice
 from app.printers.snmp_counters import (
     SYS_DESCR_OID,
@@ -18,8 +18,8 @@ from app.printers.snmp_counters import (
     SnmpConfig,
     SnmpProbeError,
     VendorBreakdown,
-    get_sys_descr_vendor_profile,
     get_standard_total,
+    get_sys_descr_vendor_profile,
     snmp_get,
 )
 
