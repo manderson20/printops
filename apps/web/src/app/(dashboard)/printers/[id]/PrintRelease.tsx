@@ -172,12 +172,16 @@ export function PrintReleaseCard({
 
   return (
     <Card>
-      <CardTitle className="mb-3">Print Release</CardTitle>
+      <CardTitle className="mb-3">Print Release &amp; Follow-Me Printing</CardTitle>
       <p className="mb-4 text-xs text-zinc-500">
-        When enabled, every job sent to this printer is held instead of printed immediately —
-        staff release it themselves at a kiosk (any iPad, Chromebook, or browser can load the
-        link below) by entering their Google Workspace Employee ID. Prevents accidental prints
-        and mixed-up output at shared printers.
+        Two independent ways to hold a job instead of printing it immediately — staff release it
+        themselves at a kiosk (any iPad, Chromebook, or browser can load the link below) by
+        entering their Google Workspace Employee ID. Prevents accidental prints and mixed-up
+        output at shared printers. <strong>Print Release</strong> below only releases at this one
+        printer; <strong>Follow-Me Printing</strong> further down releases at any printer that has
+        it enabled, which is the better fit for a bank of shared printers where staff end up at
+        whichever one is free. Both share the same kiosk link, and either can be turned on without
+        the other.
       </p>
 
       {!printer.is_virtual && (
@@ -194,10 +198,8 @@ export function PrintReleaseCard({
       )}
 
       <p className="mb-1 mt-4 text-xs text-zinc-500">
-        Follow-Me Printing is a separate, opt-in mode: a job held here can be released at{" "}
-        <em>any</em> other printer that also has Follow-Me enabled, not just this one — useful for
-        a bank of shared printers where staff release wherever they end up. Sits alongside release
-        above; either one turned on shares the same kiosk link.
+        A job held here can be released at <em>any</em> other printer that also has Follow-Me
+        enabled — not just this one.
       </p>
       {printer.is_virtual ? (
         <p className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">

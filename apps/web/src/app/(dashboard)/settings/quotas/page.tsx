@@ -68,6 +68,16 @@ export default function QuotaSettingsPage() {
         real job until you&rsquo;ve confirmed it&rsquo;s right.
       </p>
 
+      <p className="mb-4 text-xs text-zinc-500">
+        There are two other, independent ways a job can be held instead of
+        printing immediately — <strong>Print Release</strong> (a PIN kiosk at
+        one specific printer) and <strong>Follow-Me Printing</strong>
+        (releasable at any printer that&rsquo;s opted in, including a virtual
+        Follow-Me queue with no physical printer of its own). Neither has a
+        global setting here — both are turned on per printer, on that
+        printer&rsquo;s own Release &amp; Quotas tab.
+      </p>
+
       {state.phase === "loading" && <Spinner label="Loading…" />}
       {state.phase === "error" && <ErrorState>{state.message}</ErrorState>}
 
