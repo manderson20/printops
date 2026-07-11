@@ -5,6 +5,21 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.44.0] - 2026-07-11
+
+- **New: Virtual Follow-Me queue.** Printers > Add Follow-Me Queue creates
+  a queue with no real device behind it — clients can select it (and it
+  can be pushed via MDM) just like a physical printer, but every job sent
+  to it is always held and only ever bound to a real device at release
+  time, at whichever Follow-Me-enabled printer the person walks up to.
+  CUPS queue sync skips the real-device probe for these (there's nothing
+  to reach) and uses a generic driverless PPD that already defaults to
+  full color, avoiding a virtual-queue version of the earlier color-copier
+  grayscale-default bug. Background status/SNMP polling and the manual
+  rediscover/check-status/release-bypass actions all correctly no-op or
+  reject for a virtual printer, since none of that applies to something
+  unreachable.
+
 ## [0.43.0] - 2026-07-11
 
 - **New: Follow-Me Printing.** A per-printer opt-in (`follow_me_enabled`)
