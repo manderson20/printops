@@ -5,6 +5,16 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.43.0] - 2026-07-11
+
+- **New: Follow-Me Printing.** A per-printer opt-in (`follow_me_enabled`)
+  that sits alongside the existing Print Release toggle rather than
+  replacing it — a job held because a printer has this on becomes
+  releasable at *any* other printer that also has it enabled, not just
+  the one it was originally sent to, via the same PIN kiosk. Useful for a
+  bank of shared printers where staff end up releasing wherever they're
+  standing rather than walking back to the exact device they printed to.
+
 ## [0.42.0] - 2026-07-10
 
 - **New: Zabbix integration.** Settings > Integrations > Zabbix lets an
