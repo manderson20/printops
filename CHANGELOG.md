@@ -5,6 +5,16 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.44.1] - 2026-07-11
+
+- **Document Print Release & Follow-Me Printing in settings/printer help
+  text.** Settings > Quotas — the nearest existing global settings screen
+  — didn't mention either feature at all, so there was no way to discover
+  they exist from Settings; added a pointer that both are configured per
+  printer. The printer detail page's own Release & Quotas tab now
+  introduces both mechanisms together up front instead of leaving
+  Follow-Me as a secondary blurb next to its own checkbox.
+
 ## [0.44.0] - 2026-07-11
 
 - **New: Virtual Follow-Me queue.** Printers > Add Follow-Me Queue creates
