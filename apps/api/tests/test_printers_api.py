@@ -1333,3 +1333,54 @@ def test_create_virtual_queue_skips_release_queue_sync(client, auth_headers, mon
     )
     assert response.status_code == 201
     assert sync_calls == [True]
+
+
+def test_tls_supported_detected_when_advertised(client, auth_headers, monkeypatch):
+    async def fake_probe_printer(ip_address, port=631, tls=False, timeout=5, ipp_path=None):
+        return ProbeResult(
+            raw_attributes={
+                "printer-make-and-model": "Mock MFP 3000",
+                "uri-security-supported": ["none", "tls"],
+            },
+            resolved_path=ipp_path or "/ipp/print",
+        )
+
+    monkeypatch.setattr(printer_discovery, "probe_printer", fake_probe_printer)
+    response = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "TLS-Capable Printer", "ip_address": "10.0.0.40"},
+    )
+    assert response.status_code == 201
+    assert response.json()["capabilities"]["tls_supported"] is True
+
+
+def test_tls_supported_false_when_not_advertised(client, auth_headers, mock_successful_probe):
+    # mock_successful_probe's raw_attributes has no uri-security-supported key at all.
+    response = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "No TLS Signal Printer", "ip_address": "10.0.0.41"},
+    )
+    assert response.status_code == 201
+    assert response.json()["capabilities"]["tls_supported"] is False
+
+
+def test_tls_supported_false_when_only_none_advertised(client, auth_headers, monkeypatch):
+    async def fake_probe_printer(ip_address, port=631, tls=False, timeout=5, ipp_path=None):
+        return ProbeResult(
+            raw_attributes={
+                "printer-make-and-model": "Mock MFP 3000",
+                "uri-security-supported": ["none"],
+            },
+            resolved_path=ipp_path or "/ipp/print",
+        )
+
+    monkeypatch.setattr(printer_discovery, "probe_printer", fake_probe_printer)
+    response = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Plain IPP Only Printer", "ip_address": "10.0.0.42"},
+    )
+    assert response.status_code == 201
+    assert response.json()["capabilities"]["tls_supported"] is False

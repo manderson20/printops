@@ -34,6 +34,10 @@ REQUESTED_ATTRIBUTES: list[str] = [
     "job-accounting-user-id-supported",
     "multiple-document-handling-supported",
     "document-format-supported",
+    # RFC 8011's signal for IPPS/TLS support — a 1setOf keyword parallel to
+    # printer-uri-supported, values like "none"/"tls". Purely advertised,
+    # not a live connection test (see _parse_tls_supported below).
+    "uri-security-supported",
 ]
 
 # IPP "finishings" enum values, per the PWG5100.1 Finishings registry.
@@ -195,6 +199,16 @@ def _parse_accounting_supported(raw: dict[str, Any]) -> bool:
     )
 
 
+def _parse_tls_supported(raw: dict[str, Any]) -> bool:
+    """Whether the device *advertises* IPPS support (RFC 8011's
+    uri-security-supported includes "tls") — not a live connection test,
+    same "trust what the device reports, don't guess" convention as every
+    other field here. A device that doesn't report this attribute at all
+    gets False, same as an unset color-supported/duplex-supported."""
+    values = [_scalar(v) for v in _as_list(raw.get("uri-security-supported"))]
+    return "tls" in values
+
+
 def parse_capabilities(raw: dict[str, Any]) -> dict[str, Any]:
     """Maps a raw IPP Get-Printer-Attributes dict to PrintOps's capability schema."""
     return {
@@ -213,4 +227,5 @@ def parse_capabilities(raw: dict[str, Any]) -> dict[str, Any]:
         "pin_printing_supported": _parse_pin_printing_supported(raw),
         "accounting_supported": _parse_accounting_supported(raw),
         "document_formats": [_scalar(v) for v in _as_list(raw.get("document-format-supported"))],
+        "tls_supported": _parse_tls_supported(raw),
     }

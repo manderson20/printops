@@ -23,6 +23,9 @@ class CapabilitiesOut(BaseModel):
     pin_printing_supported: bool = False
     accounting_supported: bool = False
     document_formats: list[str] = []
+    # Advertised (not live-tested) IPPS support — see
+    # app/printers/capabilities.py:_parse_tls_supported.
+    tls_supported: bool = False
 
 
 class PrinterCreate(BaseModel):

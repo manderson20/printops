@@ -68,6 +68,7 @@ export default function NewPrinterPage() {
   const currentUser = useCurrentUser();
   const [form, setForm] = useState(initialForm);
   const [airprintEnabled, setAirprintEnabled] = useState(false);
+  const [useTls, setUseTls] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [existingPrinters, setExistingPrinters] = useState<Printer[]>([]);
@@ -100,6 +101,7 @@ export default function NewPrinterPage() {
         name: form.name,
         ip_address: form.ip_address,
         airprint_enabled: airprintEnabled,
+        use_tls: useTls,
         manufacturer: form.manufacturer || null,
         model: form.model || null,
         hostname: form.hostname || null,
@@ -227,6 +229,26 @@ export default function NewPrinterPage() {
               Macs/iPads on the network — only devices explicitly configured to use it (e.g.
               via an MDM-pushed printer profile) can print to it. Turn on for general-use
               printers; leave off for anything handling confidential documents.
+            </span>
+          </span>
+        </label>
+
+        <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={useTls}
+            onChange={(e) => setUseTls(e.target.checked)}
+          />
+          <span>
+            Connect via TLS (IPPS)
+            <br />
+            <span className="text-xs text-zinc-500">
+              Off by default — most office printers use a self-signed certificate, so this
+              encrypts traffic to the printer without strongly verifying its identity, and not
+              every device handles IPPS cleanly. Only turn on if you&apos;ve confirmed this
+              specific printer supports it (the Discovered Capabilities panel will show &quot;IPPS
+              Supported&quot; after adding it if the device advertises it).
             </span>
           </span>
         </label>

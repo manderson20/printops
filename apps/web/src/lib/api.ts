@@ -77,6 +77,9 @@ export type Capabilities = {
   collation_supported: boolean;
   pin_printing_supported: boolean;
   accounting_supported: boolean;
+  // Advertised (not live-tested) IPPS support — see Printer.use_tls to
+  // actually turn TLS on.
+  tls_supported: boolean;
 };
 
 export type Printer = {

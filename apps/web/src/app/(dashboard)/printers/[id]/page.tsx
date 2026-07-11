@@ -51,6 +51,7 @@ export default function PrinterOverviewTab() {
     Object.fromEntries(editableFields.map(([field]) => [field, (printer as never)[field] ?? ""])),
   );
   const [airprintEnabled, setAirprintEnabled] = useState(printer.airprint_enabled);
+  const [useTls, setUseTls] = useState(printer.use_tls);
   const [saving, setSaving] = useState(false);
   const [rediscovering, setRediscovering] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(false);
@@ -62,7 +63,11 @@ export default function PrinterOverviewTab() {
     setSaving(true);
     setActionError(null);
     try {
-      const updated = await updatePrinter(printer.id, { ...form, airprint_enabled: airprintEnabled });
+      const updated = await updatePrinter(printer.id, {
+        ...form,
+        airprint_enabled: airprintEnabled,
+        use_tls: useTls,
+      });
       setPrinter(updated);
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : "Failed to save changes");
@@ -178,6 +183,28 @@ export default function PrinterOverviewTab() {
           </span>
         </label>
 
+        {!printer.is_virtual && (
+          <label className="mt-4 flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={useTls}
+              disabled={!isAdmin}
+              onChange={(e) => setUseTls(e.target.checked)}
+            />
+            <span>
+              Connect via TLS (IPPS)
+              <br />
+              <span className="text-xs text-zinc-500">
+                Encrypts traffic between PrintOps and this printer. Most office printers use a
+                self-signed certificate, so this isn&apos;t strong endpoint verification, and not
+                every device handles IPPS cleanly — only turn on if you&apos;ve confirmed this
+                printer supports it.
+              </span>
+            </span>
+          </label>
+        )}
+
         {actionError && <ErrorState>{actionError}</ErrorState>}
         {isAdmin && (
           <Button onClick={handleSave} disabled={saving} className="mt-4">
@@ -211,6 +238,13 @@ export default function PrinterOverviewTab() {
 
         {!caps && !printer.capabilities_error && (
           <EmptyState>No capabilities detected yet.</EmptyState>
+        )}
+
+        {caps?.tls_supported && !printer.use_tls && (
+          <div className="mb-3 rounded border border-blue-300 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
+            This printer advertises IPPS (TLS) support but it&apos;s not turned on — enable
+            &quot;Connect via TLS (IPPS)&quot; above to encrypt traffic to it.
+          </div>
         )}
 
         {caps && (

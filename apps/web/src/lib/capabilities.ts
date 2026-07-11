@@ -7,6 +7,7 @@ export function capabilityBadges(caps: Capabilities | null): string[] {
   if (caps.color_supported) badges.push("Color");
   if (caps.pin_printing_supported) badges.push("PIN Release");
   if (caps.accounting_supported) badges.push("Accounting Codes");
+  if (caps.tls_supported) badges.push("IPPS Supported");
   for (const finishing of caps.finishings) {
     badges.push(
       finishing
