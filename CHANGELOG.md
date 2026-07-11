@@ -5,6 +5,18 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.45.0] - 2026-07-11
+
+- **New: TLS (IPPS) toggle + auto-detection.** `Printer.use_tls` was
+  already fully wired through the backend (CUPS queue resync, scheme
+  selection when delivering to the real printer) but had no control
+  anywhere in the UI — added a checkbox to both Add Printer and the
+  printer detail page. Capability discovery now also requests the IPP
+  attribute that reveals whether a device advertises IPPS support at all
+  (`uri-security-supported`, no extra network round-trip), shown as an
+  "IPPS Supported" badge with a nudge to turn the toggle on when a
+  printer advertises it but isn't using it yet.
+
 ## [0.44.1] - 2026-07-11
 
 - **Document Print Release & Follow-Me Printing in settings/printer help
