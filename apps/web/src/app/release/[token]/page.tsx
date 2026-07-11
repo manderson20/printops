@@ -181,6 +181,9 @@ function JobsScreen({
                 {new Date(job.created_at).toLocaleString()}
                 {job.page_count ? ` · ${job.page_count} pages` : ""}
               </span>
+              {job.printer_name && (
+                <span className="text-xs text-white/40">Sent to {job.printer_name}</span>
+              )}
             </div>
             <button
               type="button"

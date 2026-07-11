@@ -75,6 +75,7 @@ class PrinterUpdate(BaseModel):
     toner_cartridge_model: str | None = None
 
     release_required: bool | None = None
+    follow_me_enabled: bool | None = None
 
     snmp_enabled: bool | None = None
     snmp_port: int | None = None
@@ -169,6 +170,7 @@ class PrinterOut(BaseModel):
     archived_at: datetime | None
 
     release_required: bool
+    follow_me_enabled: bool
     release_token: str | None
 
     snmp_enabled: bool

@@ -32,6 +32,7 @@ export function PrintReleaseCard({
 }) {
   const isAdmin = useCurrentUser()?.role === "admin";
   const [toggling, setToggling] = useState(false);
+  const [togglingFollowMe, setTogglingFollowMe] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -115,6 +116,21 @@ export function PrintReleaseCard({
     }
   }
 
+  async function handleToggleFollowMe() {
+    setTogglingFollowMe(true);
+    setError(null);
+    try {
+      const updated = await updatePrinter(printer.id, {
+        follow_me_enabled: !printer.follow_me_enabled,
+      });
+      onUpdate(updated);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to update printer");
+    } finally {
+      setTogglingFollowMe(false);
+    }
+  }
+
   async function handleRegenerate() {
     if (!confirm("Regenerate the kiosk link? The old URL will stop working immediately.")) return;
     setRegenerating(true);
@@ -175,7 +191,24 @@ export function PrintReleaseCard({
         <span>Require release for this printer</span>
       </label>
 
-      {printer.release_required && (
+      <p className="mb-1 mt-4 text-xs text-zinc-500">
+        Follow-Me Printing is a separate, opt-in mode: a job held here can be released at{" "}
+        <em>any</em> other printer that also has Follow-Me enabled, not just this one — useful for
+        a bank of shared printers where staff release wherever they end up. Sits alongside release
+        above; either one turned on shares the same kiosk link.
+      </p>
+      <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={printer.follow_me_enabled}
+          disabled={togglingFollowMe}
+          onChange={handleToggleFollowMe}
+        />
+        <span>Enable Follow-Me Printing</span>
+      </label>
+
+      {(printer.release_required || printer.follow_me_enabled) && (
         <div className="mt-4 flex flex-col gap-2">
           <span className="text-xs font-medium text-zinc-500">Kiosk URL</span>
           {kioskUrl ? (

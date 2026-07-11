@@ -24,6 +24,13 @@ class HeldJobOut(BaseModel):
     page_count: int | None
     created_at: datetime
     held_expires_at: datetime | None
+    # The originating printer's name, only when it differs from the kiosk
+    # being viewed (i.e. a follow_me job released somewhere other than
+    # where it was submitted) — None for an ordinary same-printer
+    # pin_release job, so the kiosk UI only shows it when it'd disambiguate
+    # anything. Attached by the router (app/routers/release.py), not a real
+    # Job column, so from_attributes alone won't populate it.
+    printer_name: str | None = None
 
     model_config = {"from_attributes": True}
 

@@ -125,17 +125,21 @@ async def resolve_hold_reason(
     """The single decision point for whether a newly-created job should be
     held, and why — called once from create_job, before the CUPS backend
     script's spool/PATCH step (infra/cups/backends/printops) acts on it.
-    "pin_release" always wins over "quota" when both would apply, since a
-    release_required printer's PIN kiosk already handles delivery. A
-    bypassed user is treated exactly as if release_required were off for
-    them — they still fall through to ordinary quota resolution below,
-    rather than skipping every hold outright."""
-    if printer.release_required:
+    "pin_release"/"follow_me" always win over "quota" when both would apply,
+    since a release_required/follow_me_enabled printer's PIN kiosk already
+    handles delivery. follow_me_enabled wins over release_required when a
+    printer has both on, since it's the strictly more permissive routing —
+    the job stays releasable at this same printer too, just also at any
+    other follow_me_enabled one (app/routers/release.py). A bypassed user is
+    treated exactly as if both flags were off for them — they still fall
+    through to ordinary quota resolution below, rather than skipping every
+    hold outright."""
+    if printer.release_required or printer.follow_me_enabled:
         bypassed = submitted_by is not None and await has_release_bypass(
             db, printer.id, submitted_by
         )
         if not bypassed:
-            return "pin_release"
+            return "follow_me" if printer.follow_me_enabled else "pin_release"
 
     if submitted_by is None:
         return None

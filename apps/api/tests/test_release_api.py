@@ -64,6 +64,36 @@ async def printer_with_release(db_session_factory):
 
 
 @pytest_asyncio.fixture
+async def follow_me_printer_a(db_session_factory):
+    async with db_session_factory() as session:
+        printer = Printer(
+            name="Printer A",
+            ip_address="10.0.0.20",
+            follow_me_enabled=True,
+            release_token="follow-me-token-a",
+        )
+        session.add(printer)
+        await session.commit()
+        await session.refresh(printer)
+        return printer
+
+
+@pytest_asyncio.fixture
+async def follow_me_printer_b(db_session_factory):
+    async with db_session_factory() as session:
+        printer = Printer(
+            name="Printer B",
+            ip_address="10.0.0.21",
+            follow_me_enabled=True,
+            release_token="follow-me-token-b",
+        )
+        session.add(printer)
+        await session.commit()
+        await session.refresh(printer)
+        return printer
+
+
+@pytest_asyncio.fixture
 async def alice(db_session_factory):
     async with db_session_factory() as session:
         user = GoogleWorkspaceUser(
@@ -215,6 +245,59 @@ async def test_quota_held_job_cannot_be_self_released(
         f"/api/v1/release/test-token-123/jobs/{job.id}/release", json={"pin": "1001"}
     )
     assert response.status_code == 404
+
+
+async def test_follow_me_job_visible_at_other_follow_me_printer(
+    client, follow_me_printer_a, follow_me_printer_b, alice, db_session_factory
+):
+    await _make_held_job(
+        db_session_factory, follow_me_printer_a.id, alice.email, hold_reason="follow_me"
+    )
+    response = client.post("/api/v1/release/follow-me-token-b/jobs", json={"pin": "1001"})
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["printer_name"] == "Printer A"
+
+
+async def test_follow_me_job_not_visible_at_non_follow_me_printer(
+    client, follow_me_printer_a, printer_with_release, alice, db_session_factory
+):
+    await _make_held_job(
+        db_session_factory, follow_me_printer_a.id, alice.email, hold_reason="follow_me"
+    )
+    response = client.post("/api/v1/release/test-token-123/jobs", json={"pin": "1001"})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_pin_release_job_not_visible_at_a_different_printers_kiosk_even_if_follow_me(
+    client, printer_with_release, follow_me_printer_b, alice, db_session_factory
+):
+    await _make_held_job(
+        db_session_factory, printer_with_release.id, alice.email, hold_reason="pin_release"
+    )
+    response = client.post("/api/v1/release/follow-me-token-b/jobs", json={"pin": "1001"})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_follow_me_job_releases_via_the_kiosks_own_printer(
+    client, follow_me_printer_a, follow_me_printer_b, alice, db_session_factory
+):
+    job = await _make_held_job(
+        db_session_factory, follow_me_printer_a.id, alice.email, hold_reason="follow_me"
+    )
+    with patch("app.routers.release.submit_released_job", return_value="ok") as mock_submit:
+        response = client.post(
+            f"/api/v1/release/follow-me-token-b/jobs/{job.id}/release", json={"pin": "1001"}
+        )
+    assert response.status_code == 200
+    assert response.json()["status"] == "forwarded"
+    # Delivered to Printer B's queue (the kiosk actually released at), not
+    # Printer A (where the job was originally submitted) — this is the
+    # cross-printer redirect that makes it "follow-me".
+    assert mock_submit.call_args.args[0] == str(follow_me_printer_b.id)
 
 
 def test_repeated_wrong_pins_get_rate_limited(client, printer_with_release):

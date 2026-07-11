@@ -89,6 +89,16 @@ class Printer(Base, TimestampMixin):
     # and app/printers/release.py for how a held job is later delivered via
     # a second, internal-only CUPS queue (scripts/sync_release_queue.sh).
     release_required: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # Print-and-release, follow-me variant. Sits alongside release_required
+    # rather than replacing it — a job held because of this flag gets
+    # hold_reason="follow_me" instead of "pin_release" (app/quotas/service.py:
+    # resolve_hold_reason) and becomes releasable at *any* printer whose own
+    # follow_me_enabled is also true, not just this one — see
+    # app/routers/release.py's relaxed query for follow_me jobs. Shares the
+    # same release_token/kiosk URL as release_required; toggling either one
+    # on will provision a token if this printer doesn't already have one
+    # (app/routers/printers.py:update_printer).
+    follow_me_enabled: Mapped[bool] = mapped_column(default=False, server_default="false")
     # Opaque, unguessable — identifies this printer in the public kiosk URL
     # (/release/<token>) instead of exposing the raw printer id. Regenerable
     # by an admin (e.g. a lost/reissued kiosk iPad) without needing to

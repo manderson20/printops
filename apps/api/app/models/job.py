@@ -61,15 +61,18 @@ class Job(Base, TimestampMixin):
     # are already terminal.
     status: Mapped[str] = mapped_column(default="received", server_default="received")
     # Why status="held" — "pin_release" (Printer.release_required, releasable
-    # by the submitter's own PIN at the kiosk) or "quota" (over a
+    # by the submitter's own PIN at that printer's own kiosk only), "follow_me"
+    # (Printer.follow_me_enabled, releasable by the submitter's own PIN at
+    # *any* printer whose follow_me_enabled is also true — see
+    # app/routers/release.py's relaxed query), or "quota" (over a
     # PrinterUserQuota limit, releasable only by an admin — see
     # app/routers/quota_holds.py). None until the job is actually held.
     # Decided once, at create_job time (app/quotas/service.py:resolve_hold_reason),
     # even though the CUPS backend script doesn't act on it (spool + PATCH
     # status="held") until slightly later in the same request — see
     # infra/cups/backends/printops. The self-service PIN kiosk
-    # (app/routers/release.py) filters to hold_reason="pin_release" only, so
-    # a quota hold can never be released there.
+    # (app/routers/release.py) filters to hold_reason in ("pin_release",
+    # "follow_me") only, so a quota hold can never be released there.
     hold_reason: Mapped[str | None] = mapped_column(default=None)
     error_message: Mapped[str | None] = mapped_column(default=None)
 

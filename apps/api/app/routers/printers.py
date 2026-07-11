@@ -211,11 +211,12 @@ async def update_printer(
         printer.ldap_bind_password_hash = (
             hash_password(ldap_bind_password) if ldap_bind_password else None
         )
-    # First time release is turned on for this printer, it needs a token to
-    # exist at all — generated here rather than requiring a separate manual
-    # step before the toggle does anything useful. Regenerating an existing
-    # one (e.g. a lost/reissued kiosk) is POST /{id}/regenerate-release-token.
-    if printer.release_required and not printer.release_token:
+    # First time release (either mode) is turned on for this printer, it
+    # needs a token to exist at all — generated here rather than requiring a
+    # separate manual step before the toggle does anything useful. Both
+    # modes share one kiosk/token. Regenerating an existing one (e.g. a
+    # lost/reissued kiosk) is POST /{id}/regenerate-release-token.
+    if (printer.release_required or printer.follow_me_enabled) and not printer.release_token:
         printer.release_token = secrets.token_urlsafe(16)
     await db.commit()
     await db.refresh(printer)

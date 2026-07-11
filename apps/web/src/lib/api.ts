@@ -106,6 +106,7 @@ export type Printer = {
   status_checked_at: string | null;
   archived_at: string | null;
   release_required: boolean;
+  follow_me_enabled: boolean;
   release_token: string | null;
   snmp_enabled: boolean;
   snmp_port: number | null;
@@ -163,6 +164,7 @@ export type PrinterCreateInput = {
 
 export type PrinterUpdateInput = Partial<PrinterCreateInput> & {
   release_required?: boolean;
+  follow_me_enabled?: boolean;
   snmp_enabled?: boolean;
   snmp_port?: number | null;
   // "" clears the override back to the global default (see
@@ -2308,6 +2310,9 @@ export type HeldJob = {
   page_count: number | null;
   created_at: string;
   held_expires_at: string | null;
+  // Only set for a follow-me job shown/released somewhere other than
+  // where it was submitted — see HeldJobOut's docstring (app/schemas/release.py).
+  printer_name: string | null;
 };
 
 export class ReleaseApiError extends Error {
