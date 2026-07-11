@@ -82,7 +82,10 @@ export type Capabilities = {
 export type Printer = {
   id: string;
   name: string;
-  ip_address: string;
+  // True for a virtual Follow-Me queue (no real device behind it) —
+  // see createVirtualFollowMeQueue below. ip_address is null for these.
+  is_virtual: boolean;
+  ip_address: string | null;
   port: number;
   use_tls: boolean;
   ipp_path: string | null;
@@ -182,6 +185,24 @@ export type PrinterUpdateInput = Partial<PrinterCreateInput> & {
   scan_email_address?: string | null;
   scan_password?: string | null;
 };
+
+export type VirtualQueueCreateInput = {
+  name: string;
+  building?: string | null;
+  room?: string | null;
+  department?: string | null;
+  notes?: string | null;
+};
+
+export async function createVirtualFollowMeQueue(
+  input: VirtualQueueCreateInput,
+): Promise<Printer> {
+  const response = await authorizedFetch("/api/v1/printers/virtual", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
 
 export async function listPrinters(params?: { includeArchived?: boolean }): Promise<Printer[]> {
   const qs = params?.includeArchived ? "?include_archived=true" : "";

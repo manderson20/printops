@@ -130,8 +130,8 @@ def mock_queue_sync(monkeypatch):
     to a no-op success so existing tests don't try to actually run
     scripts/sync_cups_queue.sh. Tests exercising sync behavior itself
     override sync_queue/remove_queue again with their own monkeypatch."""
-    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id: None)
-    monkeypatch.setattr(printers_router, "remove_queue", lambda printer_id: None)
+    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id, is_virtual=False: None)
+    monkeypatch.setattr(printers_router, "remove_queue", lambda printer_id, is_virtual=False: None)
 
 
 def test_create_requires_auth(client):
@@ -374,7 +374,11 @@ def test_mdm_connection_requires_auth(client):
 
 def test_create_printer_syncs_queue(client, auth_headers, mock_failed_probe, monkeypatch):
     calls = []
-    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id: calls.append(printer_id))
+    monkeypatch.setattr(
+        printers_router,
+        "sync_queue",
+        lambda printer_id, is_virtual=False: calls.append(printer_id),
+    )
 
     response = client.post(
         "/api/v1/printers",
@@ -392,7 +396,7 @@ def test_create_printer_records_queue_sync_error(
 ):
     from app.printers.queue_sync import QueueSyncError
 
-    def fake_sync_queue(printer_id):
+    def fake_sync_queue(printer_id, is_virtual=False):
         raise QueueSyncError("Unknown destination")
 
     monkeypatch.setattr(printers_router, "sync_queue", fake_sync_queue)
@@ -410,7 +414,11 @@ def test_update_printer_resyncs_only_on_queue_affecting_fields(
     client, auth_headers, mock_failed_probe, monkeypatch
 ):
     calls = []
-    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id: calls.append(printer_id))
+    monkeypatch.setattr(
+        printers_router,
+        "sync_queue",
+        lambda printer_id, is_virtual=False: calls.append(printer_id),
+    )
 
     create = client.post(
         "/api/v1/printers",
@@ -459,7 +467,9 @@ def test_resync_queue_clears_prior_error(client, auth_headers, mock_failed_probe
     monkeypatch.setattr(
         printers_router,
         "sync_queue",
-        lambda printer_id: (_ for _ in ()).throw(QueueSyncError("printer offline")),
+        lambda printer_id, is_virtual=False: (_ for _ in ()).throw(
+            QueueSyncError("printer offline")
+        ),
     )
     create = client.post(
         "/api/v1/printers",
@@ -469,7 +479,7 @@ def test_resync_queue_clears_prior_error(client, auth_headers, mock_failed_probe
     printer_id = create.json()["id"]
     assert create.json()["queue_sync_error"] == "printer offline"
 
-    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id: None)
+    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id, is_virtual=False: None)
     response = client.post(f"/api/v1/printers/{printer_id}/resync-queue", headers=auth_headers)
     assert response.status_code == 200
     assert response.json()["queue_sync_error"] is None
@@ -497,7 +507,7 @@ async def test_apply_queue_sync_survives_printer_deleted_mid_flight(monkeypatch)
         async def rollback(self):
             self.rolled_back = True
 
-    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id: None)
+    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id, is_virtual=False: None)
     printer = Printer(name="t", ip_address="10.0.0.1")
     fake_db = FakeSession()
 
@@ -571,7 +581,11 @@ def test_enabling_release_required_resyncs_the_queue(
     client, auth_headers, mock_failed_probe, monkeypatch
 ):
     calls = []
-    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id: calls.append(printer_id))
+    monkeypatch.setattr(
+        printers_router,
+        "sync_queue",
+        lambda printer_id, is_virtual=False: calls.append(printer_id),
+    )
 
     create = client.post(
         "/api/v1/printers",
@@ -1009,9 +1023,11 @@ def test_unarchive_printer_resyncs_queue_and_clears_archived_at(
     client, auth_headers, mock_failed_probe, monkeypatch
 ):
     sync_calls = []
-    monkeypatch.setattr(printers_router, "remove_queue", lambda printer_id: None)
+    monkeypatch.setattr(printers_router, "remove_queue", lambda printer_id, is_virtual=False: None)
     monkeypatch.setattr(
-        printers_router, "sync_queue", lambda printer_id: sync_calls.append(printer_id)
+        printers_router,
+        "sync_queue",
+        lambda printer_id, is_virtual=False: sync_calls.append(printer_id),
     )
 
     create = client.post(
@@ -1183,3 +1199,137 @@ def test_update_toner_cartridges_preserves_detected_fields_across_put(
     body = response.json()[0]
     assert body["cost"] == 62.5
     assert body["detected_description"] == "056H Black"
+
+
+def test_create_virtual_queue_defaults(client, auth_headers):
+    response = client.post(
+        "/api/v1/printers/virtual",
+        headers=auth_headers,
+        json={"name": "Follow-Me Printing", "building": "Main"},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["is_virtual"] is True
+    assert body["ip_address"] is None
+    assert body["follow_me_enabled"] is True
+    assert body["release_required"] is False
+    assert body["release_token"] is not None
+    assert body["airprint_enabled"] is True
+    assert body["snmp_enabled"] is False
+    assert body["building"] == "Main"
+
+
+def test_create_virtual_queue_requires_admin(client):
+    response = client.post("/api/v1/printers/virtual", json={"name": "Follow-Me Printing"})
+    assert response.status_code == 401
+
+
+def test_update_virtual_queue_cannot_disable_follow_me(client, auth_headers):
+    create = client.post(
+        "/api/v1/printers/virtual", headers=auth_headers, json={"name": "Follow-Me Printing"}
+    )
+    printer_id = create.json()["id"]
+    response = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"follow_me_enabled": False},
+    )
+    assert response.status_code == 400
+
+
+def test_update_virtual_queue_cannot_enable_release_required(client, auth_headers):
+    create = client.post(
+        "/api/v1/printers/virtual", headers=auth_headers, json={"name": "Follow-Me Printing"}
+    )
+    printer_id = create.json()["id"]
+    response = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"release_required": True},
+    )
+    assert response.status_code == 400
+
+
+def test_update_virtual_queue_allows_unrelated_fields(client, auth_headers):
+    create = client.post(
+        "/api/v1/printers/virtual", headers=auth_headers, json={"name": "Follow-Me Printing"}
+    )
+    printer_id = create.json()["id"]
+    response = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"department": "IT"},
+    )
+    assert response.status_code == 200
+    assert response.json()["department"] == "IT"
+
+
+def test_check_status_rejects_virtual_printer(client, auth_headers):
+    create = client.post(
+        "/api/v1/printers/virtual", headers=auth_headers, json={"name": "Follow-Me Printing"}
+    )
+    printer_id = create.json()["id"]
+    response = client.post(f"/api/v1/printers/{printer_id}/check-status", headers=auth_headers)
+    assert response.status_code == 400
+
+
+def test_check_counters_rejects_virtual_printer(client, auth_headers):
+    create = client.post(
+        "/api/v1/printers/virtual", headers=auth_headers, json={"name": "Follow-Me Printing"}
+    )
+    printer_id = create.json()["id"]
+    response = client.post(f"/api/v1/printers/{printer_id}/check-counters", headers=auth_headers)
+    assert response.status_code == 400
+
+
+def test_discover_rejects_virtual_printer(client, auth_headers):
+    create = client.post(
+        "/api/v1/printers/virtual", headers=auth_headers, json={"name": "Follow-Me Printing"}
+    )
+    printer_id = create.json()["id"]
+    response = client.post(f"/api/v1/printers/{printer_id}/discover", headers=auth_headers)
+    assert response.status_code == 400
+
+
+def test_release_bypass_rejects_virtual_printer(client, auth_headers):
+    create = client.post(
+        "/api/v1/printers/virtual", headers=auth_headers, json={"name": "Follow-Me Printing"}
+    )
+    printer_id = create.json()["id"]
+    response = client.post(
+        f"/api/v1/printers/{printer_id}/release-bypasses",
+        headers=auth_headers,
+        json={"user_email": "someone@example.org"},
+    )
+    assert response.status_code == 400
+
+
+def test_create_virtual_queue_does_not_call_capability_discovery(
+    client, auth_headers, monkeypatch
+):
+    called = False
+
+    async def fake_refresh(printer):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(printers_router, "refresh_printer_capabilities", fake_refresh)
+    response = client.post(
+        "/api/v1/printers/virtual", headers=auth_headers, json={"name": "Follow-Me Printing"}
+    )
+    assert response.status_code == 201
+    assert called is False
+
+
+def test_create_virtual_queue_skips_release_queue_sync(client, auth_headers, monkeypatch):
+    sync_calls = []
+    monkeypatch.setattr(
+        printers_router,
+        "sync_queue",
+        lambda printer_id, is_virtual=False: sync_calls.append(is_virtual),
+    )
+    response = client.post(
+        "/api/v1/printers/virtual", headers=auth_headers, json={"name": "Follow-Me Printing"}
+    )
+    assert response.status_code == 201
+    assert sync_calls == [True]

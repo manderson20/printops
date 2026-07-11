@@ -180,16 +180,18 @@ export function PrintReleaseCard({
         and mixed-up output at shared printers.
       </p>
 
-      <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-        <input
-          type="checkbox"
-          className="mt-1"
-          checked={printer.release_required}
-          disabled={toggling}
-          onChange={handleToggle}
-        />
-        <span>Require release for this printer</span>
-      </label>
+      {!printer.is_virtual && (
+        <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={printer.release_required}
+            disabled={toggling}
+            onChange={handleToggle}
+          />
+          <span>Require release for this printer</span>
+        </label>
+      )}
 
       <p className="mb-1 mt-4 text-xs text-zinc-500">
         Follow-Me Printing is a separate, opt-in mode: a job held here can be released at{" "}
@@ -197,16 +199,26 @@ export function PrintReleaseCard({
         a bank of shared printers where staff release wherever they end up. Sits alongside release
         above; either one turned on shares the same kiosk link.
       </p>
-      <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-        <input
-          type="checkbox"
-          className="mt-1"
-          checked={printer.follow_me_enabled}
-          disabled={togglingFollowMe}
-          onChange={handleToggleFollowMe}
-        />
-        <span>Enable Follow-Me Printing</span>
-      </label>
+      {printer.is_virtual ? (
+        <p className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <input type="checkbox" className="mt-1" checked disabled />
+          <span>
+            Follow-Me Printing is always on for a virtual queue — it has no physical location of
+            its own to release at, so it can only ever be released elsewhere.
+          </span>
+        </p>
+      ) : (
+        <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={printer.follow_me_enabled}
+            disabled={togglingFollowMe}
+            onChange={handleToggleFollowMe}
+          />
+          <span>Enable Follow-Me Printing</span>
+        </label>
+      )}
 
       {(printer.release_required || printer.follow_me_enabled) && (
         <div className="mt-4 flex flex-col gap-2">
@@ -232,6 +244,7 @@ export function PrintReleaseCard({
             {regenerating ? "Regenerating…" : "Regenerate Link"}
           </Button>
 
+          {!printer.is_virtual && (
           <div className="mt-2 border-t border-black/[.08] pt-4 dark:border-white/[.1]">
             <span className="text-xs font-medium text-zinc-500">
               Release Bypass — skips the kiosk for specific staff
@@ -292,6 +305,7 @@ export function PrintReleaseCard({
               ))}
             </datalist>
           </div>
+          )}
         </div>
       )}
 

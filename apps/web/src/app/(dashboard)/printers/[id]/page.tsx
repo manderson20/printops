@@ -33,11 +33,22 @@ const EDITABLE_FIELDS = [
   ["notes", "Notes"],
 ] as const;
 
+// A virtual Follow-Me queue has no real device — IP/manufacturer/model/
+// hostname/serial number are all meaningless for one.
+const VIRTUAL_EDITABLE_FIELDS = [
+  ["name", "Name"],
+  ["building", "Building"],
+  ["room", "Room"],
+  ["department", "Department"],
+  ["notes", "Notes"],
+] as const;
+
 export default function PrinterOverviewTab() {
   const { printer, setPrinter } = usePrinterDetail();
   const isAdmin = useCurrentUser()?.role === "admin";
+  const editableFields = printer.is_virtual ? VIRTUAL_EDITABLE_FIELDS : EDITABLE_FIELDS;
   const [form, setForm] = useState<Record<string, string>>(
-    Object.fromEntries(EDITABLE_FIELDS.map(([field]) => [field, (printer as never)[field] ?? ""])),
+    Object.fromEntries(editableFields.map(([field]) => [field, (printer as never)[field] ?? ""])),
   );
   const [airprintEnabled, setAirprintEnabled] = useState(printer.airprint_enabled);
   const [saving, setSaving] = useState(false);
@@ -88,6 +99,17 @@ export default function PrinterOverviewTab() {
 
   return (
     <div className="flex flex-col gap-6">
+      {printer.is_virtual && (
+        <Card>
+          <p className="text-sm text-zinc-500">
+            This is a virtual Follow-Me queue — it has no real device behind it, so there&apos;s
+            no status, capabilities, or usage counters to show here. Jobs sent to it are always
+            held and released at whichever real printer the person walks up to.
+          </p>
+        </Card>
+      )}
+
+      {!printer.is_virtual && (
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <CardTitle>Status</CardTitle>
@@ -121,11 +143,12 @@ export default function PrinterOverviewTab() {
           );
         })()}
       </Card>
+      )}
 
       <Card>
         <CardTitle className="mb-4">Details</CardTitle>
         <div className="grid grid-cols-2 gap-4">
-          {EDITABLE_FIELDS.map(([field, label]) => (
+          {editableFields.map(([field, label]) => (
             <Field key={field} label={label}>
               <Input
                 value={form[field] ?? ""}
@@ -163,6 +186,7 @@ export default function PrinterOverviewTab() {
         )}
       </Card>
 
+      {!printer.is_virtual && (
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <CardTitle>Discovered Capabilities</CardTitle>
@@ -218,10 +242,13 @@ export default function PrinterOverviewTab() {
           </div>
         )}
       </Card>
+      )}
 
-      <SnmpCountersCard printer={printer} onUpdate={setPrinter} />
+      {!printer.is_virtual && <SnmpCountersCard printer={printer} onUpdate={setPrinter} />}
 
-      <UsageHistoryCard printerId={printer.id} confidence={printer.page_count_confidence} />
+      {!printer.is_virtual && (
+        <UsageHistoryCard printerId={printer.id} confidence={printer.page_count_confidence} />
+      )}
     </div>
   );
 }

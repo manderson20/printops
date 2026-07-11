@@ -39,18 +39,23 @@ def _run(script: Path, printer_id: str, timeout: int) -> None:
         raise QueueSyncError(reason or f"{script.name} exited {result.returncode}.")
 
 
-def sync_queue(printer_id: str) -> None:
+def sync_queue(printer_id: str, is_virtual: bool = False) -> None:
     """Creates/updates this printer's CUPS queue + AirPrint advertisement to
     match its current connection details. Raises QueueSyncError on failure
     — callers should record this non-fatally (see Printer.queue_sync_error),
     not block the printer create/update over it.
 
     Also syncs the internal direct-delivery release queue
-    (app/printers/release.py) for every printer regardless of whether
-    release is currently enabled — cheap, and avoids a separate
-    create/remove lifecycle tied to toggling Printer.release_required."""
+    (app/printers/release.py) for every *physical* printer regardless of
+    whether release is currently enabled — cheap, and avoids a separate
+    create/remove lifecycle tied to toggling Printer.release_required.
+    Skipped for a virtual Follow-Me queue (Printer.is_virtual): that queue
+    exists only so a real printer can accept `lp -d` deliveries at release
+    time, and a virtual queue is never itself a release target — it has no
+    real device for the release queue to point at."""
     _run(SYNC_SCRIPT, printer_id, SYNC_TIMEOUT_SECONDS)
-    _run(SYNC_RELEASE_SCRIPT, printer_id, SYNC_TIMEOUT_SECONDS)
+    if not is_virtual:
+        _run(SYNC_RELEASE_SCRIPT, printer_id, SYNC_TIMEOUT_SECONDS)
 
 
 def remove_queue(printer_id: str) -> None:

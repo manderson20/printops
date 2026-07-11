@@ -140,6 +140,13 @@ async def test_resolve_hold_reason_follow_me_when_enabled(session_factory):
         assert reason == "follow_me"
 
 
+async def test_resolve_hold_reason_follow_me_for_virtual_queue(session_factory):
+    printer = await _make_printer(session_factory, is_virtual=True, follow_me_enabled=True)
+    async with session_factory() as session:
+        reason = await resolve_hold_reason(session, printer, "matt@example.org")
+        assert reason == "follow_me"
+
+
 async def test_resolve_hold_reason_follow_me_wins_over_pin_release(session_factory):
     printer = await _make_printer(session_factory, follow_me_enabled=True, release_required=True)
     async with session_factory() as session:

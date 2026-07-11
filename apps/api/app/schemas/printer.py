@@ -56,6 +56,23 @@ class PrinterCreate(BaseModel):
     snmp_vendor_profile: VendorProfile | None = None
 
 
+class VirtualQueueCreate(BaseModel):
+    """A Follow-Me queue with no real device behind it — deliberately a much
+    smaller field set than PrinterCreate (no ip_address/manufacturer/
+    model/SNMP — none of that applies to something that's never actually
+    reached over the network). See POST /printers/virtual
+    (app/routers/printers.py), which forces follow_me_enabled=True and
+    airprint_enabled=True at creation rather than exposing them here — a
+    virtual queue that isn't discoverable or releasable elsewhere would be
+    pointless."""
+
+    name: str
+    building: str | None = None
+    room: str | None = None
+    department: str | None = None
+    notes: str | None = None
+
+
 class PrinterUpdate(BaseModel):
     name: str | None = None
     ip_address: IPvAnyAddress | None = None
@@ -113,13 +130,18 @@ class PrinterConnectionOut(BaseModel):
     authenticated with the backend token, not user JWT."""
 
     name: str
-    ip_address: str
+    ip_address: str | None
     port: int
     use_tls: bool
     ipp_path: str | None
     airprint_enabled: bool
     capabilities: CapabilitiesOut | None
     release_required: bool
+    # Read by scripts/sync_cups_queue.sh to skip the real-device `-m
+    # everywhere` probe (there's no ip_address to probe) and go straight to
+    # the generic driverless PPD fallback it already had for unreachable
+    # printers.
+    is_virtual: bool
 
     model_config = {"from_attributes": True}
 
@@ -141,7 +163,8 @@ class PrinterMdmConnectionOut(BaseModel):
 class PrinterOut(BaseModel):
     id: UUID
     name: str
-    ip_address: str
+    is_virtual: bool
+    ip_address: str | None
     port: int
     use_tls: bool
     ipp_path: str | None

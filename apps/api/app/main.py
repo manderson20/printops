@@ -97,7 +97,14 @@ async def _printer_status_poll_loop() -> None:
         try:
             async with AsyncSessionLocal() as db:
                 printers = (
-                    (await db.execute(select(Printer).where(Printer.archived_at.is_(None))))
+                    (
+                        await db.execute(
+                            select(Printer).where(
+                                Printer.archived_at.is_(None),
+                                Printer.is_virtual.is_(False),
+                            )
+                        )
+                    )
                     .scalars()
                     .all()
                 )
@@ -137,6 +144,7 @@ async def _snmp_counter_poll_loop() -> None:
                                 select(Printer).where(
                                     Printer.snmp_enabled.is_(True),
                                     Printer.archived_at.is_(None),
+                                    Printer.is_virtual.is_(False),
                                 )
                             )
                         )

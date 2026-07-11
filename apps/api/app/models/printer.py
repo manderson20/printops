@@ -20,7 +20,19 @@ class Printer(Base, TimestampMixin):
     manufacturer: Mapped[str | None] = mapped_column(default=None)
     model: Mapped[str | None] = mapped_column(default=None)
 
-    ip_address: Mapped[str]
+    # A virtual Follow-Me queue (see follow_me_enabled below) isn't a real,
+    # reachable device — created via POST /printers/virtual
+    # (app/routers/printers.py), never the ordinary PrinterCreate flow, and
+    # never toggled after creation (absent from PrinterUpdate entirely).
+    # Excluded from the status/SNMP background poll loops (app/main.py,
+    # same convention as archived_at) and from CUPS queue sync's real-device
+    # probe (scripts/sync_cups_queue.sh checks this via
+    # PrinterConnectionOut.is_virtual and goes straight to a generic
+    # driverless PPD instead of `-m everywhere`) — there's nothing to probe.
+    is_virtual: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # Nullable only because a virtual printer has none — every physical
+    # printer still requires one at the API layer (PrinterCreate.ip_address).
+    ip_address: Mapped[str | None] = mapped_column(default=None)
     hostname: Mapped[str | None] = mapped_column(default=None)
     serial_number: Mapped[str | None] = mapped_column(default=None)
 
@@ -97,7 +109,10 @@ class Printer(Base, TimestampMixin):
     # app/routers/release.py's relaxed query for follow_me jobs. Shares the
     # same release_token/kiosk URL as release_required; toggling either one
     # on will provision a token if this printer doesn't already have one
-    # (app/routers/printers.py:update_printer).
+    # (app/routers/printers.py:update_printer). Always true, and can't be
+    # turned off, for an is_virtual printer (enforced in update_printer) —
+    # a virtual queue has no physical location of its own to release at, so
+    # it must always be held and only ever released elsewhere.
     follow_me_enabled: Mapped[bool] = mapped_column(default=False, server_default="false")
     # Opaque, unguessable — identifies this printer in the public kiosk URL
     # (/release/<token>) instead of exposing the raw printer id. Regenerable

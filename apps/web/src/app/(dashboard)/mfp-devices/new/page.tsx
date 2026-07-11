@@ -100,7 +100,7 @@ export default function NewMfpDevicePage() {
       name: printer.name,
       model: printer.model ?? prev.model,
       serial_number: printer.serial_number ?? prev.serial_number,
-      ip_address: printer.ip_address,
+      ip_address: printer.ip_address ?? prev.ip_address,
       hostname: printer.hostname ?? prev.hostname,
       building: printer.building ?? prev.building,
       room: printer.room ?? prev.room,
@@ -160,7 +160,7 @@ export default function NewMfpDevicePage() {
             className="rounded border border-black/[.15] bg-transparent px-3 py-2 text-black dark:border-white/[.2] dark:text-zinc-50"
           >
             <option value="">None — type the details below manually</option>
-            {printers.map((p) => (
+            {printers.filter((p) => !p.is_virtual).map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>

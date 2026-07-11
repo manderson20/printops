@@ -38,7 +38,11 @@ function findDuplicates(form: typeof initialForm, existing: Printer[]): Duplicat
   const matches: DuplicateMatch[] = [];
   for (const printer of existing) {
     const fields: string[] = [];
-    if (norm(form.ip_address) && norm(form.ip_address) === norm(printer.ip_address)) {
+    if (
+      norm(form.ip_address) &&
+      printer.ip_address &&
+      norm(form.ip_address) === norm(printer.ip_address)
+    ) {
       fields.push("IP address");
     }
     if (norm(form.hostname) && printer.hostname && norm(form.hostname) === norm(printer.hostname)) {

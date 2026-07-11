@@ -23,7 +23,7 @@ type LoadState =
   | { phase: "ok"; printer: Printer }
   | { phase: "error"; message: string };
 
-const TABS = [
+const ALL_TABS = [
   { href: "", label: "Overview" },
   { href: "/connection", label: "Connection" },
   { href: "/release", label: "Release & Quotas" },
@@ -32,6 +32,18 @@ const TABS = [
   { href: "/credentials", label: "Credentials" },
   { href: "/jobs", label: "Jobs" },
 ] as const;
+
+// A virtual Follow-Me queue has no real device — Toner/Syslog/Credentials
+// are all meaningless for one (no cartridges, no device forwarding logs, no
+// web login to store). Connection is kept: it's the MDM push info clients
+// need to add this queue, which is the whole point of a virtual queue.
+const VIRTUAL_HIDDEN_TABS = new Set(["/toner", "/syslog", "/credentials"]);
+
+function tabsFor(printer: Printer) {
+  return printer.is_virtual
+    ? ALL_TABS.filter((tab) => !VIRTUAL_HIDDEN_TABS.has(tab.href))
+    : ALL_TABS;
+}
 
 export default function PrinterDetailLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -115,6 +127,7 @@ export default function PrinterDetailLayout({ children }: { children: ReactNode 
             <h1 className="text-xl font-semibold text-black dark:text-zinc-50">
               {state.printer.name}
             </h1>
+            {state.printer.is_virtual && <Badge tone="neutral">Follow-Me Queue</Badge>}
             {state.printer.archived_at && <Badge tone="neutral">Archived</Badge>}
           </div>
           {isAdmin && (
@@ -149,7 +162,7 @@ export default function PrinterDetailLayout({ children }: { children: ReactNode 
             sticky element's own background repaints over it). Explicit
             margins instead of gap avoid it entirely. */}
         <nav className="sticky top-0 z-10 mb-6 flex gap-1 overflow-x-auto border-b border-black/[.08] bg-zinc-50 pt-2 dark:border-white/[.145] dark:bg-black">
-          {TABS.map((tab) => {
+          {tabsFor(state.printer).map((tab) => {
             const href = `${basePath}${tab.href}`;
             const active = pathname === href;
             return (

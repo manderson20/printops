@@ -21,13 +21,16 @@ TOKEN=$(grep '^PRINTOPS_BACKEND_TOKEN=' "$ENV_FILE" | cut -d= -f2)
 PRINTER_JSON=$(curl -sf -H "X-Backend-Token: $TOKEN" "$API_BASE/api/v1/internal/printers/$PRINTER_ID/connection")
 
 PRINTER_NAME=$(python3 -c "import json,sys; print(json.load(sys.stdin)['name'])" <<<"$PRINTER_JSON")
-REAL_IP=$(python3 -c "import json,sys; print(json.load(sys.stdin)['ip_address'])" <<<"$PRINTER_JSON")
-REAL_PORT=$(python3 -c "import json,sys; print(json.load(sys.stdin)['port'])" <<<"$PRINTER_JSON")
-REAL_SCHEME=$(python3 -c "import json,sys; print('ipps' if json.load(sys.stdin)['use_tls'] else 'ipp')" <<<"$PRINTER_JSON")
-REAL_PATH=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ipp_path') or '/ipp/print')" <<<"$PRINTER_JSON")
+IS_VIRTUAL=$(python3 -c "import json,sys; print('true' if json.load(sys.stdin)['is_virtual'] else 'false')" <<<"$PRINTER_JSON")
 AIRPRINT_ENABLED=$(python3 -c "import json,sys; print('true' if json.load(sys.stdin)['airprint_enabled'] else 'false')" <<<"$PRINTER_JSON")
 
-REAL_URI="${REAL_SCHEME}://${REAL_IP}:${REAL_PORT}${REAL_PATH}"
+if [ "$IS_VIRTUAL" = false ]; then
+    REAL_IP=$(python3 -c "import json,sys; print(json.load(sys.stdin)['ip_address'])" <<<"$PRINTER_JSON")
+    REAL_PORT=$(python3 -c "import json,sys; print(json.load(sys.stdin)['port'])" <<<"$PRINTER_JSON")
+    REAL_SCHEME=$(python3 -c "import json,sys; print('ipps' if json.load(sys.stdin)['use_tls'] else 'ipp')" <<<"$PRINTER_JSON")
+    REAL_PATH=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ipp_path') or '/ipp/print')" <<<"$PRINTER_JSON")
+    REAL_URI="${REAL_SCHEME}://${REAL_IP}:${REAL_PORT}${REAL_PATH}"
+fi
 
 # CUPS queue names are restricted to alnum/-/_; the printer UUID guarantees
 # uniqueness, with the human name set separately via printer-info (-D).
@@ -67,8 +70,19 @@ fi
 # RGB-default, color-advertising PPD). If this queue already had a real PPD
 # from a prior successful probe, a transient failure this time around
 # should leave that working config alone rather than regress it.
-if ! timeout 30 sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m everywhere -D "$PRINTER_NAME"; then
-    if [ "$HAD_REAL_PPD" = true ]; then
+#
+# A virtual Follow-Me queue (IS_VIRTUAL) has no real device at all — there's
+# nothing to probe, so it always goes straight to the generic driverless PPD
+# branch below rather than attempting -m everywhere first. This generic PPD
+# advertises full color support by default (see the color-supported check
+# further down), which is exactly what's wanted here: real delivery happens
+# later at whichever physical printer the job is released to, so this queue
+# shouldn't be the thing silently downgrading Word/Adobe jobs to grayscale
+# (the same failure mode fixed for real printers in the Danica investigation).
+if [ "$IS_VIRTUAL" = true ] || ! timeout 30 sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m everywhere -D "$PRINTER_NAME"; then
+    if [ "$IS_VIRTUAL" = true ]; then
+        sudo lpadmin -p "$QUEUE_NAME" -v "ipp://virtual.printops.internal/" -m "drv:///cupsfilters.drv/pwgrast.ppd" -D "$PRINTER_NAME"
+    elif [ "$HAD_REAL_PPD" = true ]; then
         echo "WARNING: -m everywhere failed/timed out for $REAL_URI — keeping this queue's existing real PPD from a prior successful sync instead of regressing it to the generic fallback." >&2
         sudo lpadmin -p "$QUEUE_NAME" -D "$PRINTER_NAME"
     else

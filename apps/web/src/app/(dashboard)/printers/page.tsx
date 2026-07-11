@@ -44,7 +44,7 @@ const CSV_COLUMNS: { header: string; value: (printer: Printer) => string }[] = [
   { header: "Manufacturer", value: (p) => p.manufacturer ?? "" },
   { header: "Model", value: (p) => p.model ?? "" },
   { header: "Serial Number", value: (p) => p.serial_number ?? "" },
-  { header: "IP Address", value: (p) => p.ip_address },
+  { header: "IP Address", value: (p) => p.ip_address ?? "" },
   { header: "Hostname", value: (p) => p.hostname ?? "" },
   { header: "Building", value: (p) => p.building ?? "" },
   { header: "Room", value: (p) => p.room ?? "" },
@@ -183,6 +183,11 @@ export default function PrintersPage() {
             Export CSV
           </Button>
           {isAdmin && (
+            <Link href="/printers/new-follow-me">
+              <Button variant="secondary">Add Follow-Me Queue</Button>
+            </Link>
+          )}
+          {isAdmin && (
             <Link href="/printers/new">
               <Button>Add Printer</Button>
             </Link>
@@ -232,6 +237,7 @@ export default function PrintersPage() {
                       >
                         {printer.name}
                       </Link>
+                      {printer.is_virtual && <Badge tone="neutral">Follow-Me Queue</Badge>}
                       {printer.archived_at && <Badge tone="neutral">Archived</Badge>}
                     </div>
                   </td>
@@ -268,7 +274,7 @@ export default function PrintersPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
-                    {printer.ip_address}
+                    {printer.ip_address ?? "—"}
                   </td>
                   <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                     {[printer.building, printer.room, printer.department]

@@ -35,7 +35,13 @@ from app.printers.status import refresh_printer_status_and_rediscover
 from app.printers.test_print import TestPrintError, submit_test_print
 from app.quotas.service import get_pages_used, period_bounds
 from app.schemas.auth import UserOut
-from app.schemas.printer import PrinterCreate, PrinterMdmConnectionOut, PrinterOut, PrinterUpdate
+from app.schemas.printer import (
+    PrinterCreate,
+    PrinterMdmConnectionOut,
+    PrinterOut,
+    PrinterUpdate,
+    VirtualQueueCreate,
+)
 from app.schemas.quota import PrinterUserQuotaCreate, PrinterUserQuotaOut, PrinterUserQuotaUpdate
 from app.schemas.release_bypass import PrinterReleaseBypassCreate, PrinterReleaseBypassOut
 from app.schemas.report import (
@@ -87,7 +93,7 @@ async def _apply_queue_sync(printer: Printer, db: AsyncSession) -> None:
     in flight. Treated as a benign no-op rather than a crash: nothing left
     to record the sync result on."""
     try:
-        await asyncio.to_thread(sync_queue, str(printer.id))
+        await asyncio.to_thread(sync_queue, str(printer.id), printer.is_virtual)
         printer.queue_sync_error = None
     except QueueSyncError as exc:
         printer.queue_sync_error = str(exc)
@@ -138,6 +144,40 @@ async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_
     return printer
 
 
+@router.post(
+    "/virtual",
+    response_model=PrinterOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def create_virtual_queue(payload: VirtualQueueCreate, db: AsyncSession = Depends(get_db)):
+    """A Follow-Me queue with no real device behind it — see
+    VirtualQueueCreate's docstring. follow_me_enabled/airprint_enabled are
+    forced on here rather than left to the payload: a virtual queue that
+    isn't discoverable or releasable elsewhere would be pointless, and
+    update_printer refuses to ever turn follow_me_enabled back off for one.
+    No refresh_printer_capabilities call (unlike create_printer) — there's
+    no real device to probe."""
+    printer = Printer(
+        name=payload.name,
+        is_virtual=True,
+        ip_address=None,
+        airprint_enabled=True,
+        follow_me_enabled=True,
+        release_token=secrets.token_urlsafe(16),
+        snmp_enabled=False,
+        building=payload.building,
+        room=payload.room,
+        department=payload.department,
+        notes=payload.notes,
+    )
+    db.add(printer)
+    await db.commit()
+    await db.refresh(printer)
+    await _apply_queue_sync(printer, db)
+    return printer
+
+
 @router.get("", response_model=list[PrinterOut])
 async def list_printers(include_archived: bool = False, db: AsyncSession = Depends(get_db)):
     stmt = select(Printer).order_by(Printer.name)
@@ -175,6 +215,21 @@ async def update_printer(
 ):
     printer = await _get_printer_or_404(printer_id, db)
     updates = payload.model_dump(exclude_unset=True)
+    # A virtual queue (app/models/printer.py:is_virtual) has no physical
+    # location of its own to release at — it must always be held and only
+    # ever released elsewhere, so neither half of that invariant can be
+    # relaxed after creation.
+    if printer.is_virtual:
+        if updates.get("follow_me_enabled") is False:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Follow-Me can't be turned off for a virtual queue.",
+            )
+        if updates.get("release_required") is True:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A virtual queue has no physical location to require release at.",
+            )
     if "ip_address" in updates and updates["ip_address"] is not None:
         updates["ip_address"] = str(updates["ip_address"])
     # A blank string clears one of these overrides back to "use the global
@@ -285,6 +340,11 @@ async def unarchive_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)
 )
 async def discover_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     printer = await _get_printer_or_404(printer_id, db)
+    if printer.is_virtual:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A virtual queue has no real device to discover capabilities from.",
+        )
     await refresh_printer_capabilities(printer)
     await db.commit()
     await db.refresh(printer)
@@ -329,6 +389,11 @@ async def check_status(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     immediately instead of waiting for the next cycle. Open to any
     logged-in user (not admin-gated) like GET, same as before."""
     printer = await _get_printer_or_404(printer_id, db)
+    if printer.is_virtual:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A virtual queue has no real device to check the status of.",
+        )
     await refresh_printer_status_and_rediscover(printer)
     await db.commit()
     await db.refresh(printer)
@@ -342,6 +407,11 @@ async def check_counters(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     (app/main.py), just triggered immediately. Read-only telemetry, so
     open to any logged-in user (not admin-gated), matching check-status."""
     printer = await _get_printer_or_404(printer_id, db)
+    if printer.is_virtual:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A virtual queue has no real device to poll SNMP counters from.",
+        )
     defaults = await get_or_create_snmp_defaults(db)
     if await refresh_printer_counters(printer, defaults):
         db.add(record_reading(printer))
@@ -725,7 +795,15 @@ async def create_printer_release_bypass(
     """Lets a specific staff member skip the PIN-release hold at this one
     printer, even while release_required is on — see
     app/quotas/service.py:resolve_hold_reason."""
-    await _get_printer_or_404(printer_id, db)
+    printer = await _get_printer_or_404(printer_id, db)
+    if printer.is_virtual:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "A virtual queue has no real device to deliver a bypassed job to — it must "
+                "always be held."
+            ),
+        )
 
     email = payload.user_email.strip().lower()
     roster_match = await db.execute(
