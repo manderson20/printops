@@ -5,6 +5,13 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.48.2] - 2026-07-12
+
+- **Fix: the file picker on Print and Copier Import upload looked like
+  plain text, not a button.** The native file input had no visible
+  clickable affordance under this app's Tailwind styling — now rendered
+  as a proper pill-shaped button matching the rest of the UI.
+
 ## [0.48.1] - 2026-07-12
 
 - **Fix: the fleet-wide capability rediscovery loop (0.48.0) only kept
