@@ -21,6 +21,7 @@ from app.models.quota import PrinterUserQuota
 from app.models.release_bypass import PrinterReleaseBypass
 from app.models.report import PrinterTonerCartridge
 from app.printers.counter_history import get_daily_deltas
+from app.printers.cups_ppd_info import get_cups_queue_default_page_size
 from app.printers.discovery import refresh_printer_capabilities
 from app.printers.job_control import JobControlError, purge_cups_queue
 from app.printers.queue_sync import QueueSyncError, remove_queue, sync_queue
@@ -37,6 +38,7 @@ from app.printers.test_print import TestPrintError, submit_test_print
 from app.quotas.service import get_pages_used, period_bounds
 from app.schemas.auth import UserOut
 from app.schemas.printer import (
+    CupsQueueDefaultsOut,
     PrinterCreate,
     PrinterMdmConnectionOut,
     PrinterOut,
@@ -514,6 +516,24 @@ async def get_mdm_connection(
         ipp_uri=f"ipp://{server_settings.hostname}:{settings.print_server_port}{resource_path}",
         airprint_enabled=printer.airprint_enabled,
     )
+
+
+@router.get(
+    "/{printer_id}/cups-queue-defaults",
+    response_model=CupsQueueDefaultsOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def get_cups_queue_defaults(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    """On-demand (not stored) read of the CUPS queue's own current PPD
+    PageSize default, so it can be shown next to the device's IPP-reported
+    default_media_size — a mismatch is the same diagnostic signal that
+    identified the earlier *DefaultColorModel bug (see
+    scripts/sync_cups_queue.sh's ColorModel=RGB patch). Kept out of
+    GET /printers/{id} so that main fetch stays DB-only; this one shells
+    out, so the frontend calls it lazily."""
+    printer = await _get_printer_or_404(printer_id, db)
+    page_size = await asyncio.to_thread(get_cups_queue_default_page_size, str(printer.id))
+    return CupsQueueDefaultsOut(page_size=page_size)
 
 
 @router.post("/{printer_id}/test-print", dependencies=[Depends(require_role("admin"))])

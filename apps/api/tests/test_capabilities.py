@@ -117,6 +117,55 @@ def test_missing_firmware_version_is_none():
     assert caps["firmware_version"] is None
 
 
+def test_media_default_and_trays_parsed_from_full_mfp():
+    raw = {
+        "media-default": "na_letter_8.5x11in",
+        "media-col-ready": [
+            {
+                "media-size": {"x-dimension": 21590, "y-dimension": 27940},
+                "media-source": "tray-1",
+                "media-type": "stationery",
+            },
+            {
+                "media-size": {"x-dimension": 21590, "y-dimension": 35560},
+                "media-source": "tray-2",
+                "media-type": "stationery",
+            },
+        ],
+    }
+    caps = parse_capabilities(raw)
+
+    assert caps["default_media_size"] == "na_letter_8.5x11in"
+    assert caps["media_trays"] == [
+        {"source": "tray-1", "type": "stationery", "width_in": 8.5, "height_in": 11.0},
+        {"source": "tray-2", "type": "stationery", "width_in": 8.5, "height_in": 14.0},
+    ]
+
+
+def test_media_trays_missing_dimensions_still_included_by_source():
+    raw = {
+        "media-col-ready": [
+            {"media-source": "manual"},
+        ]
+    }
+    caps = parse_capabilities(raw)
+    assert caps["media_trays"] == [
+        {"source": "manual", "type": None, "width_in": None, "height_in": None}
+    ]
+
+
+def test_media_trays_entry_with_neither_source_nor_size_is_dropped():
+    raw = {"media-col-ready": [{"media-type": "stationery"}]}
+    caps = parse_capabilities(raw)
+    assert caps["media_trays"] == []
+
+
+def test_media_default_and_trays_absent_when_not_reported():
+    caps = parse_capabilities({})
+    assert caps["default_media_size"] is None
+    assert caps["media_trays"] == []
+
+
 def test_sanitize_raw_attributes_handles_enums_and_datetimes():
     import datetime
 

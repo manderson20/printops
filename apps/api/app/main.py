@@ -21,6 +21,7 @@ from app.models.mosyle import MosyleSettings
 from app.models.printer import Printer
 from app.models.snmp import PrinterCounterReading
 from app.models.syslog import PrinterSyslogEvent
+from app.printers.discovery import refresh_printer_capabilities
 from app.printers.snmp_counters import (
     get_or_create_snmp_defaults,
     record_reading,
@@ -41,6 +42,7 @@ from app.routers import (
     quota_holds,
     release,
     reports,
+    self_service_print,
     staff_copier_identities,
     updates,
     users,
@@ -117,6 +119,46 @@ async def _printer_status_poll_loop() -> None:
         except Exception:
             logger.exception("Unexpected error in printer status poll loop")
         await asyncio.sleep(PRINTER_STATUS_POLL_INTERVAL_SECONDS)
+
+
+CAPABILITY_REDISCOVERY_INTERVAL_SECONDS = 30 * 60
+
+
+async def _capability_rediscovery_loop() -> None:
+    """Re-runs full capability discovery (app/printers/discovery.py) across
+    every active printer every 30 minutes, independent of the status loop's
+    offline->online-triggered rediscover above — a printer that's been
+    online the whole time never otherwise gets re-probed, so a same-day
+    change (a copier's tray reloaded with a different size, a finisher
+    added) wouldn't show up in default_media_size/media_trays until someone
+    happened to notice and click Rediscover, or the printer happened to
+    blip offline. Same cadence and per-printer isolation as
+    _snmp_counter_poll_loop below (asyncio.gather(..., return_exceptions=True)
+    so one slow/unreachable device can't stall the rest of the fleet)."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                printers = (
+                    (
+                        await db.execute(
+                            select(Printer).where(
+                                Printer.archived_at.is_(None),
+                                Printer.is_virtual.is_(False),
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+
+                async def _refresh_one(printer: Printer) -> None:
+                    await refresh_printer_capabilities(printer)
+
+                await asyncio.gather(*(_refresh_one(p) for p in printers), return_exceptions=True)
+                await db.commit()
+        except Exception:
+            logger.exception("Unexpected error in capability rediscovery loop")
+        await asyncio.sleep(CAPABILITY_REDISCOVERY_INTERVAL_SECONDS)
 
 
 SNMP_COUNTER_POLL_INTERVAL_SECONDS = 30 * 60
@@ -290,6 +332,7 @@ async def lifespan(app: FastAPI):
             )()
         ),
         asyncio.create_task(_printer_status_poll_loop()),
+        asyncio.create_task(_capability_rediscovery_loop()),
         asyncio.create_task(_snmp_counter_poll_loop()),
         asyncio.create_task(_counter_reading_purge_loop()),
         asyncio.create_task(_syslog_event_purge_loop()),
@@ -348,6 +391,9 @@ app.include_router(
     copier_unmapped.router, prefix="/api/v1/copier-unmapped", tags=["copier-unmapped"]
 )
 app.include_router(quota_holds.router, prefix="/api/v1/quota-holds", tags=["quota-holds"])
+app.include_router(
+    self_service_print.router, prefix="/api/v1/self-service-print", tags=["self-service-print"]
+)
 app.include_router(
     zabbix_integration.router, prefix="/api/v1/integrations/zabbix", tags=["zabbix"]
 )

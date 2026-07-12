@@ -15,6 +15,16 @@ class CapabilitiesOut(BaseModel):
     copies_max: int | None = None
     resolutions: list[dict] = []
     media_sizes: list[str] = []
+    # The device's currently-selected default (raw PWG self-describing
+    # name, e.g. "na_letter_8.5x11in") — distinct from media_sizes, which
+    # is every size the device merely supports.
+    default_media_size: str | None = None
+    # One entry per tray currently loaded with media (from media-col-ready
+    # — current state, not the full size x source capability matrix), each
+    # {"source", "type", "width_in", "height_in"} — see
+    # app/printers/capabilities.py:_parse_media_trays. Empty on devices
+    # that don't report per-tray media (most non-MFP printers).
+    media_trays: list[dict] = []
     media_sources: list[str] = []
     media_types: list[str] = []
     output_bins: list[str] = []
@@ -26,6 +36,13 @@ class CapabilitiesOut(BaseModel):
     # Advertised (not live-tested) IPPS support — see
     # app/printers/capabilities.py:_parse_tls_supported.
     tls_supported: bool = False
+
+
+class CupsQueueDefaultsOut(BaseModel):
+    # The CUPS-generated queue's own current PPD PageSize default — see
+    # app/printers/cups_ppd_info.py. None if the queue isn't synced yet or
+    # the value couldn't be read.
+    page_size: str | None = None
 
 
 class PrinterCreate(BaseModel):

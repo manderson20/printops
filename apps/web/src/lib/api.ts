@@ -70,6 +70,18 @@ export type Capabilities = {
   copies_max: number | null;
   resolutions: { x: number; y: number; unit: number | null }[];
   media_sizes: string[];
+  // The device's currently-selected default (raw PWG name, e.g.
+  // "na_letter_8.5x11in") — distinct from media_sizes, which is every size
+  // the device merely supports.
+  default_media_size: string | null;
+  // One entry per tray/input-source the device reports — empty on devices
+  // that don't advertise per-tray media (most non-MFP printers).
+  media_trays: {
+    source: string | null;
+    type: string | null;
+    width_in: number | null;
+    height_in: number | null;
+  }[];
   media_sources: string[];
   media_types: string[];
   output_bins: string[];
@@ -349,6 +361,17 @@ export type MdmConnectionInfo = {
 export async function getMdmConnection(id: string): Promise<MdmConnectionInfo> {
   const response = await authorizedFetch(
     `/api/v1/printers/${id}/mdm-connection`,
+  );
+  return response.json();
+}
+
+export type CupsQueueDefaults = {
+  page_size: string | null;
+};
+
+export async function getCupsQueueDefaults(id: string): Promise<CupsQueueDefaults> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${id}/cups-queue-defaults`,
   );
   return response.json();
 }

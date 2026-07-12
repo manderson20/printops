@@ -351,6 +351,68 @@ def test_test_print_translates_missing_queue_error(
     assert "No CUPS queue" in response.json()["detail"]
 
 
+def test_cups_queue_defaults_404s_for_missing_printer(client, auth_headers):
+    response = client.get(
+        "/api/v1/printers/00000000-0000-0000-0000-000000000000/cups-queue-defaults",
+        headers=auth_headers,
+    )
+    assert response.status_code == 404
+
+
+def test_cups_queue_defaults_requires_admin(
+    client, auth_headers, viewer_headers, mock_failed_probe
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Viewer Cannot Check", "ip_address": "10.0.0.11"},
+    )
+    printer_id = create.json()["id"]
+
+    response = client.get(
+        f"/api/v1/printers/{printer_id}/cups-queue-defaults", headers=viewer_headers
+    )
+    assert response.status_code == 403
+
+
+def test_cups_queue_defaults_success(client, auth_headers, mock_failed_probe, monkeypatch):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "CUPS Defaults Target", "ip_address": "10.0.0.12"},
+    )
+    printer_id = create.json()["id"]
+
+    monkeypatch.setattr(
+        printers_router, "get_cups_queue_default_page_size", lambda pid: "Letter"
+    )
+
+    response = client.get(
+        f"/api/v1/printers/{printer_id}/cups-queue-defaults", headers=auth_headers
+    )
+    assert response.status_code == 200
+    assert response.json() == {"page_size": "Letter"}
+
+
+def test_cups_queue_defaults_none_when_unavailable(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Unsynced CUPS Target", "ip_address": "10.0.0.13"},
+    )
+    printer_id = create.json()["id"]
+
+    monkeypatch.setattr(printers_router, "get_cups_queue_default_page_size", lambda pid: None)
+
+    response = client.get(
+        f"/api/v1/printers/{printer_id}/cups-queue-defaults", headers=auth_headers
+    )
+    assert response.status_code == 200
+    assert response.json() == {"page_size": None}
+
+
 def test_mdm_connection_info(client, auth_headers, mock_failed_probe):
     create = client.post(
         "/api/v1/printers",

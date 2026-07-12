@@ -25,8 +25,19 @@ REQUESTED_ATTRIBUTES: list[str] = [
     "copies-supported",
     "printer-resolution-supported",
     "media-supported",
+    "media-default",
     "media-source-supported",
     "media-type-supported",
+    # 1setOf collection, one entry per tray CURRENTLY loaded with media —
+    # the only way to see a copier/MFP's actual per-tray loadout right now.
+    # Deliberately media-col-ready, not media-col-database: confirmed live
+    # against a Konica Minolta bizhub 750i that media-col-database instead
+    # returns the device's full size x source CAPABILITY matrix (every
+    # size crossed with every tray that could theoretically hold it — 89
+    # entries, mostly duplicates), which is useless for "what's loaded
+    # right now" and would have made every copier look like it has dozens
+    # of trays.
+    "media-col-ready",
     "output-bin-supported",
     "finishings-supported",
     "job-password-supported",
@@ -209,6 +220,51 @@ def _parse_tls_supported(raw: dict[str, Any]) -> bool:
     return "tls" in values
 
 
+# PWG5100.3's media-size collection reports dimensions in hundredths of a
+# millimeter (e.g. Letter's 8.5in width is 21590) — this app displays
+# everything in inches, matching the "na_letter_8.5x11in"-style names
+# media-supported/media-default already use.
+HUNDREDTHS_MM_PER_INCH = 2540
+
+
+def _media_col_dimensions_in(entry: dict[str, Any]) -> tuple[float | None, float | None]:
+    media_size = entry.get("media-size")
+    if not isinstance(media_size, dict):
+        return None, None
+    x = media_size.get("x-dimension")
+    y = media_size.get("y-dimension")
+    width_in = round(x / HUNDREDTHS_MM_PER_INCH, 2) if isinstance(x, (int, float)) else None
+    height_in = round(y / HUNDREDTHS_MM_PER_INCH, 2) if isinstance(y, (int, float)) else None
+    return width_in, height_in
+
+
+def _parse_media_trays(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """One entry per tray currently loaded with media, from media-col-ready
+    — each a parsed IPP collection (pyipp's parse_collection already turns
+    these into plain dicts keyed by member name). A device that doesn't
+    report this attribute at all (common on simpler, non-MFP devices) just
+    gets an empty list, same "no guess" convention as everything else in
+    this file."""
+    trays = []
+    for entry in _as_list(raw.get("media-col-ready")):
+        if not isinstance(entry, dict):
+            continue
+        width_in, height_in = _media_col_dimensions_in(entry)
+        source = _scalar(entry.get("media-source"))
+        media_type = _scalar(entry.get("media-type"))
+        if source is None and width_in is None and height_in is None:
+            continue
+        trays.append(
+            {
+                "source": source,
+                "type": media_type,
+                "width_in": width_in,
+                "height_in": height_in,
+            }
+        )
+    return trays
+
+
 def parse_capabilities(raw: dict[str, Any]) -> dict[str, Any]:
     """Maps a raw IPP Get-Printer-Attributes dict to PrintOps's capability schema."""
     return {
@@ -219,6 +275,8 @@ def parse_capabilities(raw: dict[str, Any]) -> dict[str, Any]:
         "copies_max": _parse_copies_max(raw),
         "resolutions": _parse_resolutions(raw),
         "media_sizes": [_scalar(v) for v in _as_list(raw.get("media-supported"))],
+        "default_media_size": _scalar(raw.get("media-default")),
+        "media_trays": _parse_media_trays(raw),
         "media_sources": [_scalar(v) for v in _as_list(raw.get("media-source-supported"))],
         "media_types": [_scalar(v) for v in _as_list(raw.get("media-type-supported"))],
         "output_bins": [_scalar(v) for v in _as_list(raw.get("output-bin-supported"))],

@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ApiError,
   checkPrinterStatus,
+  getCupsQueueDefaults,
   rediscoverPrinter,
   updatePrinter,
 } from "@/lib/api";
@@ -42,6 +43,64 @@ const VIRTUAL_EDITABLE_FIELDS = [
   ["department", "Department"],
   ["notes", "Notes"],
 ] as const;
+
+// On-demand comparison against the CUPS-generated queue's own PPD default —
+// separate from the stored capabilities fetch since it shells out on the
+// server (see app/printers/cups_ppd_info.py). A mismatch against the
+// device's own default_media_size is the same signal that identified the
+// earlier *DefaultColorModel bug.
+function CupsQueueDefaultCheck({
+  printerId,
+  deviceDefault,
+}: {
+  printerId: string;
+  deviceDefault: string | null;
+}) {
+  const [pageSize, setPageSize] = useState<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    getCupsQueueDefaults(printerId)
+      .then((result) => setPageSize(result.page_size))
+      .catch(() => setPageSize(null));
+  }, [printerId]);
+
+  if (pageSize === undefined) {
+    return <p className="text-xs text-zinc-400">Checking CUPS queue default…</p>;
+  }
+  if (pageSize === null) {
+    return (
+      <p className="text-xs text-zinc-400">
+        CUPS queue default: not available (queue may not be synced yet).
+      </p>
+    );
+  }
+
+  // deviceDefault is a raw PWG name (e.g. "na_letter_8.5x11in"); the CUPS
+  // PPD choice is a plain PPD label (e.g. "Letter") — an exact string match
+  // isn't meaningful, so flag only an unambiguous case: the PPD default
+  // looks nothing like the device's reported default at all.
+  const mismatch =
+    deviceDefault !== null &&
+    !deviceDefault.toLowerCase().includes(pageSize.toLowerCase().replace(/[^a-z0-9]/g, ""));
+
+  return (
+    <div
+      className={
+        mismatch
+          ? "rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+          : "text-xs text-zinc-400"
+      }
+    >
+      CUPS queue default: <span className="font-mono">{pageSize}</span>
+      {mismatch && (
+        <p className="mt-1">
+          This doesn&apos;t look like it matches the device&apos;s own reported default (
+          {deviceDefault}) — the CUPS-generated queue may be overriding it.
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function PrinterOverviewTab() {
   const { printer, setPrinter } = usePrinterDetail();
@@ -261,6 +320,8 @@ export default function PrinterOverviewTab() {
               <dd>{caps.make_model ?? "—"}</dd>
               <dt className="font-medium text-zinc-500">Max Copies</dt>
               <dd>{caps.copies_max ?? "—"}</dd>
+              <dt className="font-medium text-zinc-500">Default Page Size</dt>
+              <dd>{caps.default_media_size ?? "—"}</dd>
               <dt className="font-medium text-zinc-500">Media Sizes</dt>
               <dd>{caps.media_sizes.join(", ") || "—"}</dd>
               <dt className="font-medium text-zinc-500">Media Sources</dt>
@@ -268,6 +329,31 @@ export default function PrinterOverviewTab() {
               <dt className="font-medium text-zinc-500">Output Bins</dt>
               <dd>{caps.output_bins.join(", ") || "—"}</dd>
             </dl>
+
+            {caps.media_trays.length > 0 && (
+              <div>
+                <p className="mb-1 text-xs font-medium text-zinc-500">Paper Trays</p>
+                <ul className="flex flex-col gap-1">
+                  {caps.media_trays.map((tray, i) => (
+                    <li key={i} className="text-xs text-zinc-600 dark:text-zinc-400">
+                      {tray.source ?? "Tray"}:{" "}
+                      {tray.width_in && tray.height_in
+                        ? `${tray.width_in} × ${tray.height_in} in`
+                        : "—"}
+                      {tray.type ? ` (${tray.type})` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {isAdmin && (
+              <CupsQueueDefaultCheck
+                printerId={printer.id}
+                deviceDefault={caps.default_media_size}
+              />
+            )}
+
             {printer.capabilities_detected_at && (
               <p className="text-xs text-zinc-400">
                 Last probed {new Date(printer.capabilities_detected_at).toLocaleString()}
