@@ -14,6 +14,7 @@ import { ErrorState } from "@/components/ui/EmptyState";
 import { Field, Input } from "@/components/ui/Field";
 import { PasswordField } from "@/components/ui/PasswordField";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 type SnmpLoadState =
   | { phase: "loading" }
@@ -71,7 +72,10 @@ export default function SnmpSettingsPage() {
 
   return (
     <Card>
-      <CardTitle className="mb-1">Global SNMP Defaults</CardTitle>
+      <div className="mb-1 flex items-center gap-2">
+        <CardTitle className="mb-0">Global SNMP Defaults</CardTitle>
+        <WikiHelpLink page="Settings-SNMP" />
+      </div>
       <p className="mb-4 text-xs text-zinc-500">
         Org-wide defaults the counter poll loop uses to read page/copy/print counters from every
         printer over SNMP. Individual printers can override any of these for the odd device

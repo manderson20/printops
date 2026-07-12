@@ -13,6 +13,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { ErrorState, SuccessState } from "@/components/ui/EmptyState";
 import { Field, Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 // Long enough to actually notice given Sync Now involves a real cupsd
 // restart (not instant like a plain save) — matches the shorter 1500ms
@@ -104,7 +105,10 @@ export default function ServerSettingsPage() {
 
   return (
     <Card>
-      <CardTitle className="mb-1">Server</CardTitle>
+      <div className="mb-1 flex items-center gap-2">
+        <CardTitle className="mb-0">Server</CardTitle>
+        <WikiHelpLink page="Settings-Server" />
+      </div>
       <p className="mb-4 text-xs text-zinc-500">
         The print server&rsquo;s own client-facing hostname and TLS configuration —
         distinct from a printer&rsquo;s own &quot;Connect via TLS&quot; setting (Printers &gt; a

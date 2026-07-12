@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/Button";
 import { Field, Input, Textarea } from "@/components/ui/Field";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 const VENDORS: MfpVendor[] = [
   "canon",
@@ -145,7 +146,10 @@ export default function NewMfpDevicePage() {
         onSubmit={handleSubmit}
         className="flex flex-col gap-4 rounded-xl border border-black/[.08] bg-white p-8 dark:border-white/[.145] dark:bg-black"
       >
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Add MFP Device</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Add MFP Device</h1>
+          <WikiHelpLink page="Copier-Accounting" anchor="copiers" />
+        </div>
         <p className="text-sm text-zinc-500">
           Track a walk-up copier for copy accounting — separate from adding it as a print queue
           (Printers). If this same physical device already has a CUPS queue, pick it below to fill

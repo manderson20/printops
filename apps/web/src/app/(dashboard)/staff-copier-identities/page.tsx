@@ -22,6 +22,7 @@ import { Card } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 const IDENTITY_TYPES: { value: CopierIdentityType; label: string }[] = [
   { value: "staff_id", label: "Staff ID" },
@@ -255,7 +256,10 @@ export default function StaffCopierIdentitiesPage() {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Staff Copier Identities</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Staff Copier Identities</h1>
+          <WikiHelpLink page="Copier-Accounting" anchor="staff-identities" />
+        </div>
         <p className="mt-1 text-sm text-zinc-500">
           Map each staff member to the login(s) they use at walk-up copiers — staff ID, PIN,
           badge/card, or a vendor-specific code. A device scope restricts an identity to one

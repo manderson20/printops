@@ -13,6 +13,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { EmptyState, ErrorState, SuccessState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 type LoadState =
   | { phase: "loading" }
@@ -213,7 +214,10 @@ export default function TonerCartridgesSettingsPage() {
     <div className="flex flex-col gap-6">
       <Card className="print:hidden">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <CardTitle>Toner Cartridges</CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle>Toner Cartridges</CardTitle>
+            <WikiHelpLink page="Settings-Toner-Cartridges" />
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <Input
               type="text"

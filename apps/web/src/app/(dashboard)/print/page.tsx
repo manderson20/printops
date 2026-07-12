@@ -12,6 +12,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { EmptyState, ErrorState, SuccessState } from "@/components/ui/EmptyState";
 import { Field, Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 type LoadState =
   | { phase: "loading" }
@@ -68,7 +69,10 @@ export default function SelfServicePrintPage() {
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col">
       <Card>
-        <CardTitle className="mb-1">Print</CardTitle>
+        <div className="mb-1 flex items-center gap-2">
+          <CardTitle className="mb-0">Print</CardTitle>
+          <WikiHelpLink page="Upload-and-Print" />
+        </div>
         <p className="mb-4 text-xs text-zinc-500">
           Upload a PDF and pick a printer — no need to have it already set up on your own
           device. Only printers you&rsquo;re allowed to use are listed below.

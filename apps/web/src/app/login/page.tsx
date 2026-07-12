@@ -7,6 +7,7 @@ import { login, startGoogleLogin } from "@/lib/auth";
 import { Button } from "@/components/ui/Button";
 import { Field, Input } from "@/components/ui/Field";
 import { ErrorState } from "@/components/ui/EmptyState";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 function LoginForm() {
   const router = useRouter();
@@ -42,9 +43,12 @@ function LoginForm() {
             height={56}
             priority
           />
-          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">
-            Sign in to PrintOps
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold text-black dark:text-zinc-50">
+              Sign in to PrintOps
+            </h1>
+            <WikiHelpLink page="Logging-In" />
+          </div>
           <p className="text-xs text-zinc-500">Print management. Simplified.</p>
         </div>
 

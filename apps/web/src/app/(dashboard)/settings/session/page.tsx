@@ -7,6 +7,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Field, Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 type LoadState =
   | { phase: "loading" }
@@ -52,7 +53,10 @@ export default function SessionSettingsPage() {
 
   return (
     <Card>
-      <CardTitle className="mb-1">Session Timeout</CardTitle>
+      <div className="mb-1 flex items-center gap-2">
+        <CardTitle className="mb-0">Session Timeout</CardTitle>
+        <WikiHelpLink page="Settings-Session-Timeout" />
+      </div>
       <p className="mb-4 text-xs text-zinc-500">
         How long a signed-in session can sit idle before it&rsquo;s signed out. This is idle time,
         not a flat cutoff from login — the browser tab quietly extends the session every couple of

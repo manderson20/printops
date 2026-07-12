@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 type LoadState =
   | { phase: "loading" }
@@ -59,7 +60,10 @@ export default function QuotaSettingsPage() {
 
   return (
     <Card>
-      <CardTitle className="mb-1">Page Quotas</CardTitle>
+      <div className="mb-1 flex items-center gap-2">
+        <CardTitle className="mb-0">Page Quotas</CardTitle>
+        <WikiHelpLink page="Settings-Quotas" />
+      </div>
       <p className="mb-4 text-xs text-zinc-500">
         Org-wide kill switch for per-printer, per-user page quotas. Individual
         limits are configured on each printer&rsquo;s own detail page (a Quotas

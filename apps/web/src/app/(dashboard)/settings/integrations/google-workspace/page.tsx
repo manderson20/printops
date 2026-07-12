@@ -19,6 +19,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input, Textarea } from "@/components/ui/Field";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 type LoadState =
   | { phase: "loading" }
@@ -173,7 +174,10 @@ export default function GoogleWorkspaceSettingsPage() {
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Google Workspace Integration</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Google Workspace Integration</h1>
+          <WikiHelpLink page="Settings-Integrations" anchor="google-workspace" />
+        </div>
         <p className="mt-1 text-sm text-zinc-500">
           Resolves ChromeOS device→user attribution for print jobs (strategy 3, tried after Mosyle
           — see the Jobs page). Auth is a Google service account with domain-wide delegation, not a

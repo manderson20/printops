@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 export default function QuotaHoldsPage() {
   const router = useRouter();
@@ -67,9 +68,12 @@ export default function QuotaHoldsPage() {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">
-          Quota Holds
-        </h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">
+            Quota Holds
+          </h1>
+          <WikiHelpLink page="Quota-Holds" />
+        </div>
         <p className="mt-1 text-sm text-zinc-500">
           Jobs held because the submitter was already at or over their page
           quota on that printer. Only an admin can release these — not the

@@ -18,6 +18,7 @@ import { Card } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Field, Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 type CheckState =
   | { phase: "loading" }
@@ -123,7 +124,10 @@ export default function UpdatesPage() {
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Updates</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Updates</h1>
+          <WikiHelpLink page="Updates" />
+        </div>
         <p className="mt-1 text-sm text-zinc-500">
           Check the version running on this server against the latest on GitHub, and schedule
           when to apply an update.
