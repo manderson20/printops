@@ -168,31 +168,6 @@ def test_create_printer_offline_still_creates_record(client, auth_headers, mock_
     assert "Could not reach" in body["capabilities_error"]
 
 
-def test_toner_cartridge_model_set_at_create_and_edited_via_update(
-    client, auth_headers, mock_failed_probe
-):
-    create = client.post(
-        "/api/v1/printers",
-        headers=auth_headers,
-        json={
-            "name": "Reference Printer",
-            "ip_address": "10.0.0.5",
-            "toner_cartridge_model": "TN-227",
-        },
-    )
-    assert create.status_code == 201
-    printer_id = create.json()["id"]
-    assert create.json()["toner_cartridge_model"] == "TN-227"
-
-    update = client.patch(
-        f"/api/v1/printers/{printer_id}",
-        headers=auth_headers,
-        json={"toner_cartridge_model": "TN-227XL"},
-    )
-    assert update.status_code == 200
-    assert update.json()["toner_cartridge_model"] == "TN-227XL"
-
-
 def test_list_get_update_delete(client, auth_headers, mock_successful_probe):
     create = client.post(
         "/api/v1/printers",
@@ -1291,6 +1266,33 @@ def test_update_toner_cartridges_preserves_detected_fields_across_put(
     body = response.json()[0]
     assert body["cost"] == 62.5
     assert body["detected_description"] == "056H Black"
+
+
+def test_toner_cartridge_model_is_per_color(client, auth_headers, mock_failed_probe):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Color Printer", "ip_address": "10.0.0.36"},
+    )
+    printer_id = create.json()["id"]
+
+    response = client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=auth_headers,
+        json=[
+            {"color": "black", "cost": 60, "yield_pages": 3000, "model": "TN-227BK"},
+            {"color": "cyan", "cost": 70, "yield_pages": 2300, "model": "TN-227C"},
+        ],
+    )
+    assert response.status_code == 200
+    by_color = {c["color"]: c for c in response.json()}
+    assert by_color["black"]["model"] == "TN-227BK"
+    assert by_color["cyan"]["model"] == "TN-227C"
+
+    listing = client.get(f"/api/v1/printers/{printer_id}/toner-cartridges", headers=auth_headers)
+    by_color = {c["color"]: c for c in listing.json()}
+    assert by_color["black"]["model"] == "TN-227BK"
+    assert by_color["cyan"]["model"] == "TN-227C"
 
 
 def test_create_virtual_queue_defaults(client, auth_headers):

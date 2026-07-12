@@ -113,7 +113,6 @@ export type Printer = {
   room: string | null;
   department: string | null;
   notes: string | null;
-  toner_cartridge_model: string | null;
   capabilities: Capabilities | null;
   capabilities_detected_at: string | null;
   capabilities_error: string | null;
@@ -177,7 +176,6 @@ export type PrinterCreateInput = {
   room?: string | null;
   department?: string | null;
   notes?: string | null;
-  toner_cartridge_model?: string | null;
 };
 
 export type PrinterUpdateInput = Partial<PrinterCreateInput> & {
@@ -1948,6 +1946,9 @@ export type Cartridge = {
   color: CartridgeColor;
   cost: number;
   yield_pages: number;
+  // Reference-only part number for this color slot, e.g. "TN-227C" — see
+  // PrinterTonerCartridge.model's docstring (app/models/report.py).
+  model: string | null;
   // SNMP-detected, read-only — see PrinterTonerCartridge.detected_*'s
   // docstring (app/models/report.py). null until the first successful
   // detectPrinterCartridges call.
@@ -1960,6 +1961,7 @@ export type CartridgeInput = {
   color: CartridgeColor;
   cost: number;
   yield_pages: number;
+  model: string | null;
 };
 
 export async function getPrinterCartridges(

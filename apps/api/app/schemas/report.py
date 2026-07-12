@@ -112,12 +112,16 @@ class CartridgeIn(BaseModel):
     color: CartridgeColor
     cost: float
     yield_pages: int
+    # Reference-only part number for this color slot, e.g. "TN-227C" — see
+    # PrinterTonerCartridge.model's docstring (app/models/report.py).
+    model: str | None = None
 
 
 class CartridgeOut(BaseModel):
     color: CartridgeColor
     cost: float
     yield_pages: int
+    model: str | None = None
 
     # SNMP-detected, read-only — see PrinterTonerCartridge.detected_*'s
     # docstring (app/models/report.py). None until the first successful

@@ -34,8 +34,8 @@ class ReportFormulaSettings(Base, TimestampMixin):
 
 
 class PrinterTonerCartridge(Base, TimestampMixin):
-    """A printer's current toner cartridge cost/yield for one color slot —
-    updated in place when a cartridge is replaced/repriced, not an
+    """A printer's current toner cartridge cost/yield/model for one color
+    slot — updated in place when a cartridge is replaced/repriced, not an
     append-only purchase ledger (same one-row-per-scope convention as
     ReportFormulaSettings above). Color printers have up to 4 rows
     (black/cyan/magenta/yellow); a mono-only printer typically has just
@@ -43,7 +43,11 @@ class PrinterTonerCartridge(Base, TimestampMixin):
     turn into a real per-page cost — mono pages price off black alone;
     color pages price off all 4 summed (the standard "worst-case click
     cost" model), falling back to ReportFormulaSettings' flat
-    cost_per_page_mono/color for any color slot that isn't configured yet."""
+    cost_per_page_mono/color for any color slot that isn't configured yet.
+
+    `model` (e.g. "TN-227C") lives here per color rather than once on
+    Printer — a color printer takes a different cartridge part number per
+    color slot, so a single printer-level field couldn't represent that."""
 
     __tablename__ = "printer_toner_cartridges"
     __table_args__ = (UniqueConstraint("printer_id", "color", name="uq_printer_toner_color"),)
@@ -57,6 +61,12 @@ class PrinterTonerCartridge(Base, TimestampMixin):
     color: Mapped[str]
     cost: Mapped[float]
     yield_pages: Mapped[int]
+    # Reference-only, e.g. "TN-227C" — so an admin can look up which
+    # cartridge to order without hunting through a spreadsheet. Never used
+    # by PrintOps itself for anything (no vendor driver/supply-ordering
+    # integration), same as Printer.model's docstring before this field
+    # replaced the old printer-level toner_cartridge_model.
+    model: Mapped[str | None] = mapped_column(default=None)
 
     # SNMP-detected supply info (app/printers/snmp_counters.py:
     # get_toner_supplies, via POST /printers/{id}/toner-cartridges/detect)

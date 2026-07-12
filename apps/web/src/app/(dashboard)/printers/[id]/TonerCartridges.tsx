@@ -5,12 +5,10 @@ import {
   ApiError,
   detectPrinterCartridges,
   getPrinterCartridges,
-  updatePrinter,
   updatePrinterCartridges,
   type Cartridge,
   type CartridgeColor,
   type DetectedSupply,
-  type Printer,
 } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
 import { useCurrentUser } from "@/lib/useCurrentUser";
@@ -29,6 +27,7 @@ const COLOR_LABELS: Record<CartridgeColor, string> = {
 };
 
 type Row = {
+  model: string;
   cost: string;
   yield_pages: string;
   detected_description: string | null;
@@ -39,6 +38,7 @@ type RowsByColor = Record<CartridgeColor, Row>;
 
 function emptyRow(): Row {
   return {
+    model: "",
     cost: "",
     yield_pages: "",
     detected_description: null,
@@ -49,6 +49,7 @@ function emptyRow(): Row {
 
 function rowFromCartridge(cartridge: Cartridge): Row {
   return {
+    model: cartridge.model ?? "",
     cost: String(cartridge.cost),
     yield_pages: String(cartridge.yield_pages),
     detected_description: cartridge.detected_description,
@@ -58,21 +59,17 @@ function rowFromCartridge(cartridge: Cartridge): Row {
 }
 
 export function TonerCartridgesCard({
-  printer,
+  printerId,
   colorSupported,
-  onUpdate,
 }: {
-  printer: Printer;
+  printerId: string;
   colorSupported: boolean;
-  onUpdate: (printer: Printer) => void;
 }) {
-  const printerId = printer.id;
   const isAdmin = useCurrentUser()?.role === "admin";
   const colors: CartridgeColor[] = colorSupported
     ? ["black", "cyan", "magenta", "yellow"]
     : ["black"];
   const [rows, setRows] = useState<RowsByColor | null>(null);
-  const [cartridgeModel, setCartridgeModel] = useState(printer.toner_cartridge_model ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -103,7 +100,7 @@ export function TonerCartridgesCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [printerId]);
 
-  function updateField(color: CartridgeColor, field: "cost" | "yield_pages", value: string) {
+  function updateField(color: CartridgeColor, field: "model" | "cost" | "yield_pages", value: string) {
     setRows((prev) => (prev ? { ...prev, [color]: { ...prev[color], [field]: value } } : prev));
   }
 
@@ -114,17 +111,19 @@ export function TonerCartridgesCard({
     setSaved(false);
     try {
       const cartridges = colors
-        .filter((color) => rows[color].cost.trim() !== "" && rows[color].yield_pages.trim() !== "")
+        .filter(
+          (color) =>
+            rows[color].model.trim() !== "" ||
+            rows[color].cost.trim() !== "" ||
+            rows[color].yield_pages.trim() !== "",
+        )
         .map((color) => ({
           color,
-          cost: Number(rows[color].cost),
-          yield_pages: Number(rows[color].yield_pages),
+          model: rows[color].model.trim() || null,
+          cost: Number(rows[color].cost) || 0,
+          yield_pages: Number(rows[color].yield_pages) || 0,
         }));
       await updatePrinterCartridges(printerId, cartridges);
-      const updatedPrinter = await updatePrinter(printerId, {
-        toner_cartridge_model: cartridgeModel || null,
-      });
-      onUpdate(updatedPrinter);
       setSaved(true);
       loadRows(); // pick up detected_* fields carried over by the PUT
     } catch (err) {
@@ -183,22 +182,22 @@ export function TonerCartridgesCard({
 
       {rows !== null && (
         <div className="flex flex-col gap-3">
-          <label className="flex flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
-            Cartridge Model
-            <Input
-              type="text"
-              placeholder="e.g. TN-227"
-              disabled={!isAdmin}
-              value={cartridgeModel}
-              onChange={(e) => setCartridgeModel(e.target.value)}
-            />
-          </label>
           {colors.map((color) => (
             <div key={color} className="flex flex-col gap-1 border-t border-black/[.08] pt-3 first:border-t-0 first:pt-0 dark:border-white/[.1]">
-              <div className="grid grid-cols-[5rem_1fr_1fr] items-end gap-3">
+              <div className="grid grid-cols-[5rem_1fr_1fr_1fr] items-end gap-3">
                 <span className="text-sm font-medium text-black dark:text-zinc-50">
                   {COLOR_LABELS[color]}
                 </span>
+                <label className="flex flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
+                  Model
+                  <Input
+                    type="text"
+                    placeholder="e.g. TN-227C"
+                    disabled={!isAdmin}
+                    value={rows[color].model}
+                    onChange={(e) => updateField(color, "model", e.target.value)}
+                  />
+                </label>
                 <label className="flex flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
                   Cost ($)
                   <Input

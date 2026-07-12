@@ -63,11 +63,6 @@ class PrinterCreate(BaseModel):
     room: str | None = None
     department: str | None = None
     notes: str | None = None
-    # Reference-only, e.g. "TN-227" — so an admin can look up which
-    # cartridge to order without hunting through a spreadsheet. Never used
-    # by PrintOps itself for anything (no vendor driver/supply-ordering
-    # integration).
-    toner_cartridge_model: str | None = None
 
     snmp_enabled: bool = True
     snmp_port: int | None = None
@@ -109,7 +104,6 @@ class PrinterUpdate(BaseModel):
     room: str | None = None
     department: str | None = None
     notes: str | None = None
-    toner_cartridge_model: str | None = None
 
     release_required: bool | None = None
     follow_me_enabled: bool | None = None
@@ -198,7 +192,6 @@ class PrinterOut(BaseModel):
     room: str | None
     department: str | None
     notes: str | None
-    toner_cartridge_model: str | None
 
     capabilities: CapabilitiesOut | None
     capabilities_detected_at: datetime | None
