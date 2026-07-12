@@ -5,6 +5,13 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.52.1] - 2026-07-12
+
+- **Docs: updated README and ARCHITECTURE to reflect what's actually
+  shipped**, instead of describing PrintOps as an early scaffold with
+  quotas/cost-accounting/RBAC/attribution/policy-enforcement still
+  "just direction, not code." Ahead of making the repo public.
+
 ## [0.52.0] - 2026-07-12
 
 - **New: Settings > Toner Cartridges — a fleet-wide cost/yield/model
