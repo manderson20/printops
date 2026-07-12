@@ -5,6 +5,20 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.47.0] - 2026-07-12
+
+- **New: self-service web upload printing, restricted by OU.** A logged-in
+  user can now upload a PDF and print it from a new "Print" page, without
+  needing a client-configured CUPS/AirPrint queue — delivered through the
+  target printer's normal queue via the same `lp` submission path test
+  prints and Print Release already use, so it's logged and attributed like
+  any other job. Admins can optionally restrict which printers a given
+  user may target, by Google Workspace org unit, from a new "Self-Service
+  Print Access" card on each printer's detail page — a printer with no
+  restrictions configured stays open to everyone, matching this app's
+  existing permissive-by-default convention. This restriction only applies
+  to the new upload path; normal AirPrint/MDM printing is untouched.
+
 ## [0.46.1] - 2026-07-12
 
 - **Fix: Settings > Server's Sync Now gave no visible feedback.** Clicking
