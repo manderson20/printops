@@ -5,6 +5,14 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.51.0] - 2026-07-12
+
+- **New: auto-learned toner cartridge model numbers.** HP and Canon
+  cartridges now get their real orderable part number filled in
+  automatically from SNMP (e.g. "CF226A", "Canon 054") the first time a
+  printer is polled, without an admin typing it in. Never overwrites a
+  value you've already entered.
+
 ## [0.50.1] - 2026-07-12
 
 - **Fix: printer detail pages were noticeably narrower than the rest of
