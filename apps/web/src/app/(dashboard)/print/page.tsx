@@ -105,7 +105,7 @@ export default function SelfServicePrintPage() {
                 type="file"
                 accept="application/pdf"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                className="text-sm text-zinc-700 dark:text-zinc-300"
+                className="cursor-pointer text-sm text-zinc-700 file:mr-3 file:cursor-pointer file:rounded-full file:border-0 file:bg-accent file:px-4 file:py-2 file:text-sm file:font-medium file:text-accent-foreground file:transition-colors hover:file:bg-accent-hover dark:text-zinc-300"
               />
             </Field>
 
