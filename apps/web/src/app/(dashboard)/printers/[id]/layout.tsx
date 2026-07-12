@@ -121,7 +121,7 @@ export default function PrinterDetailLayout({ children }: { children: ReactNode 
         setPrinter: (printer) => setState({ phase: "ok", printer }),
       }}
     >
-      <div className="mx-auto flex w-full max-w-2xl flex-col">
+      <div className="mx-auto flex w-full max-w-6xl flex-col">
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-semibold text-black dark:text-zinc-50">
