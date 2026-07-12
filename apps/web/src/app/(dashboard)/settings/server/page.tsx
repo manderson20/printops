@@ -10,9 +10,15 @@ import {
 } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
-import { ErrorState } from "@/components/ui/EmptyState";
+import { ErrorState, SuccessState } from "@/components/ui/EmptyState";
 import { Field, Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+
+// Long enough to actually notice given Sync Now involves a real cupsd
+// restart (not instant like a plain save) — matches the shorter 1500ms
+// "Copied!" pattern elsewhere in this app, just longer since this is a
+// slower action.
+const SUCCESS_MESSAGE_MS = 3000;
 
 type LoadState =
   | { phase: "loading" }
@@ -26,8 +32,10 @@ export default function ServerSettingsPage() {
   const [advertiseIpps, setAdvertiseIpps] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncSuccess, setSyncSuccess] = useState(false);
 
   function load() {
     getServerSettings()
@@ -50,9 +58,19 @@ export default function ServerSettingsPage() {
   async function handleSyncNow() {
     setSyncing(true);
     setSyncError(null);
+    setSyncSuccess(false);
     try {
       const settings = await syncServerSettingsNow();
       setState({ phase: "ok", settings });
+      // A 200 response doesn't necessarily mean the sync itself worked —
+      // it's recorded non-fatally on the row (ServerSettings.sync_error)
+      // rather than raised, same convention as a printer's queue_sync_error.
+      if (settings.sync_error) {
+        setSyncError(settings.sync_error);
+      } else {
+        setSyncSuccess(true);
+        setTimeout(() => setSyncSuccess(false), SUCCESS_MESSAGE_MS);
+      }
     } catch (err) {
       setSyncError(err instanceof ApiError ? err.message : "Failed to sync");
     } finally {
@@ -63,6 +81,7 @@ export default function ServerSettingsPage() {
   async function handleSave() {
     setSaving(true);
     setSaveError(null);
+    setSaveSuccess(false);
     try {
       const settings = await updateServerSettings({
         hostname,
@@ -70,6 +89,12 @@ export default function ServerSettingsPage() {
         advertise_ipps: advertiseIpps,
       });
       setState({ phase: "ok", settings });
+      if (settings.sync_error) {
+        setSaveError(settings.sync_error);
+      } else {
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), SUCCESS_MESSAGE_MS);
+      }
     } catch (err) {
       setSaveError(err instanceof ApiError ? err.message : "Failed to save server settings");
     } finally {
@@ -142,8 +167,9 @@ export default function ServerSettingsPage() {
             </p>
           </div>
 
+          {syncSuccess && <SuccessState>Synced successfully.</SuccessState>}
           {syncError && <ErrorState>{syncError}</ErrorState>}
-          {state.phase === "ok" && state.settings.sync_error && (
+          {!syncError && state.phase === "ok" && state.settings.sync_error && (
             <ErrorState>{state.settings.sync_error}</ErrorState>
           )}
 
@@ -184,6 +210,7 @@ export default function ServerSettingsPage() {
             </span>
           </label>
 
+          {saveSuccess && <SuccessState>Saved successfully.</SuccessState>}
           {saveError && <ErrorState>{saveError}</ErrorState>}
           <Button onClick={handleSave} disabled={saving}>
             {saving ? "Saving…" : "Save"}
