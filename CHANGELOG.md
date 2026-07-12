@@ -107,10 +107,10 @@ schedules an update.
 ## [0.46.0] - 2026-07-12
 
 - **New: Settings > Server (hostname + TLS for the CUPS server itself).**
-  Fixed a real bug: `print.example.org` (the domain this box's own
-  Caddy already holds a valid Let's Encrypt cert for) got a flat `400`
-  from CUPS, since `cupsd.conf` had no `ServerName`/`ServerAlias` for
-  anything but its auto-detected hostname. The hostname is now
+  Fixed a real bug: the print server's own configured domain (the one
+  this box's own Caddy already holds a valid Let's Encrypt cert for) got
+  a flat `400` from CUPS, since `cupsd.conf` had no `ServerName`/
+  `ServerAlias` for anything but its auto-detected hostname. The hostname is now
   admin-editable and synced to `cupsd.conf` + a real certificate
   automatically — on save, on a daily background timer, or via a manual
   "Sync Now" button. Two CUPS 2.x quirks confirmed live along the way:
