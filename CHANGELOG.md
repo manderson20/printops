@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.50.0] - 2026-07-12
+
+- **New: live toner level polling + low-toner warning.** Each color
+  cartridge's real percentage remaining is now polled over SNMP every 30
+  minutes (piggybacking on the existing counter poll) and on-demand via
+  "Detect via SNMP." Set a per-color warning threshold (defaults to 15%)
+  and a badge flags the cartridge once it drops below it.
+- **New: toner level history chart.** A bar chart per printer showing each
+  color's level over the last 7/30/90/180 days, bars colored to match the
+  actual toner color.
+
 ## [0.49.0] - 2026-07-12
 
 - **New: cartridge model number is now per-color.** Color printers take a
