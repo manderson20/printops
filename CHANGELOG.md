@@ -5,6 +5,14 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.52.0] - 2026-07-12
+
+- **New: Settings > Toner Cartridges — a fleet-wide cost/yield/model
+  editor.** Every printer's cartridges in one place, grouped by printer,
+  with a bulk-apply control to price a whole printer's colors at once,
+  a search filter, and CSV/PDF export. Editing a cartridge's model here
+  is the same field the per-printer Toner tab shows — always in sync.
+
 ## [0.51.0] - 2026-07-12
 
 - **New: auto-learned toner cartridge model numbers.** HP and Canon
