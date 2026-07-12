@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.48.1] - 2026-07-12
+
+- **Fix: the fleet-wide capability rediscovery loop (0.48.0) only kept
+  PrintOps's own display fresh** — the actual CUPS queue PPD an end
+  user's print dialog reads as its default page size wasn't touched,
+  so it could silently drift out of sync with the live device between
+  queue resyncs. The loop now re-syncs a printer's CUPS queue whenever
+  it detects the probed default page size or tray contents actually
+  changed, so the two stay in sync without needing a manual Resync
+  Queue click or an offline/online reconnect.
+
 ## [0.48.0] - 2026-07-12
 
 - **New: paper size visibility on the Discovered Capabilities card.**
