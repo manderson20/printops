@@ -2203,6 +2203,54 @@ export async function updateSnmpDefaults(
   return response.json();
 }
 
+export type TlsCertificateStatus = {
+  issuer: string;
+  expires_at: string;
+  days_remaining: number;
+};
+
+export type ServerSettings = {
+  hostname: string;
+  require_encryption: boolean;
+  advertise_ipps: boolean;
+  sync_error: string | null;
+  // null until scripts/sync_server_settings.sh has synced a certificate at
+  // least once (or on a box with no Caddy-issued cert for this hostname).
+  certificate: TlsCertificateStatus | null;
+};
+
+export type ServerSettingsInput = {
+  hostname?: string;
+  require_encryption?: boolean;
+  advertise_ipps?: boolean;
+};
+
+export async function getServerSettings(): Promise<ServerSettings> {
+  const response = await authorizedFetch("/api/v1/settings/server");
+  return response.json();
+}
+
+export async function updateServerSettings(
+  input: ServerSettingsInput,
+): Promise<ServerSettings> {
+  const response = await authorizedFetch("/api/v1/settings/server", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+// Re-runs the cupsd.conf/cert/Avahi sync without changing any field — for
+// retrying after a transient failure, or picking up a freshly-issued/
+// renewed Caddy certificate immediately rather than waiting for the daily
+// background sync or the next unrelated settings save.
+export async function syncServerSettingsNow(): Promise<ServerSettings> {
+  const response = await authorizedFetch("/api/v1/settings/server/sync", {
+    method: "POST",
+  });
+  return response.json();
+}
+
 export type LdapRelaySettings = {
   enabled: boolean;
   base_dn: string;

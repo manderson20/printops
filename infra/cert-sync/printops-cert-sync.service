@@ -1,0 +1,9 @@
+[Unit]
+Description=PrintOps server settings/cert sync (Caddy -> CUPS)
+After=network.target printops-api.service caddy.service
+
+[Service]
+Type=oneshot
+User=itadmin
+Group=itadmin
+ExecStart=/bin/bash /home/itadmin/printops/scripts/sync_server_settings.sh

@@ -10,6 +10,7 @@ from app.deps import verify_backend_token
 from app.ldap_relay.service import get_or_create_ldap_relay_settings
 from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.printer import Printer
+from app.schemas.internal_server_settings import InternalPrinterIdOut, InternalServerSettingsOut
 from app.schemas.ldap_relay import (
     LdapBindRequest,
     LdapBindResult,
@@ -20,6 +21,7 @@ from app.schemas.ldap_relay import (
 )
 from app.schemas.printer import PrinterConnectionOut
 from app.schemas.syslog import SyslogIngestRequest, SyslogIngestResult
+from app.server_settings.service import get_or_create_server_settings
 from app.syslog.service import get_or_create_syslog_settings, ingest_events
 
 router = APIRouter(dependencies=[Depends(verify_backend_token)])
@@ -28,6 +30,33 @@ router = APIRouter(dependencies=[Depends(verify_backend_token)])
 # never needs more than this many candidates, and it keeps one query from
 # ever pulling the entire roster over the wire in one response.
 LDAP_SEARCH_SIZE_LIMIT = 200
+
+
+@router.get("/server-settings", response_model=InternalServerSettingsOut)
+async def get_server_settings_internal(db: AsyncSession = Depends(get_db)):
+    """Called by scripts/sync_server_settings.sh — same underlying row as
+    the admin-facing GET /api/v1/settings/server, just reachable via the
+    backend-token trust boundary instead of a JWT (same split as
+    get_ldap_relay_settings_internal below)."""
+    settings = await get_or_create_server_settings(db)
+    return InternalServerSettingsOut(
+        hostname=settings.hostname,
+        require_encryption=settings.require_encryption,
+        advertise_ipps=settings.advertise_ipps,
+    )
+
+
+@router.get("/printers/ids", response_model=list[InternalPrinterIdOut])
+async def list_printer_ids_internal(db: AsyncSession = Depends(get_db)):
+    """Called by scripts/sync_server_settings.sh to regenerate every
+    printer's Avahi service file after advertise_ipps changes — deliberately
+    minimal (just ids, not full connection details) since
+    generate_avahi_service.py already fetches everything else itself per
+    printer. Includes virtual Follow-Me queues (app/models/printer.py:
+    is_virtual) — they get an ordinary Avahi service file too, same as any
+    other printer; only release-queue-specific sync is skipped for those."""
+    result = await db.execute(select(Printer.id).where(Printer.archived_at.is_(None)))
+    return [InternalPrinterIdOut(id=str(printer_id)) for printer_id in result.scalars().all()]
 
 
 @router.get("/printers/{printer_id}/connection", response_model=PrinterConnectionOut)

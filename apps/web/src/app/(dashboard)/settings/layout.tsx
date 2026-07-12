@@ -9,6 +9,7 @@ import { Spinner } from "@/components/ui/Spinner";
 const SETTINGS_NAV = [
   { href: "/settings/users", label: "Users & Permissions" },
   { href: "/settings/integrations", label: "Integrations" },
+  { href: "/settings/server", label: "Server" },
   { href: "/settings/session", label: "Session Timeout" },
   { href: "/settings/snmp", label: "SNMP" },
   { href: "/settings/aliases", label: "Attribution Aliases" },

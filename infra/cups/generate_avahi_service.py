@@ -44,23 +44,11 @@ def api_get(token: str, path: str) -> dict:
         return json.loads(resp.read())
 
 
-def render_service_xml(printer_id: str, printer: dict) -> str:
-    caps = printer.get("capabilities") or {}
-    formats = caps.get("document_formats") or DEFAULT_FORMATS
-    color = "T" if caps.get("color_supported") else "F"
-    duplex = "T" if caps.get("duplex_supported") else "F"
-
-    name = escape(printer["name"])
-    resource_path = escape(f"printers/printops-{printer_id}")
-    pdl = escape(",".join(formats))
-
-    return f"""<?xml version="1.0" standalone='no'?>
-<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
-<service-group>
-  <name replace-wildcards="yes">{name}</name>
-  <service>
-    <type>_ipp._tcp</type>
-    <subtype>_universal._sub._ipp._tcp</subtype>
+def _render_service_block(service_type: str, resource_path: str, name: str, pdl: str,
+                           color: str, duplex: str, printer_id: str) -> str:
+    return f"""  <service>
+    <type>{service_type}</type>
+    <subtype>_universal._sub.{service_type}</subtype>
     <port>631</port>
     <txt-record>txtvers=1</txt-record>
     <txt-record>qtotal=1</txt-record>
@@ -71,7 +59,37 @@ def render_service_xml(printer_id: str, printer: dict) -> str:
     <txt-record>Duplex={duplex}</txt-record>
     <txt-record>UUID={printer_id}</txt-record>
     <txt-record>note=Published by PrintOps</txt-record>
-  </service>
+  </service>"""
+
+
+def render_service_xml(printer_id: str, printer: dict, advertise_ipps: bool = False) -> str:
+    """advertise_ipps (ServerSettings.advertise_ipps, Settings > Server) adds
+    a second _ipps._tcp service block alongside the always-present _ipp._tcp
+    one — same port (631: CUPS negotiates TLS within the same IPP/HTTP
+    connection, not a separate listener), same TXT records, so AirPrint
+    clients can discover the encrypted variant without losing the plaintext
+    one. Purely additive — off by default, doesn't change _ipp._tcp at all."""
+    caps = printer.get("capabilities") or {}
+    formats = caps.get("document_formats") or DEFAULT_FORMATS
+    color = "T" if caps.get("color_supported") else "F"
+    duplex = "T" if caps.get("duplex_supported") else "F"
+
+    name = escape(printer["name"])
+    resource_path = escape(f"printers/printops-{printer_id}")
+    pdl = escape(",".join(formats))
+
+    services = [_render_service_block("_ipp._tcp", resource_path, name, pdl, color, duplex, printer_id)]
+    if advertise_ipps:
+        services.append(
+            _render_service_block("_ipps._tcp", resource_path, name, pdl, color, duplex, printer_id)
+        )
+
+    services_xml = "\n".join(services)
+    return f"""<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name replace-wildcards="yes">{name}</name>
+{services_xml}
 </service-group>
 """
 
@@ -89,6 +107,16 @@ def main() -> int:
         sys.stderr.write(f"ERROR: could not look up printer {printer_id}: {exc}\n")
         return 1
 
+    # Best-effort, not fatal — a box with no ServerSettings row yet (or a
+    # transient lookup failure) just falls back to the existing plaintext-
+    # only advertisement rather than blocking the whole sync over it.
+    advertise_ipps = False
+    try:
+        server_settings = api_get(token, "/api/v1/internal/server-settings")
+        advertise_ipps = bool(server_settings.get("advertise_ipps"))
+    except (OSError, urllib.error.URLError):
+        pass
+
     service_path = os.path.join(SERVICES_DIR, f"printops-{printer_id}.service")
 
     if not printer["airprint_enabled"]:
@@ -101,7 +129,7 @@ def main() -> int:
 
     os.makedirs(SERVICES_DIR, exist_ok=True)
     with open(service_path, "w") as f:
-        f.write(render_service_xml(printer_id, printer))
+        f.write(render_service_xml(printer_id, printer, advertise_ipps))
     print(f"Wrote {service_path}")
     return 0
 

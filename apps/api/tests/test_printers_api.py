@@ -12,6 +12,7 @@ from app.printers import status as printer_status
 from app.printers.ipp_client import PrinterProbeError, PrinterStateResult, ProbeResult
 from app.printers.snmp_counters import DetectedSupply, SnmpProbeError
 from app.routers import printers as printers_router
+from app.routers import settings as settings_router
 
 GOOGLE_CLAIMS = {
     "sub": "google-sub-viewer",
@@ -365,6 +366,35 @@ def test_mdm_connection_info(client, auth_headers, mock_failed_probe):
     assert body["resource_path"] == f"/printers/printops-{printer_id}"
     assert body["ipp_uri"] == f"ipp://{body['host']}:{body['port']}{body['resource_path']}"
     assert body["airprint_enabled"] is False
+
+
+def test_mdm_connection_uses_server_settings_hostname(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    """Regression test: mdm-connection used to read the static env-only
+    Settings.print_server_host, so a hostname change on Settings > Server
+    (app/models/server_settings.py) never actually reached newly-generated
+    MDM connection info — confirmed live the queue kept advertising the
+    raw IP after the domain was configured."""
+    monkeypatch.setattr(settings_router, "sync_server_settings", lambda: None)
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Lobby Printer 2", "ip_address": "10.0.0.12"},
+    )
+    printer_id = create.json()["id"]
+
+    client.put(
+        "/api/v1/settings/server",
+        headers=auth_headers,
+        json={"hostname": "print.example.org"},
+    )
+
+    response = client.get(f"/api/v1/printers/{printer_id}/mdm-connection", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["host"] == "print.example.org"
+    assert body["ipp_uri"].startswith("ipp://print.example.org:")
 
 
 def test_mdm_connection_requires_auth(client):

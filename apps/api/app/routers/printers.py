@@ -52,6 +52,7 @@ from app.schemas.report import (
 )
 from app.schemas.snmp import DailyCounterDeltaOut
 from app.schemas.syslog import SyslogEventPage
+from app.server_settings.service import get_or_create_server_settings
 from app.syslog.service import list_events as list_syslog_events
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -493,16 +494,22 @@ async def get_mdm_connection(
 ):
     """Connection details for manually adding this printer's PrintOps queue
     in an MDM tool (Mosyle etc) — points at the CUPS server, not the real
-    printer, since clients print through PrintOps."""
+    printer, since clients print through PrintOps. Hostname comes from the
+    admin-editable ServerSettings row (Settings > Server), not the env-only
+    Settings.print_server_host default it's seeded from — confirmed live
+    this was still reading the static env value even after the hostname
+    was changed on the settings page, so newly-configured MDM profiles
+    kept pointing admins at the raw IP instead of the real domain."""
     printer = await _get_printer_or_404(printer_id, db)
+    server_settings = await get_or_create_server_settings(db)
     queue_name = f"printops-{printer.id}"
     resource_path = f"/printers/{queue_name}"
     return PrinterMdmConnectionOut(
         queue_name=queue_name,
-        host=settings.print_server_host,
+        host=server_settings.hostname,
         port=settings.print_server_port,
         resource_path=resource_path,
-        ipp_uri=f"ipp://{settings.print_server_host}:{settings.print_server_port}{resource_path}",
+        ipp_uri=f"ipp://{server_settings.hostname}:{settings.print_server_port}{resource_path}",
         airprint_enabled=printer.airprint_enabled,
     )
 

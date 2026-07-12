@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import io
 import secrets
@@ -9,6 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt, encrypt
+from app.core.server_sync import ServerSyncError, sync_server_settings
+from app.core.tls_status import read_certificate_status
 from app.db import get_db
 from app.deps import get_current_user, require_role
 from app.integrations.classguard import ClassGuardClient, ClassGuardError
@@ -28,6 +31,7 @@ from app.models.google_workspace import GoogleWorkspaceSettings, GoogleWorkspace
 from app.models.mosyle import MosyleSettings
 from app.models.release import PrintReleaseSettings
 from app.models.report import ReportFormulaSettings
+from app.models.server_settings import ServerSettings
 from app.models.snmp import SnmpDefaultsSettings
 from app.models.zabbix import ZabbixSettings
 from app.printers.snmp_counters import get_or_create_snmp_defaults
@@ -51,11 +55,17 @@ from app.schemas.mosyle import MosyleSettingsOut, MosyleSettingsUpdate, MosyleTe
 from app.schemas.quota import QuotaSettingsOut, QuotaSettingsUpdate
 from app.schemas.release import PrintReleaseSettingsOut, PrintReleaseSettingsUpdate
 from app.schemas.report import ReportFormulaSettingsOut, ReportFormulaSettingsUpdate
+from app.schemas.server_settings import (
+    ServerSettingsOut,
+    ServerSettingsUpdate,
+    TlsCertificateStatusOut,
+)
 from app.schemas.session import SessionSettingsOut, SessionSettingsUpdate
 from app.schemas.snmp import SnmpDefaultsOut, SnmpDefaultsUpdate
 from app.schemas.syslog import SyslogSettingsOut, SyslogSettingsUpdate
 from app.schemas.untracked_copies import UntrackedCopySettingsOut, UntrackedCopySettingsUpdate
 from app.schemas.zabbix import ZabbixSettingsOut, ZabbixSettingsUpdate
+from app.server_settings.service import get_or_create_server_settings
 from app.sessions.service import get_or_create_session_settings
 from app.syslog.service import get_or_create_syslog_settings
 
@@ -719,6 +729,84 @@ async def download_zabbix_template():
         media_type="application/x-yaml",
         filename="printops_zabbix_template.yaml",
     )
+
+
+def _server_settings_to_out(settings: ServerSettings) -> ServerSettingsOut:
+    cert = read_certificate_status()
+    return ServerSettingsOut(
+        hostname=settings.hostname,
+        require_encryption=settings.require_encryption,
+        advertise_ipps=settings.advertise_ipps,
+        sync_error=settings.sync_error,
+        certificate=(
+            TlsCertificateStatusOut(
+                issuer=cert.issuer, expires_at=cert.expires_at, days_remaining=cert.days_remaining
+            )
+            if cert
+            else None
+        ),
+    )
+
+
+@router.get("/server", response_model=ServerSettingsOut)
+async def get_server_settings(db: AsyncSession = Depends(get_db)):
+    return _server_settings_to_out(await get_or_create_server_settings(db))
+
+
+async def _run_server_sync(settings: ServerSettings, db: AsyncSession) -> None:
+    """Shared by update_server_settings and sync_server_settings_now below
+    — non-fatal, same convention as printer edits triggering
+    _apply_queue_sync (app/routers/printers.py): a sync failure is recorded
+    on the row (surfaced in the UI) rather than raised."""
+    try:
+        await asyncio.to_thread(sync_server_settings)
+        settings.sync_error = None
+    except ServerSyncError as exc:
+        settings.sync_error = str(exc)
+    await db.commit()
+    await db.refresh(settings)
+
+
+@router.put(
+    "/server", response_model=ServerSettingsOut, dependencies=[Depends(require_role("admin"))]
+)
+async def update_server_settings(payload: ServerSettingsUpdate, db: AsyncSession = Depends(get_db)):
+    """Applies the change to cupsd.conf/Avahi via sync_server_settings()
+    right after saving — see _run_server_sync."""
+    settings = await get_or_create_server_settings(db)
+    updates = payload.model_dump(exclude_unset=True)
+    if updates.get("hostname") is not None:
+        settings.hostname = updates["hostname"]
+    if updates.get("require_encryption") is not None:
+        settings.require_encryption = updates["require_encryption"]
+    if updates.get("advertise_ipps") is not None:
+        settings.advertise_ipps = updates["advertise_ipps"]
+
+    # Committed *before* the sync runs — the sync script reads this row
+    # back over HTTP (a separate request/DB session), so it would still
+    # see the old values if this ran inside the still-open transaction
+    # above (confirmed live: an uncommitted hostname change was invisible
+    # to the script's own GET /internal/server-settings).
+    await db.commit()
+    await db.refresh(settings)
+
+    await _run_server_sync(settings, db)
+    return _server_settings_to_out(settings)
+
+
+@router.post(
+    "/server/sync",
+    response_model=ServerSettingsOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def sync_server_settings_now(db: AsyncSession = Depends(get_db)):
+    """Re-runs the sync without changing any field — for retrying after a
+    transient failure, or picking up a freshly-issued/renewed Caddy
+    certificate immediately rather than waiting for the daily
+    infra/cert-sync timer or the next unrelated settings save."""
+    settings = await get_or_create_server_settings(db)
+    await _run_server_sync(settings, db)
+    return _server_settings_to_out(settings)
 
 
 async def _get_or_create_report_formula_settings(db: AsyncSession) -> ReportFormulaSettings:
