@@ -12,6 +12,7 @@ from app.printers.snmp_counters import (
     _compute_level_percent,
     _extract_counter_value,
     _extract_string_value,
+    _guess_model_from_description,
     _konica_minolta_breakdown,
     _poll_counters_sync,
     detect_vendor_profile,
@@ -210,13 +211,43 @@ class TestComputeLevelPercent:
         assert _compute_level_percent(None, 100) is None
 
 
+class TestGuessModelFromDescription:
+    """Every string below is a real prtMarkerSuppliesDescription value
+    confirmed live against this district's fleet."""
+
+    def test_hp_sku_is_the_last_token(self):
+        assert _guess_model_from_description("Black Cartridge HP CF226A") == "CF226A"
+        assert _guess_model_from_description("Yellow Cartridge HP W2112X") == "W2112X"
+
+    def test_canon_cartridge_number_format(self):
+        assert (
+            _guess_model_from_description("Canon Cartridge 054 Black Toner") == "Canon 054"
+        )
+        # Not every Canon firmware appends "Toner" at the end.
+        assert _guess_model_from_description("Canon Cartridge 041 Black") == "Canon 041"
+
+    def test_canon_crg_format(self):
+        assert _guess_model_from_description("Canon CRG052 Black Toner") == "Canon CRG052"
+        assert _guess_model_from_description("Canon CRG121 Black Toner") == "Canon CRG121"
+
+    def test_konica_minolta_has_nothing_extractable(self):
+        assert _guess_model_from_description("Toner (Black)") is None
+        assert _guess_model_from_description("Toner (Cyan)") is None
+
+    def test_lexmark_has_nothing_extractable(self):
+        assert _guess_model_from_description("Black Cartridge") is None
+
+    def test_unrelated_description_returns_none(self):
+        assert _guess_model_from_description("Waste Toner Box") is None
+
+
 SUPPLIES_TYPE_OUTPUT = (
     ".1.3.6.1.2.1.43.11.1.1.5.1 = INTEGER: 3\n"
     ".1.3.6.1.2.1.43.11.1.1.5.2 = INTEGER: 3\n"
     ".1.3.6.1.2.1.43.11.1.1.5.3 = INTEGER: 9\n"  # not a cartridge type — excluded
 )
 SUPPLIES_DESCRIPTION_OUTPUT = (
-    '.1.3.6.1.2.1.43.11.1.1.6.1 = STRING: "Black Toner Cartridge"\n'
+    '.1.3.6.1.2.1.43.11.1.1.6.1 = STRING: "Black Cartridge HP CF226A"\n'
     '.1.3.6.1.2.1.43.11.1.1.6.2 = STRING: "Cyan Toner Cartridge"\n'
     '.1.3.6.1.2.1.43.11.1.1.6.3 = STRING: "Waste Toner Box"\n'
 )
@@ -250,12 +281,14 @@ class TestGetTonerSupplies:
         assert len(supplies) == 2
 
         black, cyan = supplies
-        assert black.description == "Black Toner Cartridge"
+        assert black.description == "Black Cartridge HP CF226A"
         assert black.color == "black"
         assert black.level_percent == 45
+        assert black.guessed_model == "CF226A"
 
         assert cyan.description == "Cyan Toner Cartridge"
         assert cyan.color == "cyan"
+        assert cyan.guessed_model is None  # no vendor SKU in this description
         assert cyan.level_percent is None  # -2 == unknown
 
     def test_missing_level_columns_still_returns_supplies(self):

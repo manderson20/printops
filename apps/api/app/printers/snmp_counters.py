@@ -35,6 +35,7 @@ here.
 
 import asyncio
 import logging
+import re
 import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -311,6 +312,11 @@ class DetectedSupply:
     # / prtMarkerSuppliesMaxCapacity — None when either is missing or
     # non-positive (the MIB's "unknown" convention), never a guess.
     level_percent: int | None
+    # Best-effort orderable part number parsed from `description` — see
+    # _guess_model_from_description. Defaults to None so existing call
+    # sites (tests, callers that don't care about this) don't need to
+    # specify it.
+    guessed_model: str | None = None
 
 
 def _guess_cartridge_color(description: str) -> CartridgeColorGuess | None:
@@ -330,6 +336,37 @@ def _guess_high_capacity(description: str) -> bool | None:
     lower = description.lower()
     if any(keyword in lower for keyword in _HIGH_CAPACITY_KEYWORDS):
         return True
+    return None
+
+
+def _guess_model_from_description(description: str) -> str | None:
+    """Best-effort orderable part number, parsed from the same
+    prtMarkerSuppliesDescription string color/high_capacity are already
+    guessed from — confirmed live against this district's real fleet:
+
+    - HP writes the real SKU as the last token, e.g. "Black Cartridge HP
+      CF226A" -> "CF226A", "Yellow Cartridge HP W2112X" -> "W2112X".
+    - Canon writes either "Cartridge NNN" (e.g. "Canon Cartridge 054
+      Black Toner" -> "Canon 054") or a bare "CRGNNN" token (e.g. "Canon
+      CRG052 Black Toner" -> "Canon CRG052") — both are real Canon
+      cartridge-line numbers, just different firmware generations.
+    - Konica Minolta ("Toner (Black)") and Lexmark ("Black Cartridge")
+      write nothing extractable at all — None for those, not a guess.
+
+    Only used by sync_toner_levels to prefill a cartridge's model field
+    when it's still empty; never overwrites an admin-entered value."""
+    lower = description.lower()
+    if "hp" in lower:
+        match = re.search(r"\bHP\s+([A-Za-z0-9]+)\s*$", description)
+        if match:
+            return match.group(1)
+    if "canon" in lower:
+        match = re.search(r"\bCartridge\s+(\d+)\b", description)
+        if match:
+            return f"Canon {match.group(1)}"
+        match = re.search(r"\b(CRG\d+)\b", description, re.IGNORECASE)
+        if match:
+            return f"Canon {match.group(1)}"
     return None
 
 
@@ -399,6 +436,7 @@ def get_toner_supplies(ip: str, config: SnmpConfig) -> list[DetectedSupply]:
                 color=_guess_cartridge_color(description),
                 high_capacity=_guess_high_capacity(description),
                 level_percent=_compute_level_percent(level, max_capacity),
+                guessed_model=_guess_model_from_description(description),
             )
         )
     if not supplies:
@@ -418,6 +456,13 @@ async def sync_toner_levels(
     implementation. Also the function the 30-minute SNMP counter poll loop
     (app/main.py) calls, so live level data stays fresh without an admin
     needing to click Detect.
+
+    Also prefills row.model from supply.guessed_model (see
+    _guess_model_from_description) whenever the row doesn't already have
+    one — confirmed live that HP/Canon descriptions carry a real orderable
+    part number, Konica Minolta/Lexmark don't (guessed_model is None for
+    those, so this is a no-op). Only ever fills an empty field; an
+    admin-entered model is never overwritten by a later poll.
 
     Also appends a PrinterTonerReading for each matched color where a real
     percentage was available (never for level_percent=None — an
@@ -454,6 +499,8 @@ async def sync_toner_levels(
         row.detected_at = now
         row.current_level_percent = supply.level_percent
         row.level_checked_at = now
+        if not row.model and supply.guessed_model:
+            row.model = supply.guessed_model
         if supply.level_percent is not None:
             db.add(
                 PrinterTonerReading(
