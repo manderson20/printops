@@ -245,6 +245,9 @@ async def _snmp_counter_poll_loop() -> None:
                                 db, printer, resolve_snmp_config(printer, defaults)
                             )
                         except SnmpProbeError:
+                            # Best-effort per printer — one printer's SNMP probe
+                            # failing (unreachable, no supply info, etc.) must not
+                            # stop the rest of this gather() from completing.
                             pass
 
                     await asyncio.gather(
@@ -400,6 +403,8 @@ async def lifespan(app: FastAPI):
         try:
             await task
         except asyncio.CancelledError:
+            # Expected — this loop just requested the cancellation above as
+            # part of a normal shutdown, not an error to surface.
             pass
 
 

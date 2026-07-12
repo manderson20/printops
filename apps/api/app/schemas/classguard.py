@@ -1,12 +1,16 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from app.core.validation import validate_base_url
 
 
 class ClassGuardSettingsUpdate(BaseModel):
     base_url: str | None = None
     access_token: str | None = None
     enabled: bool | None = None
+
+    _validate_base_url = field_validator("base_url")(validate_base_url)
 
 
 class ClassGuardTestRequest(ClassGuardSettingsUpdate):

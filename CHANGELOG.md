@@ -5,6 +5,19 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.54.0] - 2026-07-12
+
+- **Security hardening pass, prompted by GitHub's code-scanning alerts**
+  after making the repo public: validated the ClassGuard/Mosyle base_url
+  and Google Workspace customer_id integration settings (partial-SSRF
+  findings), tightened the held-print-job spool directory from
+  world-writable to a dedicated `lp` group (`scripts/setup.sh` now adds
+  the service user to it), hardened `ci.yml` (explicit `permissions:`,
+  pinned `pnpm/action-setup` to a commit SHA), and added explanatory
+  comments to a few intentionally-empty `except` blocks. Also dismissed
+  ~200 false-positive CodeQL alerts on Alembic's revision-variable
+  convention and two already-safe log lines.
+
 ## [0.53.0] - 2026-07-12
 
 - **Add a "Help" link to every admin screen**, pointing straight at that

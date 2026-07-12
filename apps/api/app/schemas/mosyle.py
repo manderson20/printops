@@ -1,6 +1,8 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from app.core.validation import validate_base_url
 
 
 class MosyleSettingsUpdate(BaseModel):
@@ -9,6 +11,8 @@ class MosyleSettingsUpdate(BaseModel):
     admin_email: str | None = None
     admin_password: str | None = None
     enabled: bool | None = None
+
+    _validate_base_url = field_validator("base_url")(validate_base_url)
 
 
 class MosyleSettingsOut(BaseModel):

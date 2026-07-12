@@ -1,7 +1,8 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
+from app.core.validation import validate_safe_identifier
 from app.schemas.staff_copier_identity import IdentityType
 
 
@@ -16,6 +17,13 @@ class GoogleWorkspaceSettingsUpdate(BaseModel):
     # app/integrations/google_workspace.py:_refresh_google_sourced_copier_identities).
     auto_create_copier_identity_from_employee_id: bool | None = None
     auto_copier_identity_type: IdentityType | None = None
+
+    # customer_id is interpolated straight into the Directory API request
+    # path (app/integrations/google_workspace.py) — restricting it to safe
+    # identifier characters closes off the py/partial-ssrf finding on that
+    # request without touching the real Google Workspace customer ID
+    # format ("my_customer" or a Cxxxxxxxx-style ID), which this allows.
+    _validate_customer_id = field_validator("customer_id")(validate_safe_identifier)
 
 
 class GoogleWorkspaceSettingsOut(BaseModel):
