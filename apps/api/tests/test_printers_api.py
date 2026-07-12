@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
@@ -8,6 +10,7 @@ from app.db import get_db
 from app.main import app
 from app.models.base import Base
 from app.printers import discovery as printer_discovery
+from app.printers import snmp_counters as snmp_counters_module
 from app.printers import status as printer_status
 from app.printers.ipp_client import PrinterProbeError, PrinterStateResult, ProbeResult
 from app.printers.snmp_counters import DetectedSupply, SnmpProbeError
@@ -1147,12 +1150,17 @@ def test_detect_toner_cartridges_creates_and_updates_rows(
     def fake_get_toner_supplies(ip, config):
         return [
             DetectedSupply(
-                description="410X High Yield Black", color="black", high_capacity=True
+                description="410X High Yield Black",
+                color="black",
+                high_capacity=True,
+                level_percent=62,
             ),
-            DetectedSupply(description="CRG-069 Cyan", color="cyan", high_capacity=None),
+            DetectedSupply(
+                description="CRG-069 Cyan", color="cyan", high_capacity=None, level_percent=None
+            ),
         ]
 
-    monkeypatch.setattr(printers_router, "get_toner_supplies", fake_get_toner_supplies)
+    monkeypatch.setattr(snmp_counters_module, "get_toner_supplies", fake_get_toner_supplies)
 
     response = client.post(
         f"/api/v1/printers/{printer_id}/toner-cartridges/detect", headers=auth_headers
@@ -1166,6 +1174,8 @@ def test_detect_toner_cartridges_creates_and_updates_rows(
     assert by_color["black"]["detected_description"] == "410X High Yield Black"
     assert by_color["black"]["detected_high_capacity"] is True
     assert by_color["black"]["detected_at"] is not None
+    assert by_color["black"]["current_level_percent"] == 62
+    assert by_color["black"]["level_checked_at"] is not None
 
     # cyan didn't exist before detect — created with a zero placeholder
     # cost/yield, still safe per compute_printer_rate's "not configured"
@@ -1174,6 +1184,54 @@ def test_detect_toner_cartridges_creates_and_updates_rows(
     assert by_color["cyan"]["yield_pages"] == 0
     assert by_color["cyan"]["detected_description"] == "CRG-069 Cyan"
     assert by_color["cyan"]["detected_high_capacity"] is None
+    assert by_color["cyan"]["current_level_percent"] is None
+
+
+async def test_detect_toner_cartridges_records_history_only_for_known_levels(
+    client, auth_headers, mock_failed_probe, monkeypatch, db_session_factory
+):
+    """sync_toner_levels should append a PrinterTonerReading for black
+    (level_percent=62, known) but not cyan (level_percent=None, unknown)
+    — an all-unknown history point would just be chart noise."""
+    from sqlalchemy import select
+
+    from app.models.report import PrinterTonerReading
+
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "History Printer", "ip_address": "10.0.0.38"},
+    )
+    printer_id = create.json()["id"]
+
+    def fake_get_toner_supplies(ip, config):
+        return [
+            DetectedSupply(
+                description="Black Toner", color="black", high_capacity=None, level_percent=62
+            ),
+            DetectedSupply(
+                description="Cyan Toner", color="cyan", high_capacity=None, level_percent=None
+            ),
+        ]
+
+    monkeypatch.setattr(snmp_counters_module, "get_toner_supplies", fake_get_toner_supplies)
+
+    response = client.post(
+        f"/api/v1/printers/{printer_id}/toner-cartridges/detect", headers=auth_headers
+    )
+    assert response.status_code == 200
+
+    async with db_session_factory() as db:
+        result = await db.execute(
+            select(PrinterTonerReading).where(
+                PrinterTonerReading.printer_id == uuid.UUID(printer_id)
+            )
+        )
+        readings = result.scalars().all()
+
+    assert len(readings) == 1
+    assert readings[0].color == "black"
+    assert readings[0].level_percent == 62
 
 
 def test_detect_toner_cartridges_reports_unmatched_supplies(
@@ -1187,9 +1245,13 @@ def test_detect_toner_cartridges_reports_unmatched_supplies(
     printer_id = create.json()["id"]
 
     def fake_get_toner_supplies(ip, config):
-        return [DetectedSupply(description="Unknown Part 4471", color=None, high_capacity=None)]
+        return [
+            DetectedSupply(
+                description="Unknown Part 4471", color=None, high_capacity=None, level_percent=30
+            )
+        ]
 
-    monkeypatch.setattr(printers_router, "get_toner_supplies", fake_get_toner_supplies)
+    monkeypatch.setattr(snmp_counters_module, "get_toner_supplies", fake_get_toner_supplies)
 
     response = client.post(
         f"/api/v1/printers/{printer_id}/toner-cartridges/detect", headers=auth_headers
@@ -1198,7 +1260,12 @@ def test_detect_toner_cartridges_reports_unmatched_supplies(
     body = response.json()
     assert body["cartridges"] == []
     assert body["unmatched"] == [
-        {"description": "Unknown Part 4471", "color": None, "high_capacity": None}
+        {
+            "description": "Unknown Part 4471",
+            "color": None,
+            "high_capacity": None,
+            "level_percent": 30,
+        }
     ]
 
 
@@ -1215,7 +1282,7 @@ def test_detect_toner_cartridges_snmp_failure_returns_502(
     def fake_get_toner_supplies(ip, config):
         raise SnmpProbeError("No response from device.")
 
-    monkeypatch.setattr(printers_router, "get_toner_supplies", fake_get_toner_supplies)
+    monkeypatch.setattr(snmp_counters_module, "get_toner_supplies", fake_get_toner_supplies)
 
     response = client.post(
         f"/api/v1/printers/{printer_id}/toner-cartridges/detect", headers=auth_headers
@@ -1250,9 +1317,13 @@ def test_update_toner_cartridges_preserves_detected_fields_across_put(
     printer_id = create.json()["id"]
 
     def fake_get_toner_supplies(ip, config):
-        return [DetectedSupply(description="056H Black", color="black", high_capacity=None)]
+        return [
+            DetectedSupply(
+                description="056H Black", color="black", high_capacity=None, level_percent=80
+            )
+        ]
 
-    monkeypatch.setattr(printers_router, "get_toner_supplies", fake_get_toner_supplies)
+    monkeypatch.setattr(snmp_counters_module, "get_toner_supplies", fake_get_toner_supplies)
     client.post(f"/api/v1/printers/{printer_id}/toner-cartridges/detect", headers=auth_headers)
 
     # Admin edits cost via the normal full-replace PUT — detected_description
@@ -1266,6 +1337,37 @@ def test_update_toner_cartridges_preserves_detected_fields_across_put(
     body = response.json()[0]
     assert body["cost"] == 62.5
     assert body["detected_description"] == "056H Black"
+    # current_level_percent/level_checked_at are also SNMP-detected, same
+    # carry-over rule as detected_description above.
+    assert body["current_level_percent"] == 80
+    assert body["level_checked_at"] is not None
+
+
+def test_toner_cartridge_warning_threshold_defaults_and_is_settable(
+    client, auth_headers, mock_failed_probe
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Threshold Printer", "ip_address": "10.0.0.37"},
+    )
+    printer_id = create.json()["id"]
+
+    default_response = client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=auth_headers,
+        json=[{"color": "black", "cost": 60, "yield_pages": 3000}],
+    )
+    assert default_response.json()[0]["warning_threshold_percent"] == 15
+
+    custom_response = client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=auth_headers,
+        json=[
+            {"color": "black", "cost": 60, "yield_pages": 3000, "warning_threshold_percent": 25}
+        ],
+    )
+    assert custom_response.json()[0]["warning_threshold_percent"] == 25
 
 
 def test_toner_cartridge_model_is_per_color(client, auth_headers, mock_failed_probe):

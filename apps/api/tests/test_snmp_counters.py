@@ -9,12 +9,14 @@ from app.printers.snmp_counters import (
     SnmpConfig,
     SnmpProbeError,
     _canon_breakdown,
+    _compute_level_percent,
     _extract_counter_value,
     _extract_string_value,
     _konica_minolta_breakdown,
     _poll_counters_sync,
     detect_vendor_profile,
     get_sys_descr_vendor_profile,
+    get_toner_supplies,
     resolve_snmp_config,
 )
 
@@ -179,6 +181,103 @@ class TestKonicaMinoltaBreakdown:
 
         assert result.confidence == "best_effort"  # doesn't downgrade or raise
         assert "didn't sum to the total" in caplog.text
+
+
+class TestComputeLevelPercent:
+    def test_normal_reading(self):
+        assert _compute_level_percent(45, 100) == 45
+
+    def test_rounds_to_nearest_percent(self):
+        assert _compute_level_percent(1, 3) == 33
+
+    def test_clamps_above_max_capacity(self):
+        # Confirmed live: some firmware reports a raw level slightly above
+        # its own stated max capacity.
+        assert _compute_level_percent(105, 100) == 100
+
+    def test_unknown_level_returns_none(self):
+        # -2 is this MIB's convention for "some supply remains, but the
+        # printer can't quantify it."
+        assert _compute_level_percent(-2, 100) is None
+
+    def test_missing_max_capacity_returns_none(self):
+        assert _compute_level_percent(45, None) is None
+
+    def test_zero_max_capacity_returns_none(self):
+        assert _compute_level_percent(45, 0) is None
+
+    def test_missing_level_returns_none(self):
+        assert _compute_level_percent(None, 100) is None
+
+
+SUPPLIES_TYPE_OUTPUT = (
+    ".1.3.6.1.2.1.43.11.1.1.5.1 = INTEGER: 3\n"
+    ".1.3.6.1.2.1.43.11.1.1.5.2 = INTEGER: 3\n"
+    ".1.3.6.1.2.1.43.11.1.1.5.3 = INTEGER: 9\n"  # not a cartridge type — excluded
+)
+SUPPLIES_DESCRIPTION_OUTPUT = (
+    '.1.3.6.1.2.1.43.11.1.1.6.1 = STRING: "Black Toner Cartridge"\n'
+    '.1.3.6.1.2.1.43.11.1.1.6.2 = STRING: "Cyan Toner Cartridge"\n'
+    '.1.3.6.1.2.1.43.11.1.1.6.3 = STRING: "Waste Toner Box"\n'
+)
+SUPPLIES_LEVEL_OUTPUT = (
+    ".1.3.6.1.2.1.43.11.1.1.9.1 = INTEGER: 45\n"
+    ".1.3.6.1.2.1.43.11.1.1.9.2 = INTEGER: -2\n"  # unknown
+)
+SUPPLIES_MAX_CAPACITY_OUTPUT = (
+    ".1.3.6.1.2.1.43.11.1.1.8.1 = INTEGER: 100\n" ".1.3.6.1.2.1.43.11.1.1.8.2 = INTEGER: 100\n"
+)
+
+
+class TestGetTonerSupplies:
+    def test_parses_type_description_and_level(self):
+        config = _fake_snmp_config()
+
+        def fake_run_snmp(argv):
+            oid = argv[-1]
+            return {
+                "1.3.6.1.2.1.43.11.1.1.5": SUPPLIES_TYPE_OUTPUT,
+                "1.3.6.1.2.1.43.11.1.1.6": SUPPLIES_DESCRIPTION_OUTPUT,
+                "1.3.6.1.2.1.43.11.1.1.9": SUPPLIES_LEVEL_OUTPUT,
+                "1.3.6.1.2.1.43.11.1.1.8": SUPPLIES_MAX_CAPACITY_OUTPUT,
+            }[oid]
+
+        with patch("app.printers.snmp_counters._run_snmp", side_effect=fake_run_snmp):
+            supplies = get_toner_supplies("10.30.1.210", config)
+
+        # Row 3 (Waste Toner Box, type 9) isn't a cartridge type — excluded
+        # even though it has no level/max-capacity data of its own.
+        assert len(supplies) == 2
+
+        black, cyan = supplies
+        assert black.description == "Black Toner Cartridge"
+        assert black.color == "black"
+        assert black.level_percent == 45
+
+        assert cyan.description == "Cyan Toner Cartridge"
+        assert cyan.color == "cyan"
+        assert cyan.level_percent is None  # -2 == unknown
+
+    def test_missing_level_columns_still_returns_supplies(self):
+        """A device that doesn't report prtMarkerSuppliesLevel/MaxCapacity
+        at all (empty walk, not an error) still yields cartridge rows —
+        just with level_percent=None, same best-effort convention as
+        color/high_capacity."""
+        config = _fake_snmp_config()
+
+        def fake_run_snmp(argv):
+            oid = argv[-1]
+            if oid == "1.3.6.1.2.1.43.11.1.1.5":
+                return ".1.3.6.1.2.1.43.11.1.1.5.1 = INTEGER: 3\n"
+            if oid == "1.3.6.1.2.1.43.11.1.1.6":
+                return '.1.3.6.1.2.1.43.11.1.1.6.1 = STRING: "Black Toner Cartridge"\n'
+            raise SnmpProbeError("No response from device.")
+
+        with patch("app.printers.snmp_counters._run_snmp", side_effect=fake_run_snmp):
+            supplies = get_toner_supplies("10.30.1.210", config)
+
+        assert len(supplies) == 1
+        assert supplies[0].level_percent is None
 
 
 class TestGracefulDegradation:

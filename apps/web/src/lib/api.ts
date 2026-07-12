@@ -338,6 +338,24 @@ export async function getPrinterCounterHistory(
   return response.json();
 }
 
+export type DailyTonerLevel = {
+  bucket_start: string;
+  black: number | null;
+  cyan: number | null;
+  magenta: number | null;
+  yellow: number | null;
+};
+
+export async function getPrinterTonerHistory(
+  id: string,
+  days: number,
+): Promise<DailyTonerLevel[]> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${id}/toner-history?days=${days}`,
+  );
+  return response.json();
+}
+
 export async function purgePrinterJobs(
   id: string,
 ): Promise<{ cancelled_count: number }> {
@@ -1949,12 +1967,18 @@ export type Cartridge = {
   // Reference-only part number for this color slot, e.g. "TN-227C" — see
   // PrinterTonerCartridge.model's docstring (app/models/report.py).
   model: string | null;
+  // See PrinterTonerCartridge.warning_threshold_percent's docstring.
+  warning_threshold_percent: number;
   // SNMP-detected, read-only — see PrinterTonerCartridge.detected_*'s
   // docstring (app/models/report.py). null until the first successful
   // detectPrinterCartridges call.
   detected_description: string | null;
   detected_high_capacity: boolean | null;
   detected_at: string | null;
+  // Live-polled, read-only — see PrinterTonerCartridge.current_level_percent's
+  // docstring. null until the first successful detect/background poll.
+  current_level_percent: number | null;
+  level_checked_at: string | null;
 };
 
 export type CartridgeInput = {
@@ -1962,6 +1986,7 @@ export type CartridgeInput = {
   cost: number;
   yield_pages: number;
   model: string | null;
+  warning_threshold_percent: number;
 };
 
 export async function getPrinterCartridges(
@@ -1991,6 +2016,7 @@ export type DetectedSupply = {
   description: string;
   color: CartridgeColor | null;
   high_capacity: boolean | null;
+  level_percent: number | null;
 };
 
 export type DetectCartridgesResult = {

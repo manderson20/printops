@@ -28,13 +28,14 @@ from app.printers.queue_sync import QueueSyncError, remove_queue, sync_queue
 from app.printers.snmp_counters import (
     SnmpProbeError,
     get_or_create_snmp_defaults,
-    get_toner_supplies,
     record_reading,
     refresh_printer_counters,
     resolve_snmp_config,
+    sync_toner_levels,
 )
 from app.printers.status import refresh_printer_status_and_rediscover
 from app.printers.test_print import TestPrintError, submit_test_print
+from app.printers.toner_history import get_daily_toner_levels
 from app.quotas.service import get_pages_used, period_bounds
 from app.schemas.auth import UserOut
 from app.schemas.printer import (
@@ -51,6 +52,7 @@ from app.schemas.release_bypass import PrinterReleaseBypassCreate, PrinterReleas
 from app.schemas.report import (
     CartridgeIn,
     CartridgeOut,
+    DailyTonerLevelOut,
     DetectCartridgesResult,
     DetectedSupplyOut,
 )
@@ -434,6 +436,16 @@ async def counter_history(printer_id: UUID, days: int = 30, db: AsyncSession = D
     return await get_daily_deltas(db, printer_id, days)
 
 
+@router.get("/{printer_id}/toner-history", response_model=list[DailyTonerLevelOut])
+async def toner_history(printer_id: UUID, days: int = 30, db: AsyncSession = Depends(get_db)):
+    """Per-day toner level history computed from PrinterTonerReading
+    (app/printers/toner_history.py) — powers the printer detail page's
+    toner-level-over-time chart. Read-only telemetry, open to any logged-in
+    user, matching counter-history above."""
+    await _get_printer_or_404(printer_id, db)
+    return await get_daily_toner_levels(db, printer_id, days)
+
+
 @router.get("/{printer_id}/syslog", response_model=SyslogEventPage)
 async def printer_syslog_events(
     printer_id: UUID,
@@ -581,15 +593,22 @@ async def update_toner_cartridges(
             detail="Each cartridge color can only be listed once.",
         )
 
-    # Carry over each color's detected_* fields (app/printers/snmp_counters.py:
-    # get_toner_supplies via the /detect endpoint below) across this
+    # Carry over each color's detected_*/level fields (app/printers/
+    # snmp_counters.py: sync_toner_levels, via the /detect endpoint below
+    # and the 30-minute background poll in app/main.py) across this
     # delete-and-recreate — an admin correcting the cost/yield_pages an
-    # SNMP detect just surfaced shouldn't wipe that same detect's result.
+    # SNMP poll just surfaced shouldn't wipe that same poll's result.
     existing = await db.execute(
         select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer_id)
     )
     detected_by_color = {
-        row.color: (row.detected_description, row.detected_high_capacity, row.detected_at)
+        row.color: (
+            row.detected_description,
+            row.detected_high_capacity,
+            row.detected_at,
+            row.current_level_percent,
+            row.level_checked_at,
+        )
         for row in existing.scalars().all()
     }
 
@@ -599,9 +618,13 @@ async def update_toner_cartridges(
         )
     )
     for entry in payload:
-        detected_description, detected_high_capacity, detected_at = detected_by_color.get(
-            entry.color, (None, None, None)
-        )
+        (
+            detected_description,
+            detected_high_capacity,
+            detected_at,
+            current_level_percent,
+            level_checked_at,
+        ) = detected_by_color.get(entry.color, (None, None, None, None, None))
         db.add(
             PrinterTonerCartridge(
                 printer_id=printer_id,
@@ -609,9 +632,12 @@ async def update_toner_cartridges(
                 cost=entry.cost,
                 yield_pages=entry.yield_pages,
                 model=entry.model,
+                warning_threshold_percent=entry.warning_threshold_percent,
                 detected_description=detected_description,
                 detected_high_capacity=detected_high_capacity,
                 detected_at=detected_at,
+                current_level_percent=current_level_percent,
+                level_checked_at=level_checked_at,
             )
         )
     await db.commit()
@@ -631,50 +657,32 @@ async def detect_toner_cartridges(printer_id: UUID, db: AsyncSession = Depends(g
     """Probes the printer's cartridge supplies over SNMP (see
     app/printers/snmp_counters.py:get_toner_supplies for why color/
     high-capacity are always a best-effort guess, never asserted as
-    confirmed) and upserts detected_* onto each matched color's row —
-    cost/yield_pages are left untouched (SNMP has no concept of a dollar
-    cost), creating a new row with cost=0/yield_pages=0 for any detected
-    color that doesn't have one yet. compute_printer_rate already treats
-    yield_pages=0 as "not configured" and falls back to the flat rate, so
-    a freshly-detected, not-yet-priced row is safe, not a silent zero
-    cost. Supplies the probe saw but couldn't confidently color-match are
-    returned in `unmatched` rather than dropped."""
+    confirmed) and upserts detected_*/current_level_percent onto each
+    matched color's row via sync_toner_levels — cost/yield_pages are left
+    untouched (SNMP has no concept of a dollar cost), creating a new row
+    with cost=0/yield_pages=0 for any detected color that doesn't have one
+    yet. compute_printer_rate already treats yield_pages=0 as "not
+    configured" and falls back to the flat rate, so a freshly-detected,
+    not-yet-priced row is safe, not a silent zero cost. Supplies the probe
+    saw but couldn't confidently color-match are returned in `unmatched`
+    rather than dropped. sync_toner_levels is the same function the
+    30-minute background poll (app/main.py) uses, so a manual detect and
+    the automatic one behave identically."""
     printer = await _get_printer_or_404(printer_id, db)
     defaults = await get_or_create_snmp_defaults(db)
     config = resolve_snmp_config(printer, defaults)
 
     try:
-        supplies = await asyncio.to_thread(get_toner_supplies, printer.ip_address, config)
+        unmatched_supplies = await sync_toner_levels(db, printer, config)
     except SnmpProbeError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-
-    existing = await db.execute(
-        select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer_id)
-    )
-    rows_by_color = {row.color: row for row in existing.scalars().all()}
-
-    now = datetime.now(UTC)
-    unmatched: list[DetectedSupplyOut] = []
-    for supply in supplies:
-        if supply.color is None:
-            unmatched.append(DetectedSupplyOut(**vars(supply)))
-            continue
-        row = rows_by_color.get(supply.color)
-        if row is None:
-            row = PrinterTonerCartridge(
-                printer_id=printer_id, color=supply.color, cost=0.0, yield_pages=0
-            )
-            db.add(row)
-            rows_by_color[supply.color] = row
-        row.detected_description = supply.description
-        row.detected_high_capacity = supply.high_capacity
-        row.detected_at = now
 
     await db.commit()
 
     result = await db.execute(
         select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer_id)
     )
+    unmatched = [DetectedSupplyOut(**vars(supply)) for supply in unmatched_supplies]
     return DetectCartridgesResult(cartridges=result.scalars().all(), unmatched=unmatched)
 
 

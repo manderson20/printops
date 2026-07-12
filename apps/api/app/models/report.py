@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, UniqueConstraint, Uuid
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -68,6 +68,19 @@ class PrinterTonerCartridge(Base, TimestampMixin):
     # replaced the old printer-level toner_cartridge_model.
     model: Mapped[str | None] = mapped_column(default=None)
 
+    # Live SNMP-polled level (0-100, or None if unmeasurable/never polled)
+    # — refreshed by the 30-minute background loop (app/main.py) and by the
+    # on-demand detect endpoint, both via app/printers/snmp_counters.py:
+    # sync_toner_levels. Distinct from cost/yield_pages above, which stay
+    # admin-entered only.
+    current_level_percent: Mapped[int | None] = mapped_column(default=None)
+    level_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # Admin-settable per color — the UI flags this cartridge as low once
+    # current_level_percent drops below it. Defaults to a sane 15% so every
+    # cartridge (including ones that existed before this field shipped) is
+    # warn-capable immediately without an admin having to configure it first.
+    warning_threshold_percent: Mapped[int] = mapped_column(default=15, server_default="15")
+
     # SNMP-detected supply info (app/printers/snmp_counters.py:
     # get_toner_supplies, via POST /printers/{id}/toner-cartridges/detect)
     # — separate from cost/yield_pages above, which stay admin-entered
@@ -80,6 +93,39 @@ class PrinterTonerCartridge(Base, TimestampMixin):
     detected_description: Mapped[str | None] = mapped_column(default=None)
     detected_high_capacity: Mapped[bool | None] = mapped_column(default=None)
     detected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
+class PrinterTonerReading(Base):
+    """An append-only history of SNMP toner-level polls (app/printers/
+    snmp_counters.py:sync_toner_levels) — one row per color per successful
+    poll where a percentage was actually available (a poll that couldn't
+    quantify the level, see get_toner_supplies's docstring, is never
+    recorded here, so this history never has all-unknown noise points).
+    Feeds app/printers/toner_history.py's per-day bucketing for a
+    toner-level-over-time chart. Same shape convention as
+    PrinterCounterReading (app/models/snmp.py) — no TimestampMixin, since
+    recorded_at (when the SNMP read actually happened) is the only
+    timestamp that matters here."""
+
+    __tablename__ = "printer_toner_readings"
+    __table_args__ = (
+        Index(
+            "ix_printer_toner_readings_printer_color_recorded",
+            "printer_id",
+            "color",
+            "recorded_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    printer_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("printers.id", ondelete="CASCADE"), index=True
+    )
+    # "black" | "cyan" | "magenta" | "yellow" — same convention as
+    # PrinterTonerCartridge.color above.
+    color: Mapped[str]
+    level_percent: Mapped[int]
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class ReportSnapshot(Base, TimestampMixin):

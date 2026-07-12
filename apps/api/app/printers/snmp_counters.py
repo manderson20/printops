@@ -45,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt, encrypt
 from app.models.printer import Printer
+from app.models.report import PrinterTonerCartridge, PrinterTonerReading
 from app.models.snmp import PrinterCounterReading, SnmpDefaultsSettings
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,13 @@ SYS_DESCR_OID = "1.3.6.1.2.1.1.1.0"
 # vendor-private like the Canon/Konica OIDs above). See get_toner_supplies.
 SUPPLIES_TYPE_OID = "1.3.6.1.2.1.43.11.1.1.5"
 SUPPLIES_DESCRIPTION_OID = "1.3.6.1.2.1.43.11.1.1.6"
+# prtMarkerSuppliesLevel / prtMarkerSuppliesMaxCapacity — same table, same
+# index suffix as the two above. Negative values are this MIB's convention
+# for "unknown"/"unmeasurable" (a printer can report it has *some* toner
+# left without being able to quantify it) — never guessed at, just treated
+# as no percentage available. See _compute_level_percent.
+SUPPLIES_LEVEL_OID = "1.3.6.1.2.1.43.11.1.1.9"
+SUPPLIES_MAX_CAPACITY_OID = "1.3.6.1.2.1.43.11.1.1.8"
 
 # prtMarkerSuppliesType (RFC 3805) values that represent an actual
 # toner/ink cartridge, as opposed to a waste bin, drum, fuser, staples,
@@ -299,6 +307,10 @@ class DetectedSupply:
     description: str
     color: CartridgeColorGuess | None
     high_capacity: bool | None
+    # Current supply level as a 0-100 percentage, from prtMarkerSuppliesLevel
+    # / prtMarkerSuppliesMaxCapacity — None when either is missing or
+    # non-positive (the MIB's "unknown" convention), never a guess.
+    level_percent: int | None
 
 
 def _guess_cartridge_color(description: str) -> CartridgeColorGuess | None:
@@ -321,6 +333,17 @@ def _guess_high_capacity(description: str) -> bool | None:
     return None
 
 
+def _compute_level_percent(level: int | None, max_capacity: int | None) -> int | None:
+    """0-100, or None when a percentage can't be derived — either value is
+    missing, or either is non-positive (this MIB's convention for "the
+    printer can't quantify this," e.g. -2 for prtMarkerSuppliesLevel).
+    Clamped to [0, 100] since some firmware has been seen to report a raw
+    level slightly above its own stated max capacity."""
+    if level is None or max_capacity is None or level < 0 or max_capacity <= 0:
+        return None
+    return max(0, min(100, round(level / max_capacity * 100)))
+
+
 def get_toner_supplies(ip: str, config: SnmpConfig) -> list[DetectedSupply]:
     """Walks the standard Printer MIB supplies table (RFC 3805) for
     cartridge-type rows, parsing each one's device-reported description
@@ -337,10 +360,25 @@ def get_toner_supplies(ip: str, config: SnmpConfig) -> list[DetectedSupply]:
     is unverified. That's why color/high_capacity are always a best-effort
     guess (DetectedSupply), never asserted as confirmed.
 
-    Raises SnmpProbeError if the walk itself fails or returns nothing
-    recognizable as a cartridge."""
+    Also walks prtMarkerSuppliesLevel/prtMarkerSuppliesMaxCapacity (same
+    table) to compute a level percentage — best-effort like color/
+    high_capacity: a device that doesn't report these at all (or reports
+    them as "unknown") just gets level_percent=None for that row rather
+    than failing the whole probe (see _compute_level_percent).
+
+    Raises SnmpProbeError if the *type* walk fails or returns nothing
+    recognizable as a cartridge — that one's core to the feature. The
+    level/max-capacity walks are best-effort: a device that doesn't
+    support those columns at all (raises, rather than just returning
+    empty) still yields cartridge rows, just with level_percent=None."""
     types = snmp_walk(ip, SUPPLIES_TYPE_OID, config)
     descriptions = snmp_walk(ip, SUPPLIES_DESCRIPTION_OID, config)
+    try:
+        levels = snmp_walk(ip, SUPPLIES_LEVEL_OID, config)
+        max_capacities = snmp_walk(ip, SUPPLIES_MAX_CAPACITY_OID, config)
+    except SnmpProbeError:
+        levels = {}
+        max_capacities = {}
 
     supplies: list[DetectedSupply] = []
     for index, raw_type in types.items():
@@ -353,16 +391,79 @@ def get_toner_supplies(ip: str, config: SnmpConfig) -> list[DetectedSupply]:
         description = _extract_string_value(raw_description)
         if not description:
             continue
+        level = _extract_counter_value(levels.get(index, ""))
+        max_capacity = _extract_counter_value(max_capacities.get(index, ""))
         supplies.append(
             DetectedSupply(
                 description=description,
                 color=_guess_cartridge_color(description),
                 high_capacity=_guess_high_capacity(description),
+                level_percent=_compute_level_percent(level, max_capacity),
             )
         )
     if not supplies:
         raise SnmpProbeError("No toner/ink cartridge supplies reported by this device.")
     return supplies
+
+
+async def sync_toner_levels(
+    db: AsyncSession, printer: Printer, config: SnmpConfig
+) -> list[DetectedSupply]:
+    """Polls this printer's toner supplies and upserts each color-matched
+    PrinterTonerCartridge row's detected_description/detected_high_capacity/
+    detected_at/current_level_percent/level_checked_at — creating a
+    cost=0/yield_pages=0 placeholder row for a detected color with none yet,
+    same convention POST /printers/{id}/toner-cartridges/detect
+    (app/routers/printers.py) already used before this became its shared
+    implementation. Also the function the 30-minute SNMP counter poll loop
+    (app/main.py) calls, so live level data stays fresh without an admin
+    needing to click Detect.
+
+    Also appends a PrinterTonerReading for each matched color where a real
+    percentage was available (never for level_percent=None — an
+    all-unknown history point would just be chart noise), feeding
+    app/printers/toner_history.py's toner-level-over-time chart.
+
+    Does not commit — caller owns the transaction, this file's existing
+    convention (see _poll_counters_sync). Raises SnmpProbeError if the walk
+    itself fails; returns the supplies that couldn't be matched to a color,
+    for callers that want to surface them (the on-demand endpoint does, the
+    background loop doesn't)."""
+    supplies = await asyncio.to_thread(get_toner_supplies, printer.ip_address, config)
+
+    existing = await db.execute(
+        select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer.id)
+    )
+    rows_by_color = {row.color: row for row in existing.scalars().all()}
+
+    now = datetime.now(UTC)
+    unmatched: list[DetectedSupply] = []
+    for supply in supplies:
+        if supply.color is None:
+            unmatched.append(supply)
+            continue
+        row = rows_by_color.get(supply.color)
+        if row is None:
+            row = PrinterTonerCartridge(
+                printer_id=printer.id, color=supply.color, cost=0.0, yield_pages=0
+            )
+            db.add(row)
+            rows_by_color[supply.color] = row
+        row.detected_description = supply.description
+        row.detected_high_capacity = supply.high_capacity
+        row.detected_at = now
+        row.current_level_percent = supply.level_percent
+        row.level_checked_at = now
+        if supply.level_percent is not None:
+            db.add(
+                PrinterTonerReading(
+                    printer_id=printer.id,
+                    color=supply.color,
+                    level_percent=supply.level_percent,
+                    recorded_at=now,
+                )
+            )
+    return unmatched
 
 
 def _canon_breakdown(ip: str, config: SnmpConfig) -> VendorBreakdown:

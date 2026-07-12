@@ -19,14 +19,18 @@ from app.models.google_workspace import GoogleWorkspaceSettings
 from app.models.job import Job
 from app.models.mosyle import MosyleSettings
 from app.models.printer import Printer
+from app.models.report import PrinterTonerReading
 from app.models.snmp import PrinterCounterReading
 from app.models.syslog import PrinterSyslogEvent
 from app.printers.discovery import refresh_printer_capabilities
 from app.printers.queue_sync import QueueSyncError, sync_queue
 from app.printers.snmp_counters import (
+    SnmpProbeError,
     get_or_create_snmp_defaults,
     record_reading,
     refresh_printer_counters,
+    resolve_snmp_config,
+    sync_toner_levels,
 )
 from app.printers.status import refresh_printer_status_and_rediscover
 from app.routers import (
@@ -207,7 +211,13 @@ async def _snmp_counter_poll_loop() -> None:
     fleet with several offline devices). Gated on the global
     SnmpDefaultsSettings.enabled flag — no-ops entirely until an admin
     turns SNMP polling on. Same per-printer isolation via
-    asyncio.gather(..., return_exceptions=True) as the status loop."""
+    asyncio.gather(..., return_exceptions=True) as the status loop.
+
+    Also polls each printer's toner supply levels (sync_toner_levels) in
+    the same per-printer step — piggybacking on this loop's existing
+    round-trip rather than adding a second poll cycle, per the counter/level
+    data being similarly slow-changing. Best-effort: a failed toner poll
+    (SnmpProbeError) doesn't affect the page-counter poll's own result."""
     while True:
         try:
             async with AsyncSessionLocal() as db:
@@ -230,6 +240,12 @@ async def _snmp_counter_poll_loop() -> None:
                     async def _refresh_one(printer: Printer) -> None:
                         if await refresh_printer_counters(printer, defaults):
                             db.add(record_reading(printer))
+                        try:
+                            await sync_toner_levels(
+                                db, printer, resolve_snmp_config(printer, defaults)
+                            )
+                        except SnmpProbeError:
+                            pass
 
                     await asyncio.gather(
                         *(_refresh_one(p) for p in printers), return_exceptions=True
@@ -244,13 +260,15 @@ COUNTER_READING_PURGE_INTERVAL_SECONDS = 24 * 60 * 60
 
 
 async def _counter_reading_purge_loop() -> None:
-    """Deletes PrinterCounterReading rows older than
-    SnmpDefaultsSettings.retention_days — unlike the held-job purge (15
-    min, time-sensitive since it's deleting spooled documents), this isn't
-    urgent: readings accumulate slowly (one per printer per successful
-    30-min poll) and a day's delay in pruning old ones is harmless, so a
-    24h cadence is plenty. Same tolerant per-cycle error handling as the
-    other background loops."""
+    """Deletes PrinterCounterReading and PrinterTonerReading rows older
+    than SnmpDefaultsSettings.retention_days (same setting governs both —
+    no separate admin config surface for toner history retention) —
+    unlike the held-job purge (15 min, time-sensitive since it's deleting
+    spooled documents), this isn't urgent: readings accumulate slowly (one
+    per printer, or per printer-color for toner, per successful 30-min
+    poll) and a day's delay in pruning old ones is harmless, so a 24h
+    cadence is plenty. Same tolerant per-cycle error handling as the other
+    background loops."""
     while True:
         try:
             async with AsyncSessionLocal() as db:
@@ -258,6 +276,9 @@ async def _counter_reading_purge_loop() -> None:
                 cutoff = datetime.now(UTC) - timedelta(days=defaults.retention_days)
                 await db.execute(
                     delete(PrinterCounterReading).where(PrinterCounterReading.recorded_at < cutoff)
+                )
+                await db.execute(
+                    delete(PrinterTonerReading).where(PrinterTonerReading.recorded_at < cutoff)
                 )
                 await db.commit()
         except Exception:

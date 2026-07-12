@@ -30,20 +30,28 @@ type Row = {
   model: string;
   cost: string;
   yield_pages: string;
+  warning_threshold_percent: string;
   detected_description: string | null;
   detected_high_capacity: boolean | null;
   detected_at: string | null;
+  current_level_percent: number | null;
+  level_checked_at: string | null;
 };
 type RowsByColor = Record<CartridgeColor, Row>;
+
+const DEFAULT_WARNING_THRESHOLD_PERCENT = 15;
 
 function emptyRow(): Row {
   return {
     model: "",
     cost: "",
     yield_pages: "",
+    warning_threshold_percent: String(DEFAULT_WARNING_THRESHOLD_PERCENT),
     detected_description: null,
     detected_high_capacity: null,
     detected_at: null,
+    current_level_percent: null,
+    level_checked_at: null,
   };
 }
 
@@ -52,9 +60,12 @@ function rowFromCartridge(cartridge: Cartridge): Row {
     model: cartridge.model ?? "",
     cost: String(cartridge.cost),
     yield_pages: String(cartridge.yield_pages),
+    warning_threshold_percent: String(cartridge.warning_threshold_percent),
     detected_description: cartridge.detected_description,
     detected_high_capacity: cartridge.detected_high_capacity,
     detected_at: cartridge.detected_at,
+    current_level_percent: cartridge.current_level_percent,
+    level_checked_at: cartridge.level_checked_at,
   };
 }
 
@@ -100,7 +111,11 @@ export function TonerCartridgesCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [printerId]);
 
-  function updateField(color: CartridgeColor, field: "model" | "cost" | "yield_pages", value: string) {
+  function updateField(
+    color: CartridgeColor,
+    field: "model" | "cost" | "yield_pages" | "warning_threshold_percent",
+    value: string,
+  ) {
     setRows((prev) => (prev ? { ...prev, [color]: { ...prev[color], [field]: value } } : prev));
   }
 
@@ -122,6 +137,8 @@ export function TonerCartridgesCard({
           model: rows[color].model.trim() || null,
           cost: Number(rows[color].cost) || 0,
           yield_pages: Number(rows[color].yield_pages) || 0,
+          warning_threshold_percent:
+            Number(rows[color].warning_threshold_percent) || DEFAULT_WARNING_THRESHOLD_PERCENT,
         }));
       await updatePrinterCartridges(printerId, cartridges);
       setSaved(true);
@@ -175,7 +192,9 @@ export function TonerCartridgesCard({
         Leave a color blank to fall back to the flat per-page rate in the Report Formulas settings.
         &ldquo;Detect via SNMP&rdquo; reads each cartridge&apos;s description straight off the
         device and guesses color/high-capacity from it — a best-effort read, not a confirmed fact,
-        so double-check it against the physical cartridge before trusting it blindly.
+        so double-check it against the physical cartridge before trusting it blindly. Level %
+        refreshes automatically in the background every 30 minutes for SNMP-enabled printers; the
+        Level badge turns red once it drops below that color&apos;s Warn Below threshold.
       </p>
 
       {rows === null && <Spinner label="Loading cartridges…" />}
@@ -184,7 +203,7 @@ export function TonerCartridgesCard({
         <div className="flex flex-col gap-3">
           {colors.map((color) => (
             <div key={color} className="flex flex-col gap-1 border-t border-black/[.08] pt-3 first:border-t-0 first:pt-0 dark:border-white/[.1]">
-              <div className="grid grid-cols-[5rem_1fr_1fr_1fr] items-end gap-3">
+              <div className="grid grid-cols-[5rem_1fr_1fr_1fr_1fr] items-end gap-3">
                 <span className="text-sm font-medium text-black dark:text-zinc-50">
                   {COLOR_LABELS[color]}
                 </span>
@@ -219,16 +238,44 @@ export function TonerCartridgesCard({
                     onChange={(e) => updateField(color, "yield_pages", e.target.value)}
                   />
                 </label>
+                <label className="flex flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
+                  Warn Below (%)
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    disabled={!isAdmin}
+                    value={rows[color].warning_threshold_percent}
+                    onChange={(e) => updateField(color, "warning_threshold_percent", e.target.value)}
+                  />
+                </label>
               </div>
-              {rows[color].detected_description && (
+              {(rows[color].detected_description || rows[color].current_level_percent !== null) && (
                 <div className="flex flex-wrap items-center gap-2 pl-[calc(5rem+0.75rem)] text-xs text-zinc-500">
-                  <span>Detected: {rows[color].detected_description}</span>
+                  {rows[color].current_level_percent !== null && (
+                    <>
+                      <Badge
+                        tone={
+                          rows[color].current_level_percent! <
+                          (Number(rows[color].warning_threshold_percent) ||
+                            DEFAULT_WARNING_THRESHOLD_PERCENT)
+                            ? "danger"
+                            : "success"
+                        }
+                      >
+                        Level: {rows[color].current_level_percent}%
+                      </Badge>
+                      <span className="text-zinc-400">
+                        ({formatRelativeTime(rows[color].level_checked_at)})
+                      </span>
+                    </>
+                  )}
+                  {rows[color].detected_description && (
+                    <span>Detected: {rows[color].detected_description}</span>
+                  )}
                   {rows[color].detected_high_capacity && (
                     <Badge tone="info">High Capacity</Badge>
                   )}
-                  <span className="text-zinc-400">
-                    ({formatRelativeTime(rows[color].detected_at)})
-                  </span>
                 </div>
               )}
             </div>
@@ -244,7 +291,10 @@ export function TonerCartridgesCard({
           </p>
           <ul className="mt-1 list-inside list-disc">
             {unmatched.map((supply, i) => (
-              <li key={i}>{supply.description}</li>
+              <li key={i}>
+                {supply.description}
+                {supply.level_percent !== null && ` (${supply.level_percent}%)`}
+              </li>
             ))}
           </ul>
         </div>

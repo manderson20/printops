@@ -115,6 +115,8 @@ class CartridgeIn(BaseModel):
     # Reference-only part number for this color slot, e.g. "TN-227C" — see
     # PrinterTonerCartridge.model's docstring (app/models/report.py).
     model: str | None = None
+    # See PrinterTonerCartridge.warning_threshold_percent's docstring.
+    warning_threshold_percent: int = 15
 
 
 class CartridgeOut(BaseModel):
@@ -122,6 +124,7 @@ class CartridgeOut(BaseModel):
     cost: float
     yield_pages: int
     model: str | None = None
+    warning_threshold_percent: int
 
     # SNMP-detected, read-only — see PrinterTonerCartridge.detected_*'s
     # docstring (app/models/report.py). None until the first successful
@@ -129,6 +132,10 @@ class CartridgeOut(BaseModel):
     detected_description: str | None = None
     detected_high_capacity: bool | None = None
     detected_at: datetime | None = None
+    # Live-polled, read-only — see PrinterTonerCartridge.current_level_percent's
+    # docstring. None until the first successful detect/background poll.
+    current_level_percent: int | None = None
+    level_checked_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -143,11 +150,25 @@ class DetectedSupplyOut(BaseModel):
     description: str
     color: CartridgeColor | None
     high_capacity: bool | None
+    level_percent: int | None = None
 
 
 class DetectCartridgesResult(BaseModel):
     cartridges: list[CartridgeOut]
     unmatched: list[DetectedSupplyOut]
+
+
+class DailyTonerLevelOut(BaseModel):
+    """One point on the toner-level-over-time chart — see
+    app/printers/toner_history.py:get_daily_toner_levels. Each color is
+    independently None on a day with no reading for that color, not
+    necessarily all four at once."""
+
+    bucket_start: date
+    black: int | None = None
+    cyan: int | None = None
+    magenta: int | None = None
+    yellow: int | None = None
 
 
 class CostEntryOut(BaseModel):
