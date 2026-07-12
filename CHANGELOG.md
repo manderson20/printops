@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.46.1] - 2026-07-12
+
+- **Fix: Settings > Server's Sync Now gave no visible feedback.** Clicking
+  it did something (a real cupsd restart) but showed nothing either way —
+  added a green success message (new `SuccessState` component) alongside
+  the existing red error one, for both Save and Sync Now. Also fixed: a
+  200 response that still recorded a non-fatal sync failure (the same
+  "saved, but the sync itself failed" case `Printer.queue_sync_error`
+  already has) now shows as a visible error instead of looking identical
+  to a real success.
+
 ## [0.46.0] - 2026-07-12
 
 - **New: Settings > Server (hostname + TLS for the CUPS server itself).**
