@@ -5,6 +5,11 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.50.1] - 2026-07-12
+
+- **Fix: printer detail pages were noticeably narrower than the rest of
+  the app.** Widened to match (max-w-2xl → max-w-6xl).
+
 ## [0.50.0] - 2026-07-12
 
 - **New: live toner level polling + low-toner warning.** Each color
