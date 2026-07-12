@@ -22,6 +22,7 @@ from app.models.printer import Printer
 from app.models.snmp import PrinterCounterReading
 from app.models.syslog import PrinterSyslogEvent
 from app.printers.discovery import refresh_printer_capabilities
+from app.printers.queue_sync import QueueSyncError, sync_queue
 from app.printers.snmp_counters import (
     get_or_create_snmp_defaults,
     record_reading,
@@ -134,7 +135,24 @@ async def _capability_rediscovery_loop() -> None:
     happened to notice and click Rediscover, or the printer happened to
     blip offline. Same cadence and per-printer isolation as
     _snmp_counter_poll_loop below (asyncio.gather(..., return_exceptions=True)
-    so one slow/unreachable device can't stall the rest of the fleet)."""
+    so one slow/unreachable device can't stall the rest of the fleet).
+
+    If the freshly-probed default page size or per-tray contents differ
+    from what was already stored, also re-runs the CUPS queue sync
+    (app/printers/queue_sync.py) — otherwise this loop would only keep
+    PrintOps's own display fresh while the actual CUPS queue's PPD (what
+    an end user's print dialog reads as its default — see
+    scripts/sync_cups_queue.sh's -m everywhere) stays a stale snapshot
+    from whenever the queue was last created/resynced, drifting out of
+    sync with the live device. Gated on an actual change, not resynced
+    unconditionally every cycle: a full queue resync is much heavier (up
+    to 90s, several sudo lpadmin/ipptool calls — see
+    queue_sync.SYNC_TIMEOUT_SECONDS) than a plain capability probe, and
+    regenerating every online printer's PPD every 30 minutes regardless
+    of whether anything changed would be needless load on cupsd. Same
+    non-fatal QueueSyncError handling as refresh_printer_status_and_rediscover
+    (app/printers/status.py) uses for its own offline->online-triggered
+    resync."""
     while True:
         try:
             async with AsyncSessionLocal() as db:
@@ -152,7 +170,22 @@ async def _capability_rediscovery_loop() -> None:
                 )
 
                 async def _refresh_one(printer: Printer) -> None:
+                    previous = printer.capabilities or {}
+                    previous_default = previous.get("default_media_size")
+                    previous_trays = previous.get("media_trays")
+
                     await refresh_printer_capabilities(printer)
+
+                    current = printer.capabilities or {}
+                    media_changed = current.get("default_media_size") != previous_default or (
+                        current.get("media_trays") != previous_trays
+                    )
+                    if media_changed:
+                        try:
+                            await asyncio.to_thread(sync_queue, str(printer.id))
+                            printer.queue_sync_error = None
+                        except QueueSyncError as exc:
+                            printer.queue_sync_error = str(exc)
 
                 await asyncio.gather(*(_refresh_one(p) for p in printers), return_exceptions=True)
                 await db.commit()
