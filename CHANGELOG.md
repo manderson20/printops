@@ -5,6 +5,14 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.49.0] - 2026-07-12
+
+- **New: cartridge model number is now per-color.** Color printers take a
+  different part number per color cartridge, so the Toner Cartridges card
+  now has a Model field on each color's row (black/cyan/magenta/yellow)
+  instead of one generic field for the whole printer. Existing generic
+  values were automatically moved onto the Black row.
+
 ## [0.48.2] - 2026-07-12
 
 - **Fix: the file picker on Print and Copier Import upload looked like
