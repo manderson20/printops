@@ -427,6 +427,45 @@ async def test_org_units_endpoint_filters_by_configured_staff_ou(
     assert "/Students/High School" not in org_units
 
 
+async def test_org_units_endpoint_scope_all_ignores_staff_ou_filter(
+    client, auth_headers, db_session_factory
+):
+    """scope=all is what the printer self-service-print access picker
+    uses — student OUs are exactly the point there, not noise to
+    exclude, unlike the default OU-Viewer-picker behavior above."""
+    client.put(
+        "/api/v1/settings/google-workspace",
+        headers=auth_headers,
+        json={"staff_org_unit_path": "/Employees"},
+    )
+    async with db_session_factory() as session:
+        session.add(
+            GoogleWorkspaceUser(
+                email="teacher2@example.com",
+                name="Teacher",
+                org_unit_path="/Employees/Teachers",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            GoogleWorkspaceUser(
+                email="student2@example.com",
+                name="Student",
+                org_unit_path="/Students/High School",
+                synced_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    response = client.get(
+        "/api/v1/settings/google-workspace/org-units?scope=all", headers=auth_headers
+    )
+    assert response.status_code == 200
+    org_units = response.json()
+    assert "/Employees/Teachers" in org_units
+    assert "/Students/High School" in org_units
+
+
 async def test_org_units_endpoint_unfiltered_when_staff_ou_not_configured(
     client, auth_headers, db_session_factory
 ):

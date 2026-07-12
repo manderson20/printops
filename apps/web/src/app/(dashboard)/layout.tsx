@@ -11,6 +11,7 @@ import { useCurrentUser } from "@/lib/useCurrentUser";
 import { useIdleSessionRefresh } from "@/lib/idleRefresh";
 
 const NAV_LINKS = [
+  { href: "/print", label: "Print" },
   { href: "/insights", label: "Insights" },
   { href: "/printers", label: "Printers" },
   { href: "/jobs", label: "Jobs" },

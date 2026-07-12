@@ -16,6 +16,7 @@ from app.deps import get_current_user, require_role
 from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.job import Job
 from app.models.printer import Printer
+from app.models.printer_ou_access import PrinterAllowedOu
 from app.models.quota import PrinterUserQuota
 from app.models.release_bypass import PrinterReleaseBypass
 from app.models.report import PrinterTonerCartridge
@@ -42,6 +43,7 @@ from app.schemas.printer import (
     PrinterUpdate,
     VirtualQueueCreate,
 )
+from app.schemas.printer_ou_access import PrinterAllowedOuCreate, PrinterAllowedOuOut
 from app.schemas.quota import PrinterUserQuotaCreate, PrinterUserQuotaOut, PrinterUserQuotaUpdate
 from app.schemas.release_bypass import PrinterReleaseBypassCreate, PrinterReleaseBypassOut
 from app.schemas.report import (
@@ -856,4 +858,78 @@ async def delete_printer_release_bypass(
     if bypass is None or bypass.printer_id != printer_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bypass not found")
     await db.delete(bypass)
+    await db.commit()
+
+
+@router.get("/{printer_id}/allowed-ous", response_model=list[PrinterAllowedOuOut])
+async def list_printer_allowed_ous(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    await _get_printer_or_404(printer_id, db)
+    result = await db.execute(
+        select(PrinterAllowedOu)
+        .where(PrinterAllowedOu.printer_id == printer_id)
+        .order_by(PrinterAllowedOu.ou_path)
+    )
+    return result.scalars().all()
+
+
+@router.post(
+    "/{printer_id}/allowed-ous",
+    response_model=PrinterAllowedOuOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def create_printer_allowed_ou(
+    printer_id: UUID, payload: PrinterAllowedOuCreate, db: AsyncSession = Depends(get_db)
+):
+    """Restricts self-service web upload printing (app/self_service_print/)
+    to this OU (and anything nested under it) — the printer's very first
+    allowed-OU row is what flips it from open-to-everyone to restricted,
+    see PrinterAllowedOu's docstring. Unrelated to normal AirPrint/MDM
+    printing, which this never touches."""
+    await _get_printer_or_404(printer_id, db)
+
+    ou_path = payload.ou_path.strip()
+    roster_match = await db.execute(
+        select(GoogleWorkspaceUser).where(GoogleWorkspaceUser.org_unit_path == ou_path)
+    )
+    if roster_match.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"'{payload.ou_path}' doesn't match any org unit in the synced Google "
+                "Workspace roster — sync Google Workspace settings, or double-check the path."
+            ),
+        )
+
+    existing = await db.execute(
+        select(PrinterAllowedOu).where(
+            PrinterAllowedOu.printer_id == printer_id,
+            PrinterAllowedOu.ou_path == ou_path,
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"'{payload.ou_path}' is already allowed on this printer.",
+        )
+
+    allowed = PrinterAllowedOu(printer_id=printer_id, ou_path=ou_path)
+    db.add(allowed)
+    await db.commit()
+    await db.refresh(allowed)
+    return allowed
+
+
+@router.delete(
+    "/{printer_id}/allowed-ous/{allowed_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def delete_printer_allowed_ou(
+    printer_id: UUID, allowed_id: UUID, db: AsyncSession = Depends(get_db)
+):
+    allowed = await db.get(PrinterAllowedOu, allowed_id)
+    if allowed is None or allowed.printer_id != printer_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Allowed OU not found")
+    await db.delete(allowed)
     await db.commit()

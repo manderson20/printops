@@ -2433,3 +2433,75 @@ export async function releaseHeldJob(
   );
   return response.json();
 }
+
+// --- Self-service web upload printing ---
+
+export type SelfServicePrinter = {
+  id: string;
+  name: string;
+  building: string | null;
+  room: string | null;
+  department: string | null;
+  is_virtual: boolean;
+};
+
+export type SelfServicePrintResult = {
+  printer_id: string;
+  printer_name: string;
+  filename: string;
+  copies: number;
+};
+
+export async function listSelfServicePrinters(): Promise<SelfServicePrinter[]> {
+  const response = await authorizedFetch("/api/v1/self-service-print/printers");
+  return response.json();
+}
+
+export async function submitSelfServicePrint(
+  printerId: string,
+  file: File,
+  copies: number,
+): Promise<SelfServicePrintResult> {
+  const formData = new FormData();
+  formData.append("printer_id", printerId);
+  formData.append("copies", String(copies));
+  formData.append("file", file);
+  const response = await authorizedFetch("/api/v1/self-service-print", {
+    method: "POST",
+    body: formData,
+  });
+  return response.json();
+}
+
+export type PrinterAllowedOu = {
+  id: string;
+  printer_id: string;
+  ou_path: string;
+};
+
+export async function listPrinterAllowedOus(printerId: string): Promise<PrinterAllowedOu[]> {
+  const response = await authorizedFetch(`/api/v1/printers/${printerId}/allowed-ous`);
+  return response.json();
+}
+
+export async function createPrinterAllowedOu(
+  printerId: string,
+  ouPath: string,
+): Promise<PrinterAllowedOu> {
+  const response = await authorizedFetch(`/api/v1/printers/${printerId}/allowed-ous`, {
+    method: "POST",
+    body: JSON.stringify({ ou_path: ouPath }),
+  });
+  return response.json();
+}
+
+export async function deletePrinterAllowedOu(printerId: string, allowedId: string): Promise<void> {
+  await authorizedFetch(`/api/v1/printers/${printerId}/allowed-ous/${allowedId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function listAllGoogleWorkspaceOrgUnits(): Promise<string[]> {
+  const response = await authorizedFetch("/api/v1/settings/google-workspace/org-units?scope=all");
+  return response.json();
+}

@@ -3,6 +3,7 @@
 import { PrintReleaseCard } from "../PrintRelease";
 import { usePrinterDetail } from "../PrinterDetailContext";
 import { QuotasCard } from "../Quotas";
+import { SelfServiceAccessCard } from "../SelfServiceAccess";
 
 export default function ReleaseAndQuotasTab() {
   const { printer, setPrinter } = usePrinterDetail();
@@ -11,6 +12,7 @@ export default function ReleaseAndQuotasTab() {
     <div className="flex flex-col gap-6">
       <PrintReleaseCard printer={printer} onUpdate={setPrinter} />
       <QuotasCard printerId={printer.id} />
+      <SelfServiceAccessCard printerId={printer.id} />
     </div>
   );
 }
