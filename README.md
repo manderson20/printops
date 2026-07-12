@@ -2,7 +2,20 @@
 
 Open-source, self-hosted enterprise print management platform for K-12 schools, businesses, and MSPs — built on IPP/CUPS instead of proprietary vendor software.
 
-> **Status: early.** Manual printer CRUD with IPP-based capability auto-discovery, a minimal login, and a working IPP proxy (Phase 1: jobs route through PrintOps and get logged before being forwarded to the real printer, built on CUPS — see `ARCHITECTURE.md` §3) are working end-to-end against a real printer. Most modules — AirPrint/mDNS advertisement, network-wide discovery, quotas/policy, cost accounting, real RBAC, verified user attribution — are still just direction, not code.
+> **Status: in active production use** at a real K-12 district. Every job flows through PrintOps as an IPP proxy (built on CUPS — see `ARCHITECTURE.md` §3), and the modules below are real, working code, not just direction — see `CHANGELOG.md` for the full version-by-version history. Printers are still added manually by IP (no network-wide auto-discovery yet), and this is still a single-tenant deployment (multi-tenancy is designed for but not built — see `ARCHITECTURE.md` §6).
+
+## Features
+
+- **AirPrint-first IPP proxy** — every job is logged, attributed, and forwarded through PrintOps, not just monitored from the side. Real capability auto-discovery per printer (duplex/color/finishing/paper trays/TLS support), fleet-wide background rediscovery, AirPrint/mDNS advertisement, and an MDM printer-resync tool for pushing capability fixes out to already-configured Macs.
+- **User attribution** — an ordered fallback chain (IPP `requesting-user-name` → MDM device-to-user mapping via Mosyle + a MAC-lookup integration → Google Workspace/ChromeOS device records → unresolved), plus manual device-attribution overrides, identity-alias merging for duplicate/stale logins, and device-level (not just user-level) breakdowns.
+- **Auth & RBAC** — Google Workspace SSO or a local admin fallback, with admin/viewer/read-only-OU-scoped roles enforced server-side, account pre-provisioning, and admin-configurable idle-session timeouts.
+- **Cost accounting & toner management** — real per-color cartridge cost/yield (not a flat estimate), auto-detected cartridge part numbers from SNMP (HP/Canon), live toner-level polling with low-toner warnings and history charts, and a fleet-wide bulk cost/yield editor with CSV/PDF export.
+- **Quotas & secure release** — per-printer, per-user page quotas with admin-release holds; a PIN-based print-release kiosk (badge/Employee ID at the device); Follow-Me printing (release at any enabled printer, not just the one you sent to); per-user release bypass.
+- **Self-service web upload printing** — upload a PDF and print it without a client-configured queue, optionally restricted per printer by Google Workspace org unit.
+- **Walk-up copier accounting** — track copies made directly at a shared MFP (not just jobs PrintOps proxied) and attribute them to the same person, with real vendor connectors (Canon, Konica Minolta, Kyocera, Ricoh, Xerox) plus a CSV import wizard for the rest, and SNMP-based estimation for untracked copy activity.
+- **Reporting** — a live TV-dashboard view, a full Insights report (timelines, leaderboards, environmental/cost impact, saved snapshots), a per-user usage page, and CSV/print-to-PDF export throughout.
+- **Monitoring** — SNMP page/copy/print counters with history charts, syslog collection from printers/MFPs, and a Zabbix integration for external fleet monitoring.
+- **Not built yet**: network-wide printer auto-discovery (printers are added manually by IP), multi-tenancy, notifications (email/chat/webhook), and GraphQL — see `ARCHITECTURE.md` for direction on all four.
 
 ## Repo layout
 
@@ -89,10 +102,10 @@ Each app documents its own env vars in a `.env.example` (or `.env.local.example`
 ## Google Sign-In (SSO)
 
 Staff can log in with Google Workspace instead of the local admin/password
-fallback, with admin/viewer roles enforced across the API. Entirely
-configured in-app (Settings → Integrations → Google Sign-In), no env vars
-needed — see [`docs/google-sso-setup.md`](docs/google-sso-setup.md) for the
-one-time Google Cloud Console setup and common pitfalls.
+fallback, with admin/viewer/read-only-OU-scoped roles enforced across the
+API. Entirely configured in-app (Settings → Integrations → Google Sign-In),
+no env vars needed — see [`docs/google-sso-setup.md`](docs/google-sso-setup.md)
+for the one-time Google Cloud Console setup and common pitfalls.
 
 ## Tests & linting
 
@@ -108,4 +121,4 @@ CI (`.github/workflows/ci.yml`) runs the same checks on every push/PR.
 
 ## Contributing
 
-This is an early-stage open-source project — issues and PRs welcome. Licensed under [GPLv3](./LICENSE).
+Issues and PRs welcome — see `CONTRIBUTING.md`. Licensed under [GPLv3](./LICENSE).
