@@ -2034,6 +2034,44 @@ export async function detectPrinterCartridges(
   return response.json();
 }
 
+export type FleetCartridge = {
+  id: string;
+  printer_id: string;
+  printer_name: string;
+  printer_manufacturer: string | null;
+  printer_model: string | null;
+  building: string | null;
+  room: string | null;
+  color: CartridgeColor;
+  cost: number;
+  yield_pages: number;
+  model: string | null;
+  warning_threshold_percent: number;
+  current_level_percent: number | null;
+};
+
+export async function listFleetTonerCartridges(): Promise<FleetCartridge[]> {
+  const response = await authorizedFetch("/api/v1/printers/toner-cartridges");
+  return response.json();
+}
+
+export type BulkCartridgeUpdate = {
+  id: string;
+  cost: number;
+  yield_pages: number;
+  model: string | null;
+};
+
+export async function bulkUpdateTonerCartridges(
+  updates: BulkCartridgeUpdate[],
+): Promise<FleetCartridge[]> {
+  const response = await authorizedFetch("/api/v1/printers/toner-cartridges/bulk", {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+  return response.json();
+}
+
 export type QuotaPeriod =
   "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
 

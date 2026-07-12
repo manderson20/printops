@@ -158,6 +158,42 @@ class DetectCartridgesResult(BaseModel):
     unmatched: list[DetectedSupplyOut]
 
 
+class FleetCartridgeOut(BaseModel):
+    """One PrinterTonerCartridge row plus enough printer context to display
+    and group it fleet-wide — GET /toner-cartridges, which powers the
+    Settings > Toner Cartridges bulk-edit page. `id` is the actual DB
+    primary key (unlike CartridgeOut, which never needed one since it's
+    always scoped to a single already-known printer) — required here so a
+    bulk update can target a specific row precisely across many printers."""
+
+    id: UUID
+    printer_id: UUID
+    printer_name: str
+    # The printer's own device manufacturer/model (Printer.manufacturer/
+    # model) — distinct from `model` below, which is this cartridge's own
+    # part number. Named with a printer_ prefix to avoid confusion between
+    # the two, same as printer_name.
+    printer_manufacturer: str | None = None
+    printer_model: str | None = None
+    building: str | None = None
+    room: str | None = None
+    color: CartridgeColor
+    cost: float
+    yield_pages: int
+    model: str | None = None
+    warning_threshold_percent: int
+    current_level_percent: int | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class BulkCartridgeUpdateIn(BaseModel):
+    id: UUID
+    cost: float
+    yield_pages: int
+    model: str | None = None
+
+
 class DailyTonerLevelOut(BaseModel):
     """One point on the toner-level-over-time chart — see
     app/printers/toner_history.py:get_daily_toner_levels. Each color is

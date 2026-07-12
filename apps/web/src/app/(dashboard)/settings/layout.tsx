@@ -15,6 +15,7 @@ const SETTINGS_NAV = [
   { href: "/settings/aliases", label: "Attribution Aliases" },
   { href: "/settings/insights", label: "Insights" },
   { href: "/settings/quotas", label: "Quotas" },
+  { href: "/settings/toner-cartridges", label: "Toner Cartridges" },
   { href: "/settings/ldap", label: "LDAP Relay" },
   { href: "/settings/syslog", label: "Syslog" },
   { href: "/settings/mdm-resync", label: "MDM Printer Resync" },

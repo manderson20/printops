@@ -1234,6 +1234,50 @@ async def test_detect_toner_cartridges_records_history_only_for_known_levels(
     assert readings[0].level_percent == 62
 
 
+def test_detect_toner_cartridges_fills_empty_model_but_never_overwrites(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    """guessed_model should prefill an empty model field (HP's SKU, real
+    live example), but a detect that runs again after an admin has typed
+    in their own value must leave it alone."""
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Model Guess Printer", "ip_address": "10.0.0.39"},
+    )
+    printer_id = create.json()["id"]
+
+    def fake_get_toner_supplies(ip, config):
+        return [
+            DetectedSupply(
+                description="Black Cartridge HP CF226A",
+                color="black",
+                high_capacity=None,
+                level_percent=45,
+                guessed_model="CF226A",
+            )
+        ]
+
+    monkeypatch.setattr(snmp_counters_module, "get_toner_supplies", fake_get_toner_supplies)
+
+    first = client.post(
+        f"/api/v1/printers/{printer_id}/toner-cartridges/detect", headers=auth_headers
+    )
+    assert first.json()["cartridges"][0]["model"] == "CF226A"
+
+    # Admin overrides it with their own value.
+    client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=auth_headers,
+        json=[{"color": "black", "cost": 60, "yield_pages": 3000, "model": "My Own Label"}],
+    )
+
+    second = client.post(
+        f"/api/v1/printers/{printer_id}/toner-cartridges/detect", headers=auth_headers
+    )
+    assert second.json()["cartridges"][0]["model"] == "My Own Label"  # not clobbered
+
+
 def test_detect_toner_cartridges_reports_unmatched_supplies(
     client, auth_headers, mock_failed_probe, monkeypatch
 ):
@@ -1395,6 +1439,175 @@ def test_toner_cartridge_model_is_per_color(client, auth_headers, mock_failed_pr
     by_color = {c["color"]: c for c in listing.json()}
     assert by_color["black"]["model"] == "TN-227BK"
     assert by_color["cyan"]["model"] == "TN-227C"
+
+
+def test_fleet_toner_cartridges_lists_across_printers(
+    client, auth_headers, mock_failed_probe
+):
+    p1 = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={
+            "name": "Fleet Printer A",
+            "ip_address": "10.0.0.40",
+            "building": "Main",
+            "manufacturer": "Canon",
+            "model": "MF642C",
+        },
+    ).json()["id"]
+    p2 = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Fleet Printer B", "ip_address": "10.0.0.41", "room": "204"},
+    ).json()["id"]
+    client.put(
+        f"/api/v1/printers/{p1}/toner-cartridges",
+        headers=auth_headers,
+        json=[{"color": "black", "cost": 50, "yield_pages": 2000, "model": "Canon 054"}],
+    )
+    client.put(
+        f"/api/v1/printers/{p2}/toner-cartridges",
+        headers=auth_headers,
+        json=[{"color": "black", "cost": 55, "yield_pages": 2100, "model": "Canon 054"}],
+    )
+
+    response = client.get("/api/v1/printers/toner-cartridges", headers=auth_headers)
+    assert response.status_code == 200
+    by_printer = {row["printer_name"]: row for row in response.json()}
+    assert by_printer["Fleet Printer A"]["building"] == "Main"
+    assert by_printer["Fleet Printer A"]["model"] == "Canon 054"
+    assert by_printer["Fleet Printer A"]["printer_manufacturer"] == "Canon"
+    assert by_printer["Fleet Printer A"]["printer_model"] == "MF642C"
+    assert by_printer["Fleet Printer B"]["room"] == "204"
+    assert "id" in by_printer["Fleet Printer A"]
+
+
+def test_fleet_toner_cartridges_excludes_archived_printers(
+    client, auth_headers, mock_failed_probe
+):
+    printer_id = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Soon Archived Printer", "ip_address": "10.0.0.42"},
+    ).json()["id"]
+    client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=auth_headers,
+        json=[{"color": "black", "cost": 50, "yield_pages": 2000}],
+    )
+    client.post(f"/api/v1/printers/{printer_id}/archive", headers=auth_headers)
+
+    response = client.get("/api/v1/printers/toner-cartridges", headers=auth_headers)
+    names = {row["printer_name"] for row in response.json()}
+    assert "Soon Archived Printer" not in names
+
+
+def test_bulk_update_toner_cartridges_applies_across_printers(
+    client, auth_headers, mock_failed_probe
+):
+    p1 = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Bulk Printer A", "ip_address": "10.0.0.43"},
+    ).json()["id"]
+    p2 = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Bulk Printer B", "ip_address": "10.0.0.44"},
+    ).json()["id"]
+    client.put(
+        f"/api/v1/printers/{p1}/toner-cartridges",
+        headers=auth_headers,
+        json=[{"color": "black", "cost": 10, "yield_pages": 1000, "model": "Shared 054"}],
+    )
+    client.put(
+        f"/api/v1/printers/{p2}/toner-cartridges",
+        headers=auth_headers,
+        json=[{"color": "black", "cost": 10, "yield_pages": 1000, "model": "Shared 054"}],
+    )
+    fleet = client.get("/api/v1/printers/toner-cartridges", headers=auth_headers).json()
+    ids = [row["id"] for row in fleet if row["model"] == "Shared 054"]
+    assert len(ids) == 2
+
+    response = client.patch(
+        "/api/v1/printers/toner-cartridges/bulk",
+        headers=auth_headers,
+        json=[
+            {"id": cid, "cost": 42.5, "yield_pages": 5000, "model": "Shared 054"} for cid in ids
+        ],
+    )
+    assert response.status_code == 200
+    assert all(row["cost"] == 42.5 and row["yield_pages"] == 5000 for row in response.json())
+
+    fleet_after = client.get("/api/v1/printers/toner-cartridges", headers=auth_headers).json()
+    updated = [row for row in fleet_after if row["id"] in ids]
+    assert all(row["cost"] == 42.5 for row in updated)
+
+
+def test_bulk_update_toner_cartridges_updates_model(client, auth_headers, mock_failed_probe):
+    """Editing the cartridge model on the fleet-wide page is the same
+    PrinterTonerCartridge.model column the per-printer Toner tab reads —
+    a bulk update immediately shows up there too, not a separate copy."""
+    printer_id = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Bulk Model Printer", "ip_address": "10.0.0.46"},
+    ).json()["id"]
+    client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=auth_headers,
+        json=[{"color": "black", "cost": 10, "yield_pages": 1000}],
+    )
+    fleet = client.get("/api/v1/printers/toner-cartridges", headers=auth_headers).json()
+    cartridge_id = fleet[0]["id"]
+
+    response = client.patch(
+        "/api/v1/printers/toner-cartridges/bulk",
+        headers=auth_headers,
+        json=[{"id": cartridge_id, "cost": 10, "yield_pages": 1000, "model": "TN-227BK"}],
+    )
+    assert response.status_code == 200
+    assert response.json()[0]["model"] == "TN-227BK"
+
+    # Reflected on the per-printer Toner tab's own endpoint — same row.
+    per_printer = client.get(
+        f"/api/v1/printers/{printer_id}/toner-cartridges", headers=auth_headers
+    ).json()
+    assert per_printer[0]["model"] == "TN-227BK"
+
+
+def test_bulk_update_toner_cartridges_skips_unknown_id(client, auth_headers, mock_failed_probe):
+    printer_id = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Bulk Printer C", "ip_address": "10.0.0.45"},
+    ).json()["id"]
+    client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=auth_headers,
+        json=[{"color": "black", "cost": 10, "yield_pages": 1000}],
+    )
+    fleet = client.get("/api/v1/printers/toner-cartridges", headers=auth_headers).json()
+    real_id = fleet[0]["id"]
+
+    response = client.patch(
+        "/api/v1/printers/toner-cartridges/bulk",
+        headers=auth_headers,
+        json=[
+            {"id": real_id, "cost": 99, "yield_pages": 9000},
+            {"id": "00000000-0000-0000-0000-000000000000", "cost": 1, "yield_pages": 1},
+        ],
+    )
+    assert response.status_code == 200  # doesn't fail the whole batch
+
+
+def test_bulk_update_toner_cartridges_requires_admin(client, auth_headers, viewer_headers):
+    response = client.patch(
+        "/api/v1/printers/toner-cartridges/bulk",
+        headers=viewer_headers,
+        json=[{"id": "00000000-0000-0000-0000-000000000000", "cost": 1, "yield_pages": 1}],
+    )
+    assert response.status_code == 403
 
 
 def test_create_virtual_queue_defaults(client, auth_headers):

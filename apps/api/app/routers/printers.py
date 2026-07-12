@@ -50,11 +50,13 @@ from app.schemas.printer_ou_access import PrinterAllowedOuCreate, PrinterAllowed
 from app.schemas.quota import PrinterUserQuotaCreate, PrinterUserQuotaOut, PrinterUserQuotaUpdate
 from app.schemas.release_bypass import PrinterReleaseBypassCreate, PrinterReleaseBypassOut
 from app.schemas.report import (
+    BulkCartridgeUpdateIn,
     CartridgeIn,
     CartridgeOut,
     DailyTonerLevelOut,
     DetectCartridgesResult,
     DetectedSupplyOut,
+    FleetCartridgeOut,
 )
 from app.schemas.snmp import DailyCounterDeltaOut
 from app.schemas.syslog import SyslogEventPage
@@ -191,6 +193,101 @@ async def list_printers(include_archived: bool = False, db: AsyncSession = Depen
         stmt = stmt.where(Printer.archived_at.is_(None))
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+_FLEET_CARTRIDGE_COLUMNS = (
+    PrinterTonerCartridge,
+    Printer.name,
+    Printer.manufacturer,
+    Printer.model,
+    Printer.building,
+    Printer.room,
+)
+
+
+def _fleet_cartridge_out(row: tuple) -> FleetCartridgeOut:
+    cartridge, printer_name, manufacturer, printer_model, building, room = row
+    return FleetCartridgeOut(
+        id=cartridge.id,
+        printer_id=cartridge.printer_id,
+        printer_name=printer_name,
+        printer_manufacturer=manufacturer,
+        printer_model=printer_model,
+        building=building,
+        room=room,
+        color=cartridge.color,
+        cost=cartridge.cost,
+        yield_pages=cartridge.yield_pages,
+        model=cartridge.model,
+        warning_threshold_percent=cartridge.warning_threshold_percent,
+        current_level_percent=cartridge.current_level_percent,
+    )
+
+
+@router.get("/toner-cartridges", response_model=list[FleetCartridgeOut])
+async def list_fleet_toner_cartridges(db: AsyncSession = Depends(get_db)):
+    """Every non-archived printer's cartridges in one flat list, with
+    enough printer context to display and group them fleet-wide — powers
+    Settings > Toner Cartridges (the bulk cost/yield editor), grouping
+    rows client-side by printer. Read-only telemetry, open to any
+    logged-in user, same convention as the per-printer GET further below.
+
+    Registered here, before GET /{printer_id} below, on purpose — both
+    are single-segment GETs under this router's /printers prefix, and
+    Starlette matches by registration order, not specificity; if
+    /{printer_id} came first, a request for /printers/toner-cartridges
+    would match it instead (attempting, and failing, to parse
+    "toner-cartridges" as a UUID) and this route would never be reached."""
+    result = await db.execute(
+        select(*_FLEET_CARTRIDGE_COLUMNS)
+        .join(Printer, Printer.id == PrinterTonerCartridge.printer_id)
+        .where(Printer.archived_at.is_(None))
+        .order_by(Printer.name, PrinterTonerCartridge.color)
+    )
+    return [_fleet_cartridge_out(row) for row in result.all()]
+
+
+@router.patch(
+    "/toner-cartridges/bulk",
+    response_model=list[FleetCartridgeOut],
+    dependencies=[Depends(require_role("admin"))],
+)
+async def bulk_update_toner_cartridges(
+    payload: list[BulkCartridgeUpdateIn], db: AsyncSession = Depends(get_db)
+):
+    """Updates cost/yield_pages/model on existing PrinterTonerCartridge
+    rows by id, across as many printers as the caller likes in one
+    request — the mass-edit counterpart to the per-printer PUT further
+    below, which replaces one printer's whole set and isn't a fit here
+    (these rows already exist; color/detected_*/warning_threshold_percent
+    aren't touched, only the fields this bulk-edit page actually exposes).
+    Same single row, same PrinterTonerCartridge.model column the
+    per-printer Toner tab reads/writes — editing it here is immediately
+    reflected there, not a separate copy. Silently skips an id that no
+    longer exists (e.g. the cartridge or its printer was deleted between
+    page load and save) rather than failing the whole batch over one
+    stale row."""
+    ids = [entry.id for entry in payload]
+    result = await db.execute(
+        select(PrinterTonerCartridge).where(PrinterTonerCartridge.id.in_(ids))
+    )
+    rows_by_id = {row.id: row for row in result.scalars().all()}
+
+    for entry in payload:
+        row = rows_by_id.get(entry.id)
+        if row is None:
+            continue
+        row.cost = entry.cost
+        row.yield_pages = entry.yield_pages
+        row.model = entry.model
+    await db.commit()
+
+    result = await db.execute(
+        select(*_FLEET_CARTRIDGE_COLUMNS)
+        .join(Printer, Printer.id == PrinterTonerCartridge.printer_id)
+        .where(PrinterTonerCartridge.id.in_(ids))
+    )
+    return [_fleet_cartridge_out(row) for row in result.all()]
 
 
 @router.get("/{printer_id}", response_model=PrinterOut)
