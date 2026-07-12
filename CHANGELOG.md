@@ -5,6 +5,29 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.46.0] - 2026-07-12
+
+- **New: Settings > Server (hostname + TLS for the CUPS server itself).**
+  Fixed a real bug: `print.example.org` (the domain this box's own
+  Caddy already holds a valid Let's Encrypt cert for) got a flat `400`
+  from CUPS, since `cupsd.conf` had no `ServerName`/`ServerAlias` for
+  anything but its auto-detected hostname. The hostname is now
+  admin-editable and synced to `cupsd.conf` + a real certificate
+  automatically — on save, on a daily background timer, or via a manual
+  "Sync Now" button. Two CUPS 2.x quirks confirmed live along the way:
+  TLS cert selection is keyed off the OS-level hostname, not
+  `cupsd.conf`'s `ServerName`, so the managed cert has to overwrite the
+  file CUPS already auto-generated for its system hostname; and only a
+  full `cups.service` restart (not a config reload) picks up a changed
+  cert or `ServerName`. `Require encrypted client connections` and the
+  secure AirPrint (`_ipps._tcp`) advertisement both stay off by
+  default — only the hostname fix and real-cert swap are always-applied,
+  since those are pure improvements with no failure mode for an existing
+  plaintext client. Also fixed: MDM connection info (Printers > a
+  printer > Connection) was still reading the static env-only
+  `print_server_host` instead of this new setting, so newly-configured
+  queues kept advertising the raw IP after the domain was set.
+
 ## [0.45.0] - 2026-07-11
 
 - **New: TLS (IPPS) toggle + auto-detection.** `Printer.use_tls` was
