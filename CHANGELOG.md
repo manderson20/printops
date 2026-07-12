@@ -5,6 +5,22 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.48.0] - 2026-07-12
+
+- **New: paper size visibility on the Discovered Capabilities card.**
+  Shows a printer's actual reported default page size and, for
+  copiers/MFPs, what's currently loaded in each tray — no more walking to
+  each device to check why one might be defaulting to an unexpected size.
+  Admins also get an on-demand "CUPS Queue Default" check comparing the
+  device's own reported default against what the CUPS-generated queue's
+  PPD currently has set, flagging a mismatch — the same signal that
+  previously identified the *DefaultColorModel bug, now available without
+  needing to dig through a queue's PPD by hand.
+- **New: capabilities now refresh every 30 minutes across the fleet**, not
+  just on printer creation, manual Rediscover, or an offline->online
+  reconnect — so a same-day tray reload or capability change shows up in
+  PrintOps without an admin needing to notice and click Rediscover.
+
 ## [0.47.0] - 2026-07-12
 
 - **New: self-service web upload printing, restricted by OU.** A logged-in
