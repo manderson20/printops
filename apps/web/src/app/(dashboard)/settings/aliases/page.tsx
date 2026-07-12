@@ -16,6 +16,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 // The roster can be thousands of entries (see devices/page.tsx's note on why a
 // per-row datalist froze the tab), so one shared datalist is used here too.
@@ -104,7 +105,10 @@ export default function AttributionAliasesPage() {
 
   return (
     <Card>
-      <CardTitle className="mb-1">Attribution Aliases</CardTitle>
+      <div className="mb-1 flex items-center gap-2">
+        <CardTitle className="mb-0">Attribution Aliases</CardTitle>
+        <WikiHelpLink page="Settings-Attribution-Aliases" />
+      </div>
       <p className="mb-4 text-xs text-zinc-500">
         Merge an arbitrary login string — a local computer username (e.g. &quot;matt&quot; instead
         of matt&apos;s real address) or an old/alternate email address — into one staff

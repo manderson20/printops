@@ -15,6 +15,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 const FORMULA_FIELDS: {
   key: keyof ReportFormulaSettings;
@@ -113,9 +114,12 @@ export default function InsightsSettingsPage() {
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h2 className="text-lg font-semibold text-black dark:text-zinc-50">
-          Insights
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold text-black dark:text-zinc-50">
+            Insights
+          </h2>
+          <WikiHelpLink page="Settings-Insights-Formula" />
+        </div>
         <p className="mt-1 text-sm text-zinc-500">
           Formulas used to compute the cost/environmental estimates shown on the
           Insights report.

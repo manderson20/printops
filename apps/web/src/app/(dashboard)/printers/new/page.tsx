@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Field, Input, Textarea } from "@/components/ui/Field";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 const initialForm = {
   name: "",
@@ -158,7 +159,10 @@ export default function NewPrinterPage() {
         onSubmit={handleSubmit}
         className="flex flex-col gap-4 rounded-xl border border-black/[.08] bg-white p-8 dark:border-white/[.145] dark:bg-black"
       >
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Add Printer</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Add Printer</h1>
+          <WikiHelpLink page="Printers" anchor="adding-a-printer" />
+        </div>
         <p className="text-sm text-zinc-500">
           Enter the printer&apos;s name and IP address — PrintOps will probe it over IPP and
           fill in what it supports (duplex, color, staple, punch, etc.) automatically.

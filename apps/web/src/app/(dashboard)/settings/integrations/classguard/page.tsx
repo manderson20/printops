@@ -17,6 +17,7 @@ import { Field, Input } from "@/components/ui/Field";
 import { PasswordField } from "@/components/ui/PasswordField";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 type LoadState =
   | { phase: "loading" }
@@ -119,7 +120,10 @@ export default function ClassGuardSettingsPage() {
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">ClassGuard Integration</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">ClassGuard Integration</h1>
+          <WikiHelpLink page="Settings-Integrations" anchor="classguard" />
+        </div>
         <p className="mt-1 text-sm text-zinc-500">
           A self-hosted DHCP/DNS/web-filter platform some deployments run. PrintOps uses its DHCP
           lease table to resolve a print job&apos;s source IP to a MAC address, which is then

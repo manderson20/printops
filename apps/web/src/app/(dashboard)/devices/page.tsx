@@ -17,6 +17,7 @@ import { Card } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 const PAGE_SIZE = 50;
 
@@ -185,7 +186,10 @@ export default function DevicesPage() {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Devices</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Devices</h1>
+          <WikiHelpLink page="Devices" />
+        </div>
         <p className="mt-1 text-sm text-zinc-500">
           Devices seen via Mosyle or Google Workspace. Mosyle/Google&rsquo;s own reported user can
           be a bare local username rather than an email — if that&rsquo;s ambiguous (e.g. shared by

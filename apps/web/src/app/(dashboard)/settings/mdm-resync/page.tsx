@@ -4,6 +4,7 @@ import { useState } from "react";
 import { buildMdmResyncScript } from "@/lib/mdmResyncScript";
 import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 export default function MdmResyncSettingsPage() {
   const [copied, setCopied] = useState(false);
@@ -19,7 +20,10 @@ export default function MdmResyncSettingsPage() {
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">MDM Printer Resync</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">MDM Printer Resync</h1>
+          <WikiHelpLink page="Settings-MDM-Resync" />
+        </div>
         <p className="mt-1 text-sm text-zinc-500">
           A Mac only checks a printer&apos;s capabilities (color support, paper sizes, etc.) once,
           when the printer is first added — it never re-verifies against the server afterward.

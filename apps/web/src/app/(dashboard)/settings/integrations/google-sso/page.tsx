@@ -16,6 +16,7 @@ import { Field, Input } from "@/components/ui/Field";
 import { PasswordField } from "@/components/ui/PasswordField";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 type LoadState =
   | { phase: "loading" }
@@ -114,7 +115,10 @@ export default function GoogleSsoSettingsPage() {
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Google Sign-In</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Google Sign-In</h1>
+          <WikiHelpLink page="Settings-Integrations" anchor="google-sign-in" />
+        </div>
         <p className="mt-1 text-sm text-zinc-500">
           Lets staff sign into PrintOps with their Google Workspace account instead of the local
           admin/password fallback. New sign-ins default to Viewer unless their email is on the

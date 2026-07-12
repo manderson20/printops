@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 const JOBS_LIMIT = 200;
 
@@ -82,9 +83,12 @@ export default function UserUsageDetailPage() {
       {state.phase === "ok" && (
         <>
           <div>
-            <h1 className="text-xl font-semibold text-black dark:text-zinc-50">
-              {state.usage.name ?? state.usage.email}
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold text-black dark:text-zinc-50">
+                {state.usage.name ?? state.usage.email}
+              </h1>
+              <WikiHelpLink page="Usage-Reports" />
+            </div>
             {state.usage.name && (
               <p className="mt-1 text-sm text-zinc-500">{state.usage.email}</p>
             )}

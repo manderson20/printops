@@ -12,6 +12,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Field, Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 type LoadState =
   | { phase: "loading" }
@@ -70,7 +71,10 @@ export default function LdapRelaySettingsPage() {
 
   return (
     <Card>
-      <CardTitle className="mb-1">LDAP Address-Book Relay</CardTitle>
+      <div className="mb-1 flex items-center gap-2">
+        <CardTitle className="mb-0">LDAP Address-Book Relay</CardTitle>
+        <WikiHelpLink page="Settings-LDAP-Relay" />
+      </div>
       <p className="mb-4 text-xs text-zinc-500">
         Lets copiers do scan-to-email address-book lookups against PrintOps
         instead of each one holding its own direct LDAP connection to Google

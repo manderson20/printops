@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 const PAGE_SIZE = 50;
 // Large enough to cover a full district roster in one request for CSV
@@ -129,7 +130,10 @@ export default function UsagePage() {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Usage</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Usage</h1>
+          <WikiHelpLink page="Usage-Reports" />
+        </div>
         <p className="mt-1 text-sm text-zinc-500">
           Pages printed, job counts, and estimated cost for every synced Google Workspace user,
           including anyone who hasn&rsquo;t printed yet. Volume that couldn&rsquo;t be matched to

@@ -13,6 +13,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Field, Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 const SELECT_CLASS =
   "rounded-lg border border-black/[.15] bg-white px-2 py-1 text-sm dark:border-white/[.2] dark:bg-black dark:text-zinc-50";
@@ -81,7 +82,10 @@ export default function SyslogSettingsPage() {
 
   return (
     <Card>
-      <CardTitle className="mb-1">Syslog Collection</CardTitle>
+      <div className="mb-1 flex items-center gap-2">
+        <CardTitle className="mb-0">Syslog Collection</CardTitle>
+        <WikiHelpLink page="Settings-Syslog-Forwarding" />
+      </div>
       <p className="mb-4 text-xs text-zinc-500">
         Collects error/event messages printers send over UDP syslog (see infra/syslog-relay/) — a
         place to check for a jam, a fuser warning, or anything else worth diagnosing beyond what

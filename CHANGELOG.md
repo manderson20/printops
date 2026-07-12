@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.53.0] - 2026-07-12
+
+- **Add a "Help" link to every admin screen**, pointing straight at that
+  screen's new wiki page (new `WikiHelpLink` component). Printer detail tabs
+  share one link via the tab layout, with an anchor matching the active tab.
+- **Populated the wiki with a page for every app screen** — Printers, Jobs,
+  Live Dashboard, Insights, Copier Accounting, every Settings tab, and more
+  — written in plain language for non-technical installers, plus a fully
+  rewritten Getting Started page with a real step-by-step install
+  walkthrough (previously just a pointer at `setup.sh`).
+
 ## [0.52.1] - 2026-07-12
 
 - **Docs: updated README and ARCHITECTURE to reflect what's actually

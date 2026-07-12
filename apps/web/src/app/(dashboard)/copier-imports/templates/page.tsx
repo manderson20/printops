@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 export default function CopierImportTemplatesPage() {
   const isAdmin = useCurrentUser()?.role === "admin";
@@ -38,7 +39,10 @@ export default function CopierImportTemplatesPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-      <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Import Mapping Templates</h1>
+      <div className="flex items-center gap-2">
+        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Import Mapping Templates</h1>
+        <WikiHelpLink page="Copier-Accounting" anchor="imports" />
+      </div>
       <p className="text-sm text-zinc-500">
         Templates saved from a previous import&apos;s preview step (or created here) let a
         recurring vendor/model export skip re-mapping columns every period. Column mappings

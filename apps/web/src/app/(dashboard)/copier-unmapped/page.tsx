@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 const ROSTER_DATALIST_ID = "google-workspace-roster-unmapped";
 
@@ -161,7 +162,10 @@ export default function CopierUnmappedPage() {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Unmapped Copier Activity</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Unmapped Copier Activity</h1>
+          <WikiHelpLink page="Copier-Accounting" anchor="unmapped-activity" />
+        </div>
         <p className="mt-1 text-sm text-zinc-500">
           Copier usage rows where the raw identity used at the device (staff ID, badge, PIN,
           department code, ...) didn&apos;t match anyone in Staff Copier Identities. Assigning

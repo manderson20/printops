@@ -16,7 +16,21 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 import { PrinterDetailContext } from "./PrinterDetailContext";
+
+// Maps each detail tab to the matching heading anchor on the wiki's
+// Printers page, so the help link always points at the section that
+// documents whatever tab the admin is currently looking at.
+const TAB_WIKI_ANCHORS: Record<string, string> = {
+  "": "overview-tab",
+  "/connection": "connection-tab",
+  "/release": "release-and-quotas-tab",
+  "/toner": "toner-tab",
+  "/syslog": "syslog-tab",
+  "/credentials": "credentials-tab",
+  "/jobs": "jobs-tab",
+};
 
 type LoadState =
   | { phase: "loading" }
@@ -129,6 +143,10 @@ export default function PrinterDetailLayout({ children }: { children: ReactNode 
             </h1>
             {state.printer.is_virtual && <Badge tone="neutral">Follow-Me Queue</Badge>}
             {state.printer.archived_at && <Badge tone="neutral">Archived</Badge>}
+            <WikiHelpLink
+              page="Printers"
+              anchor={TAB_WIKI_ANCHORS[pathname.slice(basePath.length)] ?? "overview-tab"}
+            />
           </div>
           {isAdmin && (
             <div className="flex items-center gap-2">

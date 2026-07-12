@@ -17,6 +17,7 @@ import {
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 function IntegrationCard({
   href,
@@ -78,7 +79,10 @@ export default function IntegrationsPage() {
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Integrations</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-black dark:text-zinc-50">Integrations</h1>
+          <WikiHelpLink page="Settings-Integrations" />
+        </div>
         <p className="mt-1 text-sm text-zinc-500">
           Third-party systems PrintOps connects to — device/user attribution, identity, and more
           as they&rsquo;re added.

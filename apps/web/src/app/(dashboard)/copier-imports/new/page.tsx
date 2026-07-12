@@ -24,6 +24,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Field, Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 const MAPPING_FIELDS: { field: string; label: string; required?: boolean }[] = [
   { field: "identity_value", label: "Identity (staff ID / PIN / badge / code)", required: true },
@@ -156,7 +157,10 @@ function NewCopierImportForm() {
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-      <h1 className="text-xl font-semibold text-black dark:text-zinc-50">New Accounting Import</h1>
+      <div className="flex items-center gap-2">
+        <h1 className="text-xl font-semibold text-black dark:text-zinc-50">New Accounting Import</h1>
+        <WikiHelpLink page="Copier-Accounting" anchor="imports" />
+      </div>
 
       {step.phase === "select" && (
         <Card className="flex flex-col gap-4">

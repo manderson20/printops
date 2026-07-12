@@ -18,6 +18,7 @@ import { Card } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 const PAGE_SIZE = 50;
 
@@ -189,7 +190,10 @@ export default function UsersSettingsPage() {
     <div className="flex flex-col gap-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold text-black dark:text-zinc-50">Users &amp; Permissions</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-black dark:text-zinc-50">Users &amp; Permissions</h2>
+            <WikiHelpLink page="Settings-Users-and-Permissions" />
+          </div>
           <p className="mt-1 text-sm text-zinc-500">
             Accounts provisioned via Google SSO. New sign-ins default to Viewer unless their email
             is on the initial-admin allowlist, or you&apos;ve pre-added them below. Promote/demote
