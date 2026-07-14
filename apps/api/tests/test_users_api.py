@@ -280,6 +280,28 @@ def test_impersonation_token_cannot_mutate(client, admin_headers, viewer_headers
     assert me.status_code == 200
 
 
+def test_impersonation_token_cannot_mutate_with_lowercase_bearer_scheme(
+    client, admin_headers, viewer_headers
+):
+    """Regression test: the read-only guard used to only recognize an
+    exact "Bearer " prefix, but FastAPI's own OAuth2PasswordBearer accepts
+    the scheme case-insensitively (get_current_user would still
+    authenticate `authorization: bearer <token>` fine) — so a lowercase
+    scheme used to sail straight through block_impersonated_mutations
+    while still working for the actual request, defeating the read-only
+    guarantee entirely."""
+    users = client.get("/api/v1/users", headers=admin_headers).json()["items"]
+    viewer_id = next(u["id"] for u in users if u["email"] == "viewer@example.org")
+    impersonation_token = client.post(
+        f"/api/v1/users/{viewer_id}/impersonate", headers=admin_headers
+    ).json()["access_token"]
+
+    response = client.post(
+        "/auth/refresh", headers={"Authorization": f"bearer {impersonation_token}"}
+    )
+    assert response.status_code == 403
+
+
 def test_precreated_admin_becomes_admin_on_first_login(
     client, admin_headers, google_settings, monkeypatch
 ):

@@ -441,11 +441,19 @@ async def block_impersonated_mutations(request: Request, call_next):
 
     Deliberately fails open on anything that isn't an impersonation token
     (missing/malformed/expired) — that's ordinary auth's job
-    (app.deps.get_current_user), not this middleware's."""
+    (app.deps.get_current_user), not this middleware's.
+
+    Scheme comparison is case-insensitive, matching FastAPI's own
+    OAuth2PasswordBearer (fastapi.security.utils.get_authorization_scheme_param
+    compares via scheme.lower() == "bearer") — get_current_user accepts
+    `Authorization: bearer <token>` just as readily as `Bearer <token>`,
+    so this had to too, or a lowercase scheme would sail through this
+    check while still authenticating downstream."""
     if request.method not in SAFE_METHODS:
         auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header.removeprefix("Bearer ").strip()
+        scheme, _, token = auth_header.partition(" ")
+        if scheme.lower() == "bearer" and token:
+            token = token.strip()
             try:
                 payload = decode_access_token(token, settings)
             except PyJWTError:
