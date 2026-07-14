@@ -5,11 +5,15 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
-from app.deps import get_current_user
+from app.deps import require_role
 from app.schemas.syslog import SyslogEventPage
 from app.syslog.service import list_events
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+# Fleet-wide printer diagnostics, not per-person data — admin-only, same
+# reasoning as reports.py's /live/hourly. A plain "viewer" has no
+# legitimate use for this, and its only frontend caller (the Syslog nav
+# page) is itself admin-only — see the dashboard layout's NAV_LINKS.
+router = APIRouter(dependencies=[Depends(require_role("admin"))])
 
 
 @router.get("", response_model=SyslogEventPage)

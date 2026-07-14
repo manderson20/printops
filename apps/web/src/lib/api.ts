@@ -1,4 +1,4 @@
-import { getToken, logout } from "@/lib/auth";
+import { exitImpersonation, getToken, isImpersonating, logout } from "@/lib/auth";
 import { API_URL } from "@/lib/config";
 
 export { API_URL };
@@ -49,8 +49,19 @@ async function authorizedFetch(
     // means the JWT expired or was invalidated, not a bad request. Bounce to
     // login immediately rather than surfacing "Could not validate
     // credentials" on whatever form happened to trigger the call.
-    logout();
-    window.location.href = "/login?expired=1";
+    //
+    // A "View as" session (see @/lib/auth's startImpersonation) is
+    // deliberately short-lived (IMPERSONATION_TOKEN_MINUTES, not the
+    // admin-configured idle timeout) and non-refreshable — so hitting this
+    // mid-browse is the expected end of one, not an error. Restore the
+    // admin's own stashed token instead of logging them out entirely.
+    if (isImpersonating()) {
+      exitImpersonation();
+      window.location.href = "/settings/users?impersonation_expired=1";
+    } else {
+      logout();
+      window.location.href = "/login?expired=1";
+    }
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
@@ -1210,6 +1221,11 @@ export type CurrentUser = {
   // Display-only for "ou_viewer" accounts — see app.deps.get_current_user's
   // docstring; enforcement always re-reads the User row server-side.
   granted_ou_paths: string[] | null;
+  // The impersonating admin's email, set only while this is a "View as"
+  // token (POST /api/v1/users/{id}/impersonate) — drives the dashboard
+  // layout's impersonation banner. Actual read-only enforcement lives
+  // server-side in app.main's block_impersonated_mutations, not here.
+  impersonated_by: string | null;
 };
 
 export async function getMe(): Promise<CurrentUser> {
@@ -1263,6 +1279,19 @@ export async function updateUser(
   const response = await authorizedFetch(`/api/v1/users/${id}`, {
     method: "PATCH",
     body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+/** Mints a short-lived, read-only "View as" token for this account — see
+ * app/routers/users.py:impersonate_user. Callers should pass the result
+ * to @/lib/auth's startImpersonation, then navigate into the app; they
+ * should NOT call this through anything that already holds an
+ * impersonation token themselves (mutating calls, which this is, are
+ * blocked server-side while impersonating — see block_impersonated_mutations). */
+export async function impersonateUser(id: string): Promise<{ access_token: string }> {
+  const response = await authorizedFetch(`/api/v1/users/${id}/impersonate`, {
+    method: "POST",
   });
   return response.json();
 }

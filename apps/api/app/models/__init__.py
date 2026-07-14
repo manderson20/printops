@@ -10,6 +10,7 @@ from app.models.google_workspace import (
     GoogleWorkspaceSettings,
     GoogleWorkspaceUser,
 )
+from app.models.impersonation import ImpersonationSession
 from app.models.job import Job
 from app.models.ldap_relay import LdapRelaySettings
 from app.models.mfp_device import MfpDevice
@@ -37,6 +38,7 @@ __all__ = [
     "GoogleWorkspaceDevice",
     "GoogleWorkspaceSettings",
     "GoogleWorkspaceUser",
+    "ImpersonationSession",
     "Job",
     "LdapRelaySettings",
     "MfpDevice",

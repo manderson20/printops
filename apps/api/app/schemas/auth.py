@@ -29,3 +29,9 @@ class UserOut(BaseModel):
     # X, Y" banner) — see app.deps.get_current_user's docstring for why
     # enforcement never trusts this field itself.
     granted_ou_paths: list[str] | None = None
+    # The impersonating admin's email, present only while this token is a
+    # "View as" session (app/routers/users.py's impersonate_user) — drives
+    # the frontend's persistent impersonation banner. Actual read-only
+    # enforcement never trusts this UserOut field either; it's the token
+    # claim itself that app.main's block_impersonated_mutations checks.
+    impersonated_by: str | None = None

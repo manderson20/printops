@@ -57,6 +57,7 @@ def get_current_user(
         # Display-only — never trusted for enforcement, which always
         # re-reads the User row fresh (see reports.py's _report_filters).
         granted_ou_paths=payload.get("granted_ou_paths"),
+        impersonated_by=payload.get("impersonated_by"),
     )
 
 

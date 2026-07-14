@@ -7,6 +7,7 @@ import {
   submitSelfServicePrint,
   type SelfServicePrinter,
 } from "@/lib/api";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { EmptyState, ErrorState, SuccessState } from "@/components/ui/EmptyState";
@@ -25,6 +26,8 @@ function printerLabel(printer: SelfServicePrinter): string {
 }
 
 export default function SelfServicePrintPage() {
+  const currentUser = useCurrentUser();
+  const isImpersonating = Boolean(currentUser?.impersonated_by);
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [printerId, setPrinterId] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -124,8 +127,14 @@ export default function SelfServicePrintPage() {
 
             {successMessage && <SuccessState>{successMessage}</SuccessState>}
             {error && <ErrorState>{error}</ErrorState>}
+            {isImpersonating && (
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                You&rsquo;re viewing this as another user (read-only) — printing is disabled during
+                a &quot;View as&quot; session.
+              </p>
+            )}
 
-            <Button type="submit" disabled={submitting || !file}>
+            <Button type="submit" disabled={submitting || !file || isImpersonating}>
               {submitting ? "Printing…" : "Print"}
             </Button>
           </form>

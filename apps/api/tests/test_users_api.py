@@ -1,12 +1,14 @@
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.db import get_db
 from app.main import app
 from app.models.base import Base
+from app.models.impersonation import ImpersonationSession
 
 GOOGLE_CLAIMS = {
     "sub": "google-sub-viewer",
@@ -200,6 +202,82 @@ def test_precreate_user_rejects_duplicate_email(client, admin_headers, viewer_he
         json={"email": "viewer@example.org", "role": "admin"},
     )
     assert response.status_code == 409
+
+
+async def test_admin_can_impersonate_viewer(
+    client, admin_headers, viewer_headers, db_session_factory
+):
+    users = client.get("/api/v1/users", headers=admin_headers).json()["items"]
+    viewer_id = next(u["id"] for u in users if u["email"] == "viewer@example.org")
+
+    response = client.post(f"/api/v1/users/{viewer_id}/impersonate", headers=admin_headers)
+    assert response.status_code == 200
+    impersonation_token = response.json()["access_token"]
+
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {impersonation_token}"})
+    assert me.status_code == 200
+    body = me.json()
+    assert body["role"] == "viewer"
+    assert body["email"] == "viewer@example.org"
+    # The dev break-glass admin (admin_headers) has no email, so admin_email
+    # falls back to its username — see impersonate_user's docstring.
+    assert body["impersonated_by"] == "admin"
+
+    async with db_session_factory() as session:
+        result = await session.execute(select(ImpersonationSession))
+        rows = result.scalars().all()
+    assert len(rows) == 1
+    assert rows[0].admin_email == "admin"
+    assert rows[0].admin_user_id is None  # dev break-glass has no User row
+    assert rows[0].target_email == "viewer@example.org"
+    assert rows[0].target_role == "viewer"
+
+
+def test_viewer_cannot_impersonate(client, admin_headers, viewer_headers):
+    users = client.get("/api/v1/users", headers=admin_headers).json()["items"]
+    viewer_id = next(u["id"] for u in users if u["email"] == "viewer@example.org")
+
+    response = client.post(f"/api/v1/users/{viewer_id}/impersonate", headers=viewer_headers)
+    assert response.status_code == 403
+
+
+def test_cannot_impersonate_admin(client, admin_headers, viewer_headers):
+    users = client.get("/api/v1/users", headers=admin_headers).json()["items"]
+    viewer_id = next(u["id"] for u in users if u["email"] == "viewer@example.org")
+    client.patch(f"/api/v1/users/{viewer_id}", headers=admin_headers, json={"role": "admin"})
+
+    response = client.post(f"/api/v1/users/{viewer_id}/impersonate", headers=admin_headers)
+    assert response.status_code == 400
+
+
+def test_cannot_impersonate_deactivated_account(client, admin_headers, viewer_headers):
+    users = client.get("/api/v1/users", headers=admin_headers).json()["items"]
+    viewer_id = next(u["id"] for u in users if u["email"] == "viewer@example.org")
+    client.patch(f"/api/v1/users/{viewer_id}", headers=admin_headers, json={"is_active": False})
+
+    response = client.post(f"/api/v1/users/{viewer_id}/impersonate", headers=admin_headers)
+    assert response.status_code == 400
+
+
+def test_impersonation_token_cannot_mutate(client, admin_headers, viewer_headers):
+    """block_impersonated_mutations (app/main.py) is the central read-only
+    guarantee — proven here against an endpoint (POST /auth/refresh) that
+    has nothing to do with impersonation itself, showing the block applies
+    regardless of which route is targeted."""
+    users = client.get("/api/v1/users", headers=admin_headers).json()["items"]
+    viewer_id = next(u["id"] for u in users if u["email"] == "viewer@example.org")
+    impersonation_token = client.post(
+        f"/api/v1/users/{viewer_id}/impersonate", headers=admin_headers
+    ).json()["access_token"]
+
+    response = client.post(
+        "/auth/refresh", headers={"Authorization": f"Bearer {impersonation_token}"}
+    )
+    assert response.status_code == 403
+
+    # A normal GET is unaffected — only mutating methods are blocked.
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {impersonation_token}"})
+    assert me.status_code == 200
 
 
 def test_precreated_admin_becomes_admin_on_first_login(

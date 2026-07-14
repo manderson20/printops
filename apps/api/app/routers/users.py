@@ -1,13 +1,18 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings, get_settings
+from app.core.security import create_access_token
 from app.db import get_db
-from app.deps import require_role
+from app.deps import get_current_user, require_role
+from app.models.impersonation import ImpersonationSession
 from app.models.user import User
+from app.schemas.auth import TokenResponse, UserOut
 from app.schemas.user import (
     Role,
     UserAccountCreate,
@@ -17,6 +22,11 @@ from app.schemas.user import (
 )
 
 router = APIRouter(dependencies=[Depends(require_role("admin"))])
+
+# Short and fixed, independent of the admin-configured idle-timeout
+# (SessionSettings.idle_timeout_minutes) — a "View as" session is meant to
+# be a quick, supervised check, not a normal workday-length login.
+IMPERSONATION_TOKEN_MINUTES = 20
 
 
 @router.get("", response_model=UserAccountPage)
@@ -97,3 +107,81 @@ async def update_user(
     await db.commit()
     await db.refresh(user)
     return user
+
+
+@router.post("/{user_id}/impersonate", response_model=TokenResponse)
+async def impersonate_user(
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Mints a short-lived, strictly read-only "View as" token for
+    `user_id`, so an admin can verify what a given account actually sees
+    — e.g. confirming a plain "viewer" really is scoped to just their own
+    Insights + Print, not just that the nav hides the rest. Read-only is
+    enforced centrally in app.main's block_impersonated_mutations, which
+    403s any non-GET/HEAD/OPTIONS request carrying this token's
+    `impersonated_by` claim — not by this endpoint or the frontend.
+
+    The token itself is otherwise identical to what `user_id` would get
+    from a real login (same role, email, name, granted_ou_paths), just
+    short-lived (IMPERSONATION_TOKEN_MINUTES, not the admin-configured
+    idle timeout) and non-refreshable (POST /auth/refresh is itself
+    blocked by the same read-only middleware).
+
+    Deliberately can't target another admin account — this tool exists to
+    verify non-admin permission scoping, not to browse a peer admin's
+    view, and skipping that case avoids ever needing to reason about an
+    impersonated *admin* token's own blast radius."""
+    target = await db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if not target.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can't impersonate a deactivated account.",
+        )
+    if target.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can't impersonate another admin account.",
+        )
+
+    admin_email = current_user.email or current_user.username
+    admin_user_id = None
+    if current_user.email:
+        result = await db.execute(
+            select(User.id).where(func.lower(User.email) == current_user.email.lower())
+        )
+        admin_user_id = result.scalar_one_or_none()
+
+    extra_claims: dict[str, str | list[str]] = {
+        "email": target.email,
+        "name": target.name or "",
+        "impersonated_by": admin_email,
+    }
+    if target.role == "ou_viewer":
+        extra_claims["granted_ou_paths"] = target.granted_ou_paths or []
+
+    token = create_access_token(
+        subject=str(target.id),
+        role=target.role,
+        settings=settings,
+        expires_minutes=IMPERSONATION_TOKEN_MINUTES,
+        **extra_claims,
+    )
+
+    db.add(
+        ImpersonationSession(
+            admin_user_id=admin_user_id,
+            admin_email=admin_email,
+            target_user_id=target.id,
+            target_email=target.email,
+            target_role=target.role,
+            expires_at=datetime.now(UTC) + timedelta(minutes=IMPERSONATION_TOKEN_MINUTES),
+        )
+    )
+    await db.commit()
+
+    return TokenResponse(access_token=token)

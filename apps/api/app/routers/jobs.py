@@ -36,13 +36,22 @@ router = APIRouter(dependencies=[Depends(verify_backend_token)])
 user_router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
-@user_router.get("", response_model=list[JobListOut])
+@user_router.get(
+    "", response_model=list[JobListOut], dependencies=[Depends(require_role("admin"))]
+)
 async def list_jobs(
     printer_id: UUID | None = None,
     submitted_by: str | None = None,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
 ):
+    """Fleet-wide, unfiltered — every job from every user, no submitted_by
+    scoping (contrast app/routers/reports.py's _report_filters, which
+    force-scopes a viewer to their own history for Insights). Admin-only
+    for that reason; a viewer's own print history is available via
+    Insights instead. Only frontend callers are admin-only pages (Jobs,
+    the printer detail Jobs tab, Usage) — see apps/web's dashboard layout
+    NAV_LINKS."""
     stmt = (
         select(Job, Printer.name)
         .join(Printer, Job.printer_id == Printer.id)
