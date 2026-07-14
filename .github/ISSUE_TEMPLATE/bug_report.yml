@@ -1,0 +1,75 @@
+name: Bug report
+description: Something isn't working the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. The more detail you can give, the faster it can get fixed.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What did you click/do, in order?
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs. actual behavior
+      description: What did you expect to happen, and what actually happened instead?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: PrintOps version
+      description: Shown at the bottom of the sidebar, or in `VERSION` at the repo root.
+      placeholder: "0.54.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment type
+      options:
+        - Production install (scripts/setup.sh, systemd services)
+        - Local development (docker compose + dev servers)
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, printer/copier make & model if relevant, browser if it's a UI bug.
+      placeholder: |
+        - OS: Ubuntu 22.04
+        - Printer: Canon imageRUNNER C3226i
+        - Browser: Chrome 128
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        `journalctl -u printops-api -n 200` or `journalctl -u printops-web -n 200` output, if applicable.
+        Please redact anything sensitive (tokens, credentials, personal info).
+      render: shell

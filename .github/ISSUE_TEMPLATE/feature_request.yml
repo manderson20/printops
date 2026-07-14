@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest something new, or an improvement to what's already there
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, it's worth a quick check of the [Roadmap wiki page](https://github.com/manderson20/printops/wiki/Roadmap) and the [PrintOps Roadmap project](https://github.com/users/manderson20/projects/2) — it might already be tracked.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What are you trying to do, and what's getting in the way today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would you like to see happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other ways to solve this you've thought about, including workarounds you're using now.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that would help — screenshots, links, your deployment's scale/context.
