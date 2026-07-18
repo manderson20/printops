@@ -231,16 +231,11 @@ EOF
   # CUPS's own `lp` group and spools held documents to
   # /var/spool/printops-held as root:lp, group-writable (not world-
   # writable). The API process needs to be in `lp` too, or it can't read/
-  # delete those files at release time. Safe to re-run: usermod -aG is
-  # additive, and the mkdir/chown/chmod below just re-asserts the same
-  # state if it's already correct.
+  # delete those files at release time.
   log "Adding $(id -un) to the lp group (for reading held print jobs)"
   RUN_USER="$(id -un)"
   RUN_GROUP="$(id -gn)"
-  sudo usermod -aG lp "$RUN_USER"
-  sudo mkdir -p /var/spool/printops-held
-  sudo chown root:lp /var/spool/printops-held
-  sudo chmod 2770 /var/spool/printops-held
+  ./scripts/ensure_held_spool_group.sh
   if systemctl is-active --quiet printops-api 2>/dev/null; then
     warn "printops-api was already running before this group change — its process"
     warn "won't pick up the new lp membership until it restarts."

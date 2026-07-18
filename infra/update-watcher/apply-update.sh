@@ -43,6 +43,14 @@ cd "$REPO_DIR/apps/web"
 pnpm install --frozen-lockfile
 timeout 300 pnpm build
 
+echo "== Ensuring held-job spool permissions/group membership =="
+# scripts/setup.sh only runs on a fresh install; already-deployed instances
+# get here instead, and need the same root:lp / 2770 migration re-applied
+# on every update in case it drifted or was never run — otherwise the
+# CUPS backend's own 0o2770 enforcement (infra/cups/backends/printops)
+# locks the API out of releasing/purging held jobs.
+"$REPO_DIR/scripts/ensure_held_spool_group.sh"
+
 echo "== Restarting printops-api.service =="
 sudo systemctl restart printops-api.service
 API_OK=false
