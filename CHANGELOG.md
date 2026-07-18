@@ -5,6 +5,22 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.55.0] - 2026-07-18
+
+- **Lock down default viewer permissions.** Fleet-wide Syslog and Jobs
+  listing had no role scoping — any authenticated viewer could already see
+  every user's print jobs and every printer's syslog events, not just
+  their own. Both are now admin-only server-side, and the default-role
+  nav is trimmed to just Print + Insights (their own scoped data), with a
+  hard redirect if a viewer hits another page's URL directly.
+- **New: admin "View as" impersonation** (Settings > Users), to verify
+  the above going forward — mints a short-lived (20 min), non-refreshable
+  token scoped exactly as the target user, strictly read-only (a new
+  central guard 403s any mutating request carrying an impersonation
+  claim, regardless of endpoint, matching the auth dependency's
+  case-insensitive Bearer-scheme check). Every session is logged
+  (admin, target, timestamps).
+
 ## [0.54.0] - 2026-07-12
 
 - **Security hardening pass, prompted by GitHub's code-scanning alerts**
