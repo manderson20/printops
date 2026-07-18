@@ -717,6 +717,64 @@ def test_job_usage_forbidden_for_viewer(client, printer_id, backend_headers, mon
     assert response.status_code == 403
 
 
+def test_list_jobs_forbidden_for_viewer(client, printer_id, backend_headers, monkeypatch):
+    """Fleet-wide job listing is admin-only — a viewer's own print history
+    is available via Insights instead (app/routers/reports.py's
+    _report_filters), which force-scopes to their own submitted_by rather
+    than exposing every user's jobs like this endpoint does."""
+    client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
+
+    google_settings = client.put(
+        "/api/v1/settings/google-sso",
+        headers={
+            "Authorization": (
+                "Bearer "
+                + client.post(
+                    "/auth/login", json={"username": "admin", "password": "changeme"}
+                ).json()["access_token"]
+            )
+        },
+        json={
+            "client_id": "test-client-id",
+            "client_secret": "test-client-secret",
+            "workspace_domain": "example.org",
+            "initial_admin_emails": [],
+            "redirect_base_url": "https://printops.test",
+            "enabled": True,
+        },
+    )
+    assert google_settings.status_code == 200
+
+    async def fake_exchange_code(**kwargs):
+        return {"id_token": "fake-id-token"}
+
+    def fake_verify_id_token(id_token, client_id):
+        return {
+            "sub": "google-sub-viewer",
+            "email": "viewer@example.org",
+            "email_verified": True,
+            "hd": "example.org",
+            "name": "Viewer Person",
+            "picture": None,
+        }
+
+    monkeypatch.setattr("app.routers.auth.exchange_code", fake_exchange_code)
+    monkeypatch.setattr("app.routers.auth.verify_id_token", fake_verify_id_token)
+
+    login_response = client.get("/auth/google/login", follow_redirects=False)
+    state = login_response.cookies["printops_oauth_state"]
+    callback = client.get(
+        "/auth/google/callback",
+        params={"code": "fake-code", "state": state},
+        cookies={"printops_oauth_state": state},
+        follow_redirects=False,
+    )
+    viewer_token = callback.headers["location"].split("token=", 1)[1]
+
+    response = client.get("/api/v1/jobs", headers={"Authorization": f"Bearer {viewer_token}"})
+    assert response.status_code == 403
+
+
 async def test_create_job_rejects_archived_printer(
     client, printer_id, backend_headers, db_session_factory
 ):

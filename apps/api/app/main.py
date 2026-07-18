@@ -4,11 +4,14 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from jwt import PyJWTError
 from sqlalchemy import delete, select
 
 from app.core.config import get_settings
+from app.core.security import decode_access_token
 from app.db import AsyncSessionLocal
 from app.integrations.git_update import get_current_version
 from app.integrations.google_workspace import GoogleWorkspaceError
@@ -422,6 +425,49 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+@app.middleware("http")
+async def block_impersonated_mutations(request: Request, call_next):
+    """A "View as" session (app/routers/users.py's impersonate_user) is
+    meant to be strictly read-only — this is the single, central place
+    that's actually guaranteed, rather than something every router has to
+    remember to check. Runs ahead of routing entirely: any non-safe
+    request carrying a token with an `impersonated_by` claim gets 403'd
+    here, regardless of which endpoint it targets or whether that
+    endpoint even knows impersonation exists.
+
+    Deliberately fails open on anything that isn't an impersonation token
+    (missing/malformed/expired) — that's ordinary auth's job
+    (app.deps.get_current_user), not this middleware's.
+
+    Scheme comparison is case-insensitive, matching FastAPI's own
+    OAuth2PasswordBearer (fastapi.security.utils.get_authorization_scheme_param
+    compares via scheme.lower() == "bearer") — get_current_user accepts
+    `Authorization: bearer <token>` just as readily as `Bearer <token>`,
+    so this had to too, or a lowercase scheme would sail through this
+    check while still authenticating downstream."""
+    if request.method not in SAFE_METHODS:
+        auth_header = request.headers.get("Authorization", "")
+        scheme, _, token = auth_header.partition(" ")
+        if scheme.lower() == "bearer" and token:
+            token = token.strip()
+            try:
+                payload = decode_access_token(token, settings)
+            except PyJWTError:
+                payload = {}
+            if payload.get("impersonated_by"):
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "detail": "This is a read-only \"View as\" session — no changes can be "
+                        "made while impersonating another user."
+                    },
+                )
+    return await call_next(request)
+
 
 app.include_router(health.router)
 app.include_router(auth.router, prefix="/auth", tags=["auth"])

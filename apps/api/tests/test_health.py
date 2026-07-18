@@ -55,4 +55,5 @@ def test_auth_round_trip(client):
         "name": None,
         "subject": "admin",
         "granted_ou_paths": None,
+        "impersonated_by": None,
     }

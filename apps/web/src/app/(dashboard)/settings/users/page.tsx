@@ -1,9 +1,11 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   ApiError,
   createUser,
+  impersonateUser,
   listGoogleWorkspaceOrgUnits,
   listGoogleWorkspaceUsers,
   listUsers,
@@ -12,6 +14,7 @@ import {
   type Role,
   type UserAccount,
 } from "@/lib/api";
+import { startImpersonation } from "@/lib/auth";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -47,8 +50,10 @@ function ouLabel(path: string): string {
 }
 
 export default function UsersSettingsPage() {
+  const router = useRouter();
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [rowError, setRowError] = useState<string | null>(null);
+  const [impersonatingId, setImpersonatingId] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -149,6 +154,19 @@ export default function UsersSettingsPage() {
       load();
     } catch (err) {
       setRowError(err instanceof ApiError ? err.message : "Failed to update account");
+    }
+  }
+
+  async function handleImpersonate(user: UserAccount) {
+    setRowError(null);
+    setImpersonatingId(user.id);
+    try {
+      const { access_token } = await impersonateUser(user.id);
+      startImpersonation(access_token);
+      router.push("/insights");
+    } catch (err) {
+      setRowError(err instanceof ApiError ? err.message : "Failed to start impersonation");
+      setImpersonatingId(null);
     }
   }
 
@@ -301,6 +319,9 @@ export default function UsersSettingsPage() {
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Timeout</th>
                   <th className="px-4 py-3 font-medium">Last Login</th>
+                  <th className="px-4 py-3 font-medium">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -351,10 +372,26 @@ export default function UsersSettingsPage() {
                       <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                         {user.last_login_at ? new Date(user.last_login_at).toLocaleString() : "Never"}
                       </td>
+                      <td className="px-4 py-3 text-right">
+                        {user.role !== "admin" && (
+                          <Button
+                            variant="secondary"
+                            disabled={!user.is_active || impersonatingId === user.id}
+                            onClick={() => handleImpersonate(user)}
+                            title={
+                              user.is_active
+                                ? `View the app as ${user.email} would see it (read-only)`
+                                : "Reactivate this account first"
+                            }
+                          >
+                            {impersonatingId === user.id ? "Starting…" : "View as"}
+                          </Button>
+                        )}
+                      </td>
                     </tr>
                     {editingOuFor === user.id && (
                       <tr className="border-b border-black/[.08] bg-black/[.02] last:border-0 dark:border-white/[.145] dark:bg-white/[.03]">
-                        <td colSpan={6} className="px-4 py-3">
+                        <td colSpan={7} className="px-4 py-3">
                           <p className="mb-2 text-sm text-zinc-700 dark:text-zinc-300">
                             Granted org units for <strong>{user.email}</strong> — nested sub-OUs are
                             included automatically. None selected means this account sees no data yet.
