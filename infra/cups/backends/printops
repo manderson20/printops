@@ -25,12 +25,15 @@ REAL_IPP_BACKEND = "/usr/lib/cups/backend/ipp"
 ENV_FILE = "/home/itadmin/printops/apps/api/.env"
 
 # Held documents live here until released (app/printers/release.py, invoked
-# from printops-api running as `itadmin`) or purged past their expiry
-# (app/main.py's background sweep, same process). This script runs as
-# root (see module docstring), so the directory is made world read/write —
-# no sticky bit, since the release/purge path (itadmin) needs to delete
-# files this script (root) created. Acceptable on a single-purpose print
-# server where only these two trusted processes ever touch it.
+# from printops-api, which runs as a non-root service user) or purged past
+# their expiry (app/main.py's background sweep, same process). This script
+# runs as root (see module docstring) under CUPS's own `lp` group, so
+# ownership ends up root:lp — the API's service user is added to `lp` by
+# scripts/setup.sh specifically so it can read/delete these files without
+# the directory needing to be world-writable. Group-only permissions plus
+# the setgid bit (new files/dirs inherit the `lp` group even though this
+# script creates them as root) replaced an earlier world-writable/
+# world-readable version of this that a security scan flagged.
 HELD_SPOOL_DIR = "/var/spool/printops-held"
 
 
@@ -151,14 +154,16 @@ def spool_held_file(job_record_id: str, filename: str | None) -> str:
     file (no `filename` arg), it has to be read and saved now — there's no
     second chance to read this process's stdin later."""
     os.makedirs(HELD_SPOOL_DIR, exist_ok=True)
-    os.chmod(HELD_SPOOL_DIR, 0o777)
+    # 0o2770: rwxrws--- — group `lp` (not world) can read/write, and the
+    # setgid bit keeps that group on files/dirs created here afterward.
+    os.chmod(HELD_SPOOL_DIR, 0o2770)
     dest = os.path.join(HELD_SPOOL_DIR, job_record_id)
     if filename:
         shutil.copyfile(filename, dest)
     else:
         with open(dest, "wb") as out:
             shutil.copyfileobj(sys.stdin.buffer, out)
-    os.chmod(dest, 0o666)
+    os.chmod(dest, 0o660)
     return dest
 
 

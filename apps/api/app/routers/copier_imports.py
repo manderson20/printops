@@ -44,12 +44,11 @@ from app.schemas.copier_import import (
 router = APIRouter(dependencies=[Depends(require_role("admin"))])
 
 
-# Unlike /var/spool/printops-held (world-writable, created by the
-# root-owned CUPS backend script — see infra/cups/backends/printops),
-# this directory is only ever touched by this itadmin-owned API process,
-# so it lives under the repo tree rather than /var/spool — printops-api
-# runs as itadmin (see /etc/systemd/system/printops-api.service), and
-# /var/spool itself is root-owned 755, which itadmin can't create under.
+# Unlike /var/spool/printops-held (root:lp, group-writable, created by the
+# root-owned CUPS backend script — see infra/cups/backends/printops), this
+# directory is only ever touched by this API process, so it lives under
+# the repo tree rather than /var/spool — the API service's own user can't
+# create directories under /var/spool itself (root-owned 755).
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 SPOOL_DIR = Path(
     os.environ.get("PRINTOPS_COPIER_IMPORT_SPOOL_DIR", str(_REPO_ROOT / "var" / "copier-imports"))

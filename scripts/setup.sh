@@ -226,12 +226,27 @@ EOF
   pnpm install
   (cd apps/web && pnpm build)
 
+  # ---- CUPS held-job spool permissions ----
+  # The CUPS backend (infra/cups/backends/printops) runs as root under
+  # CUPS's own `lp` group and spools held documents to
+  # /var/spool/printops-held as root:lp, group-writable (not world-
+  # writable). The API process needs to be in `lp` too, or it can't read/
+  # delete those files at release time.
+  log "Adding $(id -un) to the lp group (for reading held print jobs)"
+  RUN_USER="$(id -un)"
+  RUN_GROUP="$(id -gn)"
+  ./scripts/ensure_held_spool_group.sh
+  if systemctl is-active --quiet printops-api 2>/dev/null; then
+    warn "printops-api was already running before this group change — its process"
+    warn "won't pick up the new lp membership until it restarts."
+    warn "Restarting it now so held-job release keeps working."
+    sudo systemctl restart printops-api
+  fi
+
   # ---- systemd services ----
   if [ "$INSTALL_SERVICES" = true ]; then
     log "Installing systemd services"
     NODE_BIN_DIR="$(dirname "$(command -v pnpm)")"
-    RUN_USER="$(id -un)"
-    RUN_GROUP="$(id -gn)"
 
     render_unit() {
       local template="$1" out="$2"

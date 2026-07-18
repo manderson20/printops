@@ -115,6 +115,8 @@ def main() -> int:
         server_settings = api_get(token, "/api/v1/internal/server-settings")
         advertise_ipps = bool(server_settings.get("advertise_ipps"))
     except (OSError, urllib.error.URLError):
+        # Falls back to advertise_ipps = False, set above — see the
+        # best-effort rationale in the comment just before this try block.
         pass
 
     service_path = os.path.join(SERVICES_DIR, f"printops-{printer_id}.service")
