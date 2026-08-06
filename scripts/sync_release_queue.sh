@@ -29,6 +29,7 @@ REAL_IP=$(python3 -c "import json,sys; print(json.load(sys.stdin)['ip_address'])
 REAL_PORT=$(python3 -c "import json,sys; print(json.load(sys.stdin)['port'])" <<<"$PRINTER_JSON")
 REAL_SCHEME=$(python3 -c "import json,sys; print('ipps' if json.load(sys.stdin)['use_tls'] else 'ipp')" <<<"$PRINTER_JSON")
 REAL_PATH=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ipp_path') or '/ipp/print')" <<<"$PRINTER_JSON")
+ROLL_AUTOCUT=$(python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('roll_autocut') else 'false')" <<<"$PRINTER_JSON")
 
 REAL_URI="${REAL_SCHEME}://${REAL_IP}:${REAL_PORT}${REAL_PATH}"
 QUEUE_NAME="printops-release-${PRINTER_ID}"
@@ -103,6 +104,26 @@ if [ "$COLOR_SUPPORTED" -ge 1 ]; then
     # actual color capability (confirmed live). See
     # scripts/sync_cups_queue.sh's matching block for the full reasoning.
     sudo lpadmin -p "$QUEUE_NAME" -o ColorModel=RGB || true
+fi
+
+# Same as the client-facing queue — re-apply (or clear) the roll-media
+# auto-cut default after -m everywhere regenerated the PPD. A released job is
+# delivered straight through this queue with `lp -d`, so without this a held
+# job printed to a cutter would come out uncut even when the client-facing
+# queue is set to cut. The disable path clears the default explicitly rather
+# than trusting regeneration, since the -m everywhere probe can time out and
+# preserve the old (cutting) PPD. Self-gating on the PPD's trim mapping (no-op
+# on non-roll printers); see sync_cups_queue.sh for the full reasoning.
+TRIM_MAP=$(sudo grep -E '^\*cupsIPPFinishings 11[/:]' "$PPD_FILE" 2>/dev/null \
+    | sed -E 's/.*"\*([^ ]+) +(.+)".*/\1=\2/' | head -1 || true)
+if [ -n "$TRIM_MAP" ]; then
+    if [ "$ROLL_AUTOCUT" = true ]; then
+        sudo lpadmin -p "$QUEUE_NAME" -o "${TRIM_MAP%%=*}-default=${TRIM_MAP#*=}" -o finishings-default=11
+        echo "Roll auto-cut enabled for '$QUEUE_NAME' (${TRIM_MAP})"
+    else
+        sudo lpadmin -p "$QUEUE_NAME" -R "${TRIM_MAP%%=*}-default" -R finishings-default || true
+        echo "Roll auto-cut disabled for '$QUEUE_NAME'"
+    fi
 fi
 
 # Same as the client-facing queue — abort just the failing job instead of

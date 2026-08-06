@@ -107,6 +107,7 @@ class PrinterUpdate(BaseModel):
 
     release_required: bool | None = None
     follow_me_enabled: bool | None = None
+    roll_autocut: bool | None = None
 
     snmp_enabled: bool | None = None
     snmp_port: int | None = None
@@ -151,6 +152,11 @@ class PrinterConnectionOut(BaseModel):
     airprint_enabled: bool
     capabilities: CapabilitiesOut | None
     release_required: bool
+    # Read by scripts/sync_cups_queue.sh / sync_release_queue.sh to re-apply
+    # the roll cutter default after -m everywhere regenerates the PPD (which
+    # resets it to no-cut each sync). Self-gating in the script on the PPD
+    # actually exposing a trim finishing, so it's a no-op on non-roll printers.
+    roll_autocut: bool
     # Read by scripts/sync_cups_queue.sh to skip the real-device `-m
     # everywhere` probe (there's no ip_address to probe) and go straight to
     # the generic driverless PPD fallback it already had for unreachable
@@ -207,6 +213,7 @@ class PrinterOut(BaseModel):
 
     release_required: bool
     follow_me_enabled: bool
+    roll_autocut: bool
     release_token: str | None
 
     snmp_enabled: bool
