@@ -1,0 +1,17 @@
+name: "PrintOps CodeQL config"
+
+# Alembic migration modules are generated from a fixed template and declare the
+# module-level attributes Alembic reads by introspection: `revision`,
+# `down_revision`, `branch_labels`, `depends_on`. CodeQL's
+# `py/unused-global-variable` (from the security-and-quality suite) can't see
+# that framework use and flags all four on every new migration — pure noise
+# that recurs on each migration PR (already 52 migrations in). The files are
+# boilerplate schema/data operations with negligible security surface, so
+# exclude the versions directory from analysis rather than hand-dismissing the
+# same four false-positive alerts on every migration.
+#
+# `queries` stays configured inline in .github/workflows/codeql.yml
+# (security-extended,security-and-quality); the codeql-action merges that input
+# with this file, so it isn't duplicated here.
+paths-ignore:
+  - apps/api/alembic/versions
