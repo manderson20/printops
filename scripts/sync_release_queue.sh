@@ -106,18 +106,23 @@ if [ "$COLOR_SUPPORTED" -ge 1 ]; then
     sudo lpadmin -p "$QUEUE_NAME" -o ColorModel=RGB || true
 fi
 
-# Same as the client-facing queue — re-apply the roll-media auto-cut default
-# after -m everywhere regenerated the PPD (which resets it to no-cut). A
-# released job is delivered straight through this queue with `lp -d`, so
-# without this a held job printed to a cutter would come out uncut even when
-# the client-facing queue is set to cut. Self-gating on the PPD's trim mapping
-# (no-op on non-roll printers); see sync_cups_queue.sh for the full reasoning.
-if [ "$ROLL_AUTOCUT" = true ]; then
-    TRIM_MAP=$(sudo grep -E '^\*cupsIPPFinishings 11[/:]' "$PPD_FILE" 2>/dev/null \
-        | sed -E 's/.*"\*([^ ]+) +(.+)".*/\1=\2/' | head -1 || true)
-    if [ -n "$TRIM_MAP" ]; then
+# Same as the client-facing queue — re-apply (or clear) the roll-media
+# auto-cut default after -m everywhere regenerated the PPD. A released job is
+# delivered straight through this queue with `lp -d`, so without this a held
+# job printed to a cutter would come out uncut even when the client-facing
+# queue is set to cut. The disable path clears the default explicitly rather
+# than trusting regeneration, since the -m everywhere probe can time out and
+# preserve the old (cutting) PPD. Self-gating on the PPD's trim mapping (no-op
+# on non-roll printers); see sync_cups_queue.sh for the full reasoning.
+TRIM_MAP=$(sudo grep -E '^\*cupsIPPFinishings 11[/:]' "$PPD_FILE" 2>/dev/null \
+    | sed -E 's/.*"\*([^ ]+) +(.+)".*/\1=\2/' | head -1 || true)
+if [ -n "$TRIM_MAP" ]; then
+    if [ "$ROLL_AUTOCUT" = true ]; then
         sudo lpadmin -p "$QUEUE_NAME" -o "${TRIM_MAP%%=*}-default=${TRIM_MAP#*=}" -o finishings-default=11
         echo "Roll auto-cut enabled for '$QUEUE_NAME' (${TRIM_MAP})"
+    else
+        sudo lpadmin -p "$QUEUE_NAME" -R "${TRIM_MAP%%=*}-default" -R finishings-default || true
+        echo "Roll auto-cut disabled for '$QUEUE_NAME'"
     fi
 fi
 

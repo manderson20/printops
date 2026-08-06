@@ -153,19 +153,28 @@ fi
 # its cut option (Canon: "*CutMedia Auto"). That line is present ONLY on
 # devices that actually advertise a cutter, so this whole block is a natural
 # no-op on the (vast majority of) non-roll printers — TRIM_MAP comes back
-# empty and nothing is touched. When roll_autocut is off we do nothing: every
-# sync regenerates the PPD with the no-cut default already, so "off" needs no
-# action beyond not re-applying the cut. finishings-default=11 is set
-# alongside the PPD option so the IPP-attribute path agrees with the PPD path.
-if [ "$ROLL_AUTOCUT" = true ]; then
-    TRIM_MAP=$(sudo grep -E '^\*cupsIPPFinishings 11[/:]' "$PPD_FILE" 2>/dev/null \
-        | sed -E 's/.*"\*([^ ]+) +(.+)".*/\1=\2/' | head -1 || true)
-    if [ -n "$TRIM_MAP" ]; then
+# empty and nothing is touched. finishings-default is set/cleared alongside
+# the PPD option so the IPP-attribute path agrees with the PPD path.
+#
+# The disable path can't just no-op on the assumption that -m everywhere
+# regenerated a fresh no-cut PPD: that probe can time out and fall back to
+# preserving the existing PPD (see HAD_REAL_PPD above), which keeps the
+# previously-applied cut default in place — the queue would then keep cutting
+# despite roll_autocut being off. So clear the default explicitly with -R.
+TRIM_MAP=$(sudo grep -E '^\*cupsIPPFinishings 11[/:]' "$PPD_FILE" 2>/dev/null \
+    | sed -E 's/.*"\*([^ ]+) +(.+)".*/\1=\2/' | head -1 || true)
+if [ -n "$TRIM_MAP" ]; then
+    if [ "$ROLL_AUTOCUT" = true ]; then
         sudo lpadmin -p "$QUEUE_NAME" -o "${TRIM_MAP%%=*}-default=${TRIM_MAP#*=}" -o finishings-default=11
         echo "Roll auto-cut enabled for '$QUEUE_NAME' (${TRIM_MAP})"
     else
-        echo "WARNING: roll_autocut is on for '$QUEUE_NAME' but its PPD advertises no trim finishing — nothing to enable." >&2
+        # -R on a default that was never set is a harmless no-op; tolerate it
+        # under `set -e` either way.
+        sudo lpadmin -p "$QUEUE_NAME" -R "${TRIM_MAP%%=*}-default" -R finishings-default || true
+        echo "Roll auto-cut disabled for '$QUEUE_NAME'"
     fi
+elif [ "$ROLL_AUTOCUT" = true ]; then
+    echo "WARNING: roll_autocut is on for '$QUEUE_NAME' but its PPD advertises no trim finishing — nothing to enable." >&2
 fi
 
 # cupsd.conf's global ErrorPolicy is retry-job, which keeps retrying the
