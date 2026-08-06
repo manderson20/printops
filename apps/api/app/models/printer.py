@@ -49,6 +49,16 @@ class Printer(Base, TimestampMixin):
     # printer-is-shared attribute.
     airprint_enabled: Mapped[bool] = mapped_column(default=False, server_default="false")
 
+    # Auto-cut the roll after each job, for roll-fed printers with a cutter
+    # (e.g. the Canon TM-300 plotter). Only meaningful when the device
+    # advertises the IPP "trim" finishing (capabilities.finishings — enum 11);
+    # the UI only surfaces the toggle for those, and scripts/sync_cups_queue.sh
+    # only acts on it when the generated PPD actually maps trim to an option.
+    # Re-applied on every queue sync because -m everywhere regenerates the PPD
+    # with a no-cut default each time — same reason color mode is re-applied
+    # there. Defaults on at create time for a device that reports a cutter.
+    roll_autocut: Mapped[bool] = mapped_column(default=False, server_default="false")
+
     building: Mapped[str | None] = mapped_column(default=None)
     room: Mapped[str | None] = mapped_column(default=None)
     department: Mapped[str | None] = mapped_column(default=None)

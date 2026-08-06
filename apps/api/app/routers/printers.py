@@ -77,6 +77,7 @@ QUEUE_AFFECTING_FIELDS = {
     "ipp_path",
     "airprint_enabled",
     "release_required",
+    "roll_autocut",
 }
 
 
@@ -145,6 +146,13 @@ async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_
         ),
     )
     await refresh_printer_capabilities(printer)
+    # A roll printer that reports a cutter (IPP "trim" finishing) should cut by
+    # default — otherwise a freshly-added plotter silently leaves every job
+    # uncut on the roll until someone finds this toggle. Admins can turn it
+    # off afterward; the setting is only surfaced/acted on for trim-capable
+    # devices (see Printer.roll_autocut, RollMediaCard, sync_cups_queue.sh).
+    finishings = (printer.capabilities or {}).get("finishings") or []
+    printer.roll_autocut = "trim" in finishings
     db.add(printer)
     await db.commit()
     await db.refresh(printer)

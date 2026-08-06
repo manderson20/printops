@@ -135,6 +135,10 @@ export type Printer = {
   archived_at: string | null;
   release_required: boolean;
   follow_me_enabled: boolean;
+  // Auto-cut the roll after each job. Only meaningful for roll printers that
+  // advertise a cutter (capabilities.finishings includes "trim"); the UI only
+  // shows the toggle for those. See RollMediaCard.
+  roll_autocut: boolean;
   release_token: string | null;
   snmp_enabled: boolean;
   snmp_port: number | null;
@@ -192,6 +196,7 @@ export type PrinterCreateInput = {
 export type PrinterUpdateInput = Partial<PrinterCreateInput> & {
   release_required?: boolean;
   follow_me_enabled?: boolean;
+  roll_autocut?: boolean;
   snmp_enabled?: boolean;
   snmp_port?: number | null;
   // "" clears the override back to the global default (see

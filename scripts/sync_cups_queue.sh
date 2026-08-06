@@ -23,6 +23,7 @@ PRINTER_JSON=$(curl -sf -H "X-Backend-Token: $TOKEN" "$API_BASE/api/v1/internal/
 PRINTER_NAME=$(python3 -c "import json,sys; print(json.load(sys.stdin)['name'])" <<<"$PRINTER_JSON")
 IS_VIRTUAL=$(python3 -c "import json,sys; print('true' if json.load(sys.stdin)['is_virtual'] else 'false')" <<<"$PRINTER_JSON")
 AIRPRINT_ENABLED=$(python3 -c "import json,sys; print('true' if json.load(sys.stdin)['airprint_enabled'] else 'false')" <<<"$PRINTER_JSON")
+ROLL_AUTOCUT=$(python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('roll_autocut') else 'false')" <<<"$PRINTER_JSON")
 
 if [ "$IS_VIRTUAL" = false ]; then
     REAL_IP=$(python3 -c "import json,sys; print(json.load(sys.stdin)['ip_address'])" <<<"$PRINTER_JSON")
@@ -137,6 +138,34 @@ if [ "$COLOR_SUPPORTED" -ge 1 ]; then
     # differently, since print-color-mode-default above still covers the
     # apps that use it.
     sudo lpadmin -p "$QUEUE_NAME" -o ColorModel=RGB || true
+fi
+
+# Roll-media auto-cut (Printer.roll_autocut) — for roll-fed printers with a
+# cutter (e.g. the Canon TM-300 plotter). Same "-m everywhere resets it every
+# sync, so re-apply here" situation as the color-mode block above: the
+# regenerated driverless PPD defaults the cutter option to no-cut, so a queue
+# that was cutting silently stops after any resync unless we re-assert it.
+#
+# Rather than hardcode a vendor's option name, read it back from the PPD the
+# driverless generation just emitted: cups-filters writes a
+#   *cupsIPPFinishings 11/trim: "*<Option> <Choice>"
+# line mapping IPP finishings=11 (trim) to whatever this device's PPD calls
+# its cut option (Canon: "*CutMedia Auto"). That line is present ONLY on
+# devices that actually advertise a cutter, so this whole block is a natural
+# no-op on the (vast majority of) non-roll printers — TRIM_MAP comes back
+# empty and nothing is touched. When roll_autocut is off we do nothing: every
+# sync regenerates the PPD with the no-cut default already, so "off" needs no
+# action beyond not re-applying the cut. finishings-default=11 is set
+# alongside the PPD option so the IPP-attribute path agrees with the PPD path.
+if [ "$ROLL_AUTOCUT" = true ]; then
+    TRIM_MAP=$(sudo grep -E '^\*cupsIPPFinishings 11[/:]' "$PPD_FILE" 2>/dev/null \
+        | sed -E 's/.*"\*([^ ]+) +(.+)".*/\1=\2/' | head -1 || true)
+    if [ -n "$TRIM_MAP" ]; then
+        sudo lpadmin -p "$QUEUE_NAME" -o "${TRIM_MAP%%=*}-default=${TRIM_MAP#*=}" -o finishings-default=11
+        echo "Roll auto-cut enabled for '$QUEUE_NAME' (${TRIM_MAP})"
+    else
+        echo "WARNING: roll_autocut is on for '$QUEUE_NAME' but its PPD advertises no trim finishing — nothing to enable." >&2
+    fi
 fi
 
 # cupsd.conf's global ErrorPolicy is retry-job, which keeps retrying the
