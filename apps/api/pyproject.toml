@@ -15,7 +15,7 @@ dependencies = [
   "alembic>=1.13",
   "pyipp>=0.17",
   "pillow>=12.3.0",
-  "cryptography>=49.0.0",
+  "cryptography>=50.0.0",
   "httpx>=0.27",
   "python-multipart>=0.0.32",
 ]
