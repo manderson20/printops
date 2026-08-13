@@ -5,6 +5,22 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.56.0] - 2026-08-13
+
+- **Fix capability detection on printers that require IPPS.** Some devices
+  refuse cleartext IPP outright, answering every request on port 631 with
+  HTTP 426 Upgrade Required instead of serving it — confirmed live against
+  an Epson ET-3950 Series, which advertises both `ipps://` and `ipp://` on
+  631 but 426s all cleartext traffic. pyipp surfaces that as an error
+  rather than upgrading (CUPS' own `ipptool` upgrades transparently), so
+  every candidate path failed and an otherwise-healthy printer looked
+  completely unreachable: no capabilities, and "offline" from the status
+  poll. Such a device is now retried over TLS on the same path/port, and
+  the successful upgrade is persisted to the printer's "Use TLS" setting
+  so later polls skip the wasted cleartext attempt. Note this also
+  repoints that printer's CUPS queue to an `ipps://` device URI on the
+  next queue sync.
+
 ## [0.55.0] - 2026-07-18
 
 - **Lock down default viewer permissions.** Fleet-wide Syslog and Jobs
