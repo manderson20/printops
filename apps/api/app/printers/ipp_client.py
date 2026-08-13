@@ -10,7 +10,11 @@ from typing import Any
 
 from pyipp import IPP
 from pyipp.enums import ATTRIBUTE_ENUM_MAP, IppOperation
-from pyipp.exceptions import IPPError, IPPVersionNotSupportedError
+from pyipp.exceptions import (
+    IPPConnectionUpgradeRequired,
+    IPPError,
+    IPPVersionNotSupportedError,
+)
 
 from app.printers.capabilities import REQUESTED_ATTRIBUTES, _as_list, _scalar
 
@@ -69,6 +73,43 @@ class PrinterProbeError(Exception):
 class ProbeResult:
     raw_attributes: dict[str, Any]
     resolved_path: str
+    # Whether the response actually came back over TLS. This can be True even
+    # when the caller asked for tls=False, if the device demanded an upgrade
+    # (see _get_printer_attributes) — callers persist it so later probes skip
+    # the wasted cleartext attempt. Defaults to the conservative "no upgrade
+    # happened", so a probe that never negotiated TLS can't be mistaken for
+    # one that did.
+    resolved_tls: bool = False
+
+
+async def _execute(
+    ip_address: str,
+    port: int,
+    path: str,
+    tls: bool,
+    timeout: int,
+    version: tuple[int, int],
+    requested_attributes: list[str],
+) -> dict[str, Any] | None:
+    """One Get-Printer-Attributes call. Returns the first printer's attribute
+    dict, or None if the device answered but reported no printer at all."""
+    ipp = IPP(
+        host=ip_address,
+        port=port,
+        base_path=path,
+        tls=tls,
+        request_timeout=timeout,
+        ipp_version=version,
+    )
+    try:
+        response = await ipp.execute(
+            IppOperation.GET_PRINTER_ATTRIBUTES,
+            {"operation-attributes-tag": {"requested-attributes": requested_attributes}},
+        )
+        printers = response.get("printers") or []
+        return printers[0] if printers else None
+    finally:
+        await ipp.close()
 
 
 async def _get_printer_attributes(
@@ -88,32 +129,44 @@ async def _get_printer_attributes(
 
     for path in candidate_paths:
         for version in IPP_VERSIONS:
-            ipp = IPP(
-                host=ip_address,
-                port=port,
-                base_path=path,
-                tls=tls,
-                request_timeout=timeout,
-                ipp_version=version,
-            )
+            attempt_tls = tls
             try:
-                response = await ipp.execute(
-                    IppOperation.GET_PRINTER_ATTRIBUTES,
-                    {"operation-attributes-tag": {"requested-attributes": requested_attributes}},
-                )
-                printers = response.get("printers") or []
-                if not printers:
+                try:
+                    attributes = await _execute(
+                        ip_address, port, path, tls, timeout, version, requested_attributes
+                    )
+                except IPPConnectionUpgradeRequired:
+                    # The device answered plain IPP with HTTP 426 Upgrade
+                    # Required (+ an "Upgrade: TLS/1.0, HTTP/1.1" header)
+                    # instead of serving the request: it accepts IPP only over
+                    # TLS on this same port. Confirmed live against an Epson
+                    # ET-3950 Series, whose printer-uri-supported advertises
+                    # both ipps:// and ipp:// on 631 but which 426s every
+                    # cleartext request — so this is not something the caller
+                    # can reliably know up front from the URI alone. CUPS'
+                    # ipptool performs this upgrade transparently, pyipp does
+                    # not, so an otherwise-healthy printer failed all four
+                    # candidate paths and looked completely unreachable.
+                    # Retry the same path/version over TLS rather than moving
+                    # on: the device just told us exactly what it wants.
+                    if tls:
+                        raise  # already TLS — nothing left to upgrade to
+                    attempt_tls = True
+                    attributes = await _execute(
+                        ip_address, port, path, True, timeout, version, requested_attributes
+                    )
+                if attributes is None:
                     last_error = PrinterProbeError(f"No printer attributes returned at {path}")
                     break  # not a version problem — try the next path instead
-                return ProbeResult(raw_attributes=printers[0], resolved_path=path)
+                return ProbeResult(
+                    raw_attributes=attributes, resolved_path=path, resolved_tls=attempt_tls
+                )
             except IPPVersionNotSupportedError as exc:
                 last_error = exc
                 continue  # try the next IPP version at this same path
             except IPPError as exc:
                 last_error = exc
                 break  # not a version problem — try the next path instead
-            finally:
-                await ipp.close()
 
     raise PrinterProbeError(
         f"Could not reach an IPP printer at {ip_address}:{port} "

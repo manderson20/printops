@@ -29,6 +29,13 @@ async def refresh_printer_capabilities(printer: Printer) -> None:
         printer.capabilities_error = None
         if printer.ipp_path is None:
             printer.ipp_path = result.resolved_path
+        # A device that only serves IPP over TLS is discovered via the upgrade
+        # retry in app/printers/ipp_client.py even when use_tls is off. Persist
+        # that, or the status poll (app/printers/status.py, which passes
+        # printer.use_tls) keeps paying a wasted cleartext round trip against
+        # this printer every cycle.
+        if result.resolved_tls and not printer.use_tls:
+            printer.use_tls = True
         detected_model = printer.capabilities.get("make_model")
         if not printer.manufacturer and not printer.model and detected_model:
             printer.model = detected_model
