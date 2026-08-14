@@ -62,23 +62,19 @@ def period_bounds(period: str, now: datetime) -> tuple[datetime, datetime]:
     raise ValueError(f"Unknown quota period: {period!r}")
 
 
-async def get_effective_quota(
-    db: AsyncSession, printer_id: uuid.UUID, user_email: str | None
+async def _get_user_quota(
+    db: AsyncSession, printer_id: uuid.UUID, user_email: str
 ) -> PrinterUserQuota | None:
-    """The specific (printer_id, user_email) row if one exists, else this
-    printer's default/wildcard row (user_email IS NULL), else None
-    (unlimited)."""
-    if user_email is not None:
-        result = await db.execute(
-            select(PrinterUserQuota).where(
-                PrinterUserQuota.printer_id == printer_id,
-                PrinterUserQuota.user_email == user_email,
-            )
+    result = await db.execute(
+        select(PrinterUserQuota).where(
+            PrinterUserQuota.printer_id == printer_id,
+            PrinterUserQuota.user_email == user_email,
         )
-        quota = result.scalar_one_or_none()
-        if quota is not None:
-            return quota
+    )
+    return result.scalar_one_or_none()
 
+
+async def _get_blanket_quota(db: AsyncSession, printer_id: uuid.UUID) -> PrinterUserQuota | None:
     result = await db.execute(
         select(PrinterUserQuota).where(
             PrinterUserQuota.printer_id == printer_id,
@@ -86,6 +82,35 @@ async def get_effective_quota(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def get_effective_quota(
+    db: AsyncSession, printer: Printer, user_email: str | None
+) -> PrinterUserQuota | None:
+    """The row that actually caps `user_email` at this printer, or None if
+    nothing does. Which rows count depends on printer.quota_mode
+    (app/models/printer.py):
+
+      include — only the user's own row. The printer's blanket row is
+                ignored entirely, so a leftover one from a previous stint in
+                exclude mode can't quietly start capping the whole school.
+      exclude — the blanket row caps everyone, and the *presence* of a
+                per-user row means "exempt" (returns None), whatever limit
+                that row happens to carry. That's what lets an admin set one
+                limit for everyone and let a handful of people out, without
+                enumerating every single person who should be capped.
+
+    A returned row can still carry page_limit=None (an exemption row read
+    back in include mode); callers treat that as no cap — see
+    resolve_hold_reason."""
+    if printer.quota_mode == "exclude":
+        if user_email is not None and await _get_user_quota(db, printer.id, user_email) is not None:
+            return None  # exempt
+        return await _get_blanket_quota(db, printer.id)
+
+    if user_email is None:
+        return None
+    return await _get_user_quota(db, printer.id, user_email)
 
 
 async def get_pages_used(
@@ -148,8 +173,8 @@ async def resolve_hold_reason(
     if not settings.enabled:
         return None
 
-    quota = await get_effective_quota(db, printer.id, submitted_by)
-    if quota is None:
+    quota = await get_effective_quota(db, printer, submitted_by)
+    if quota is None or quota.page_limit is None:
         return None
 
     start, end = period_bounds(quota.period, datetime.now(UTC))

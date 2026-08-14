@@ -127,6 +127,23 @@ class Printer(Base, TimestampMixin):
     # rebuild the printer itself.
     release_token: Mapped[str | None] = mapped_column(unique=True, default=None)
 
+    # How this printer's PrinterUserQuota rows are read — "include" or
+    # "exclude" (QUOTA_MODES, app/models/quota.py), enforced at the API layer
+    # like PrinterUserQuota.period rather than as a DB constraint:
+    #
+    #   include — only users with their own row are capped; everyone else
+    #             prints freely. The original behaviour, hence the default.
+    #   exclude — the printer's blanket row (user_email IS NULL) caps
+    #             everyone, and a per-user row means "exempt from it".
+    #
+    # Deliberately per-printer, not org-wide: a library colour printer wants
+    # a blanket cap with a couple of staff let out, while a plotter wants the
+    # opposite (nobody capped except the two classes that overuse it).
+    # Switching modes never rewrites rows — the same rows are simply read the
+    # other way, so an admin can flip back without having lost anything (the
+    # UI warns about what they'll mean before the switch).
+    quota_mode: Mapped[str] = mapped_column(default="include", server_default="include")
+
     # SNMP page/copy counter polling (app/printers/snmp_counters.py). All
     # connection-config fields are nullable — None means "use the global
     # SnmpDefaultsSettings", letting a district set one community string

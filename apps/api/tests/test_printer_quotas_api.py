@@ -184,3 +184,115 @@ def test_quota_settings_default_disabled_and_toggle(client, auth_headers):
 
     refetched = client.get("/api/v1/settings/quotas", headers=auth_headers)
     assert refetched.json()["enabled"] is True
+
+
+def _set_mode(client, auth_headers, printer_id, mode):
+    response = client.patch(
+        f"/api/v1/printers/{printer_id}", headers=auth_headers, json={"quota_mode": mode}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["quota_mode"] == mode
+
+
+def test_printer_defaults_to_include_mode(client, auth_headers, printer_id):
+    response = client.get(f"/api/v1/printers/{printer_id}", headers=auth_headers)
+    assert response.json()["quota_mode"] == "include"
+
+
+def test_exemption_rejected_on_an_include_mode_printer(client, auth_headers, printer_id):
+    """A row with no page limit only means something in exclude mode — storing
+    one here would be a row that silently does nothing."""
+    response = client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": "manderson@example.com", "period": "monthly", "page_limit": None},
+    )
+    assert response.status_code == 400
+    assert "exclude mode" in response.json()["detail"]
+
+
+def test_exemption_rejected_without_a_user(client, auth_headers, printer_id):
+    _set_mode(client, auth_headers, printer_id, "exclude")
+    response = client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": None, "period": "monthly", "page_limit": None},
+    )
+    assert response.status_code == 400
+
+
+def test_exemption_accepted_in_exclude_mode(client, auth_headers, printer_id):
+    _set_mode(client, auth_headers, printer_id, "exclude")
+    response = client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": "manderson@example.com", "period": "monthly", "page_limit": None},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["page_limit"] is None
+
+
+def test_blanket_row_reported_inactive_in_include_mode(client, auth_headers, printer_id):
+    """The card needs to be able to say "this isn't being enforced" rather
+    than showing a limit that quota resolution ignores."""
+    client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": None, "period": "monthly", "page_limit": 200},
+    )
+    client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": "manderson@example.com", "period": "monthly", "page_limit": 50},
+    )
+
+    rows = {row["user_email"]: row for row in client.get(
+        f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers
+    ).json()}
+    assert rows[None]["active"] is False
+    assert rows["manderson@example.com"]["active"] is True
+
+    _set_mode(client, auth_headers, printer_id, "exclude")
+    rows = {row["user_email"]: row for row in client.get(
+        f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers
+    ).json()}
+    assert rows[None]["active"] is True
+    assert rows["manderson@example.com"]["active"] is True
+
+
+def test_exemptions_reported_inactive_without_a_blanket_row(client, auth_headers, printer_id):
+    """An exemption with nothing to be exempt from is a no-op — the card
+    shouldn't imply someone is being let out of a cap that doesn't exist."""
+    _set_mode(client, auth_headers, printer_id, "exclude")
+    client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": "manderson@example.com", "period": "monthly", "page_limit": None},
+    )
+    rows = client.get(f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers).json()
+    assert [row["active"] for row in rows] == [False]
+
+
+def test_switching_mode_keeps_rows_intact(client, auth_headers, printer_id):
+    """Rows survive a flip in both directions — that's what makes the toggle
+    safe to experiment with, and what the UI's warning promises."""
+    client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": "manderson@example.com", "period": "daily", "page_limit": 25},
+    )
+    _set_mode(client, auth_headers, printer_id, "exclude")
+    _set_mode(client, auth_headers, printer_id, "include")
+
+    rows = client.get(f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers).json()
+    assert len(rows) == 1
+    assert rows[0]["page_limit"] == 25 and rows[0]["period"] == "daily"
+
+
+def test_create_rejects_zero_or_negative_page_limit(client, auth_headers, printer_id):
+    response = client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": None, "period": "monthly", "page_limit": 0},
+    )
+    assert response.status_code == 400

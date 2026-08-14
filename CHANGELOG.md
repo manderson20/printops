@@ -5,6 +5,29 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.57.0] - 2026-08-14
+
+- **New: page quotas can now cap everyone *except* named people.** Each
+  printer gets a "Who is limited here" toggle with two modes. **Only these
+  people** is the previous behaviour — just the users you list have a
+  limit. **Everyone except these people** is the new one: you set a single
+  limit for the printer and name the handful of staff who are exempt from
+  it, instead of entering a row for every person who should be capped.
+  Which mode a printer is in is per-printer, so a library colour printer
+  can cap everyone with a couple of staff let out while a plotter caps
+  only the two classes that overuse it.
+- Switching a printer's mode never deletes anything — the same rows are
+  read the other way round, and the toggle spells out what they'll mean
+  before you confirm, so switching back restores exactly what was there.
+  Rows a mode isn't reading (a shared limit while in "only these people"
+  mode, or an exemption with no shared limit to be exempt from) are shown
+  greyed out and marked "Not enforced" rather than displaying a limit
+  nothing is applying.
+- Note for anyone already using the blank-user "default" row: that row is
+  what now supplies the shared limit in "everyone except" mode, and is
+  ignored in "only these people" mode. Every printer defaults to "only
+  these people", so nothing starts enforcing differently on upgrade.
+
 ## [0.56.0] - 2026-08-13
 
 - **Fix capability detection on printers that require IPPS.** Some devices
