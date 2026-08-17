@@ -10,6 +10,7 @@ import {
   deleteMfpDevice,
   getMfpDevice,
   listConnectorTypes,
+  listGoogleWorkspaceOrgUnits,
   listMfpDeviceUsage,
   testMfpDeviceConnection,
   updateMfpDevice,
@@ -26,6 +27,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { OrgUnitPicker } from "@/components/ui/OrgUnitPicker";
 import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 type LoadState =
@@ -82,6 +84,13 @@ export default function MfpDeviceDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [usage, setUsage] = useState<CopierUsageRecord[] | null>(null);
   const [connectorTypes, setConnectorTypes] = useState<ConnectorTypeOption[]>([]);
+  // Copy-tracking settings, kept out of `form` because they aren't plain
+  // text fields: the OU list is a multi-select of real synced OUs, and the
+  // admin password is write-only (never sent back by the API, so it starts
+  // blank and is only submitted when actually retyped).
+  const [provisionOus, setProvisionOus] = useState<string[]>([]);
+  const [adminUsername, setAdminUsername] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
 
   useEffect(() => {
     getMfpDevice(params.id)
@@ -93,6 +102,8 @@ export default function MfpDeviceDetailPage() {
           ),
         );
         setCapabilities(device.capabilities);
+        setProvisionOus(device.provision_org_unit_paths ?? []);
+        setAdminUsername(device.admin_username ?? "");
       })
       .catch((error: unknown) =>
         setState({
@@ -112,7 +123,18 @@ export default function MfpDeviceDetailPage() {
     setSaving(true);
     setActionError(null);
     try {
-      const device = await updateMfpDevice(params.id, { ...form, capabilities: capabilities ?? undefined });
+      const device = await updateMfpDevice(params.id, {
+        ...form,
+        capabilities: capabilities ?? undefined,
+        // null (not []) means "no per-copier narrowing" — an empty list
+        // would read as "provision nobody".
+        provision_org_unit_paths: provisionOus.length > 0 ? provisionOus : null,
+        admin_username: adminUsername || null,
+        // Only sent when retyped; omitting it leaves the stored password
+        // alone, same as the SNMP community field elsewhere.
+        ...(adminPassword ? { admin_password: adminPassword } : {}),
+      });
+      setAdminPassword("");
       setState({ phase: "ok", device });
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : "Failed to save changes");
@@ -242,6 +264,69 @@ export default function MfpDeviceDetailPage() {
           ))}
         </div>
         {actionError && <ErrorState>{actionError}</ErrorState>}
+        {isAdmin && (
+          <Button onClick={handleSave} disabled={saving} className="mt-4">
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        )}
+      </Card>
+
+      <Card>
+        <CardTitle className="mb-1">Copy Tracking</CardTitle>
+        <p className="mb-4 text-xs text-zinc-500">
+          Who this copier tracks, and how PrintOps signs in to it. Staff still have to exist as
+          accounts on the copier itself before they can log in at the panel — PrintOps knowing
+          someone&apos;s ID doesn&apos;t make the copier accept it.
+        </p>
+
+        <Field label="Staff Organizational Units">
+          <OrgUnitPicker
+            value={provisionOus}
+            onChange={setProvisionOus}
+            load={listGoogleWorkspaceOrgUnits}
+            disabled={!isAdmin}
+            addLabel="Add an organizational unit…"
+            emptyLabel="Everyone covered by the org-wide setting."
+          />
+          <span className="text-xs text-zinc-500">
+            The staff who get accounts on <em>this</em> copier. Leave empty
+            to include everyone covered by the org-wide setting under Settings → Integrations →
+            Google Workspace. Worth narrowing per building: a copier holds a limited number of
+            accounts (a Lexmark XM3350 takes 250, a Konica bizhub 1,000), and the people who walk
+            up to a building&apos;s copier are that building&apos;s staff.
+          </span>
+        </Field>
+
+        <div className="mt-4 grid grid-cols-2 gap-4">
+          <Field label="Device Admin Username">
+            <Input
+              value={adminUsername}
+              disabled={!isAdmin}
+              onChange={(e) => setAdminUsername(e.target.value)}
+              placeholder="(leave blank if none)"
+            />
+            <span className="text-xs text-zinc-500">
+              Konica bizhub and Lexmark XM3350 admin logins ask for a password only — leave this
+              blank for those.
+            </span>
+          </Field>
+          <Field label="Device Admin Password">
+            <Input
+              type="password"
+              value={adminPassword}
+              disabled={!isAdmin}
+              onChange={(e) => setAdminPassword(e.target.value)}
+              placeholder={
+                state.device.has_admin_password ? "•••••••• (saved)" : "(none saved)"
+              }
+            />
+            <span className="text-xs text-zinc-500">
+              Stored encrypted and never shown again. Used by the connector to read per-user
+              counts and register accounts. Leave blank to keep the saved one.
+            </span>
+          </Field>
+        </div>
+
         {isAdmin && (
           <Button onClick={handleSave} disabled={saving} className="mt-4">
             {saving ? "Saving…" : "Save"}

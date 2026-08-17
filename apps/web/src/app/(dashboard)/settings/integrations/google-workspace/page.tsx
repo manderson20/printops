@@ -6,6 +6,7 @@ import {
   ApiError,
   downloadCopierPinRoster,
   getGoogleWorkspaceSettings,
+  listGoogleWorkspaceOrgUnits,
   syncGoogleWorkspaceDevices,
   testGoogleWorkspaceConnection,
   updateGoogleWorkspaceSettings,
@@ -19,6 +20,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input, Textarea } from "@/components/ui/Field";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { OrgUnitPicker } from "@/components/ui/OrgUnitPicker";
 import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 type LoadState =
@@ -36,6 +38,7 @@ export default function GoogleWorkspaceSettingsPage() {
     customer_id: "",
     staff_org_unit_path: "",
   });
+  const [excludedOus, setExcludedOus] = useState<string[]>([]);
   const [enabled, setEnabled] = useState(false);
   const [autoCopierIdentity, setAutoCopierIdentity] = useState(false);
   const [autoCopierIdentityType, setAutoCopierIdentityType] = useState<CopierIdentityType>("staff_id");
@@ -65,6 +68,7 @@ export default function GoogleWorkspaceSettingsPage() {
           customer_id: settings.customer_id,
           staff_org_unit_path: settings.staff_org_unit_path ?? "",
         }));
+        setExcludedOus(settings.copier_identity_excluded_org_unit_paths ?? []);
         setEnabled(settings.enabled);
         setAutoCopierIdentity(settings.auto_create_copier_identity_from_employee_id);
         setAutoCopierIdentityType(settings.auto_copier_identity_type);
@@ -102,6 +106,8 @@ export default function GoogleWorkspaceSettingsPage() {
         // Always sent (even blank) so clearing the field actually clears
         // the saved setting — see app/routers/settings.py's "" -> None rule.
         staff_org_unit_path: form.staff_org_unit_path,
+        // Always sent so clearing the list actually clears the saved one.
+        copier_identity_excluded_org_unit_paths: excludedOus,
         auto_create_copier_identity_from_employee_id: autoCopierIdentity,
         auto_copier_identity_type: autoCopierIdentityType,
       });
@@ -488,6 +494,47 @@ export default function GoogleWorkspaceSettingsPage() {
             ID (e.g. students). Leave blank to include everyone with an Employee ID set.
           </span>
         </Field>
+
+        <div className="mt-4">
+          <Field label="Excluded Organizational Units">
+            <OrgUnitPicker
+              value={excludedOus}
+              onChange={setExcludedOus}
+              load={listGoogleWorkspaceOrgUnits}
+              addLabel="Add an organizational unit to exclude…"
+              emptyLabel="None excluded."
+            />
+            <span className="text-xs text-zinc-500">
+              These are left out of copy tracking even though they sit
+              inside the staff OU above — most often people who have left, e.g.{" "}
+              <code className="text-[11px]">/Employees/Inactive Employees</code>. An OU listed
+              here also excludes anything nested under it. Excluding wins over including, which
+              is the point: a former employee&apos;s OU is normally a sub-folder of the staff OU,
+              so the staff filter on its own can&apos;t remove them.
+            </span>
+          </Field>
+          {state.phase === "ok" && (
+            <p className="mt-2 text-xs text-zinc-500">
+              Currently tracking:{" "}
+              {state.settings.effective_copier_identity_org_unit_paths.length > 0 ? (
+                <code className="text-[11px]">
+                  {state.settings.effective_copier_identity_org_unit_paths.join(", ")}
+                </code>
+              ) : (
+                "everyone with an Employee ID"
+              )}
+              {state.settings.copier_identity_excluded_org_unit_paths.length > 0 && (
+                <>
+                  , except{" "}
+                  <code className="text-[11px]">
+                    {state.settings.copier_identity_excluded_org_unit_paths.join(", ")}
+                  </code>
+                </>
+              )}
+              .
+            </p>
+          )}
+        </div>
 
         <label className="mt-4 flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
           <input

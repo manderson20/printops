@@ -5,6 +5,38 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.58.0] - 2026-08-17
+
+- **Fixed: copy tracking was registering students as staff.** When
+  "Automatically use Employee ID as a copier login" was on, *everyone* with
+  an Employee ID set in Google Workspace was added to Staff Copier
+  Identities — including students, who often have one. The staff
+  Organizational Unit setting was only being applied to the Copier PIN
+  Roster export, not to the identities themselves. In one district that
+  meant 2,325 identities where only 269 were real staff. The staff OU is
+  now applied to both, so the two can never disagree about who counts as
+  staff.
+- **New: Excluded Organizational Units for copy tracking.** People who have
+  left are usually moved to an OU *inside* the staff OU (e.g.
+  `/Employees/Inactive Employees`), so the staff OU setting on its own
+  can't remove them. You can now list OUs to leave out, and excluding wins
+  over including. The Copier PIN Roster card shows the effective filter in
+  plain words, so you can see who is being tracked without working it out
+  from two fields.
+- **New: copiers can be scoped to their own building.** Each copier can
+  name which staff Organizational Units get provisioned onto it. Device
+  limits are per-device — a Lexmark XM3350 holds 250 local accounts and a
+  Konica bizhub 1,000 — so a district that fits comfortably overall can
+  still overflow one machine.
+- **New: copiers can store their own admin login.** Needed by connectors
+  that log into the device to read per-user counts or push user accounts.
+  Stored encrypted and never shown again after saving. This is separate
+  from the reference-only web admin password on a printer record, which
+  PrintOps never logs in with.
+- Added `docs/copier-capture-konica.md` and `docs/copier-capture-lexmark.md`
+  documenting the Konica Web Connection and Lexmark EWS admin interfaces,
+  captured against real devices.
+
 ## [0.57.0] - 2026-08-14
 
 - **New: page quotas can now cap everyone *except* named people.** Each

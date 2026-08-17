@@ -67,6 +67,9 @@ def _device_out(device: MfpDevice) -> MfpDeviceOut:
         snmp_version=device.snmp_version,
         has_snmp_community=device.has_snmp_community,
         snmp_vendor_profile=device.snmp_vendor_profile,
+        admin_username=device.admin_username,
+        has_admin_password=device.has_admin_password,
+        provision_org_unit_paths=device.provision_org_unit_paths,
         page_count_total=device.page_count_total,
         page_count_copy=device.page_count_copy,
         page_count_print=device.page_count_print,
@@ -123,11 +126,14 @@ async def create_mfp_device(payload: MfpDeviceCreate, db: AsyncSession = Depends
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Unknown connector_type: {payload.connector_type!r}",
         )
-    data = payload.model_dump(exclude={"snmp_community"})
+    data = payload.model_dump(exclude={"snmp_community", "admin_password"})
     device = MfpDevice(
         **data,
         snmp_community_encrypted=encrypt(payload.snmp_community)
         if payload.snmp_community
+        else None,
+        admin_password_encrypted=encrypt(payload.admin_password)
+        if payload.admin_password
         else None,
     )
     db.add(device)
@@ -153,7 +159,9 @@ async def update_mfp_device(
     device_id: UUID, payload: MfpDeviceUpdate, db: AsyncSession = Depends(get_db)
 ):
     device = await _get_device_or_404(device_id, db)
-    updates = payload.model_dump(exclude_unset=True, exclude={"snmp_community", "capabilities"})
+    updates = payload.model_dump(
+        exclude_unset=True, exclude={"snmp_community", "admin_password", "capabilities"}
+    )
     if "connector_type" in updates:
         if updates["connector_type"] not in CONNECTOR_REGISTRY:
             raise HTTPException(
@@ -169,6 +177,11 @@ async def update_mfp_device(
     if payload.snmp_community is not None:
         device.snmp_community_encrypted = (
             encrypt(payload.snmp_community) if payload.snmp_community else None
+        )
+
+    if payload.admin_password is not None:
+        device.admin_password_encrypted = (
+            encrypt(payload.admin_password) if payload.admin_password else None
         )
 
     if payload.capabilities is not None:

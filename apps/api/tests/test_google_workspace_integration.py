@@ -176,7 +176,7 @@ async def test_refresh_copier_identities_creates_when_enabled(db_session_factory
             auto_create_copier_identity_from_employee_id=True, auto_copier_identity_type="staff_id"
         )
         await _refresh_google_sourced_copier_identities(
-            db, [("jane.smith@district.org", "12345")], settings
+            db, [("jane.smith@district.org", "12345", "/Employees")], settings
         )
         await db.commit()
 
@@ -230,7 +230,7 @@ async def test_refresh_copier_identities_does_not_override_manual_claim(db_sessi
             auto_create_copier_identity_from_employee_id=True, auto_copier_identity_type="staff_id"
         )
         await _refresh_google_sourced_copier_identities(
-            db, [("jane.smith@district.org", "12345")], settings
+            db, [("jane.smith@district.org", "12345", "/Employees")], settings
         )
         await db.commit()
 
@@ -240,3 +240,54 @@ async def test_refresh_copier_identities_does_not_override_manual_claim(db_sessi
         assert len(identities) == 1
         assert identities[0].source == "manual"
         assert identities[0].staff_email == "someone.else@district.org"
+
+
+@pytest.mark.asyncio
+async def test_refresh_copier_identities_excludes_users_outside_the_staff_ou(db_session_factory):
+    """The regression this whole filter exists for: students do have
+    Employee IDs set, and used to be registered as staff copier
+    identities because this path applied no OU filter at all."""
+    async with db_session_factory() as db:
+        settings = GoogleWorkspaceSettings(
+            auto_create_copier_identity_from_employee_id=True,
+            auto_copier_identity_type="staff_id",
+            staff_org_unit_path="/Employees",
+        )
+        await _refresh_google_sourced_copier_identities(
+            db,
+            [
+                ("teacher@district.org", "12345", "/Employees/Elementary School"),
+                ("student@district.org", "67890", "/Students/Elementary School/3rd Grade"),
+            ],
+            settings,
+        )
+        await db.commit()
+
+        result = await db.execute(select(StaffCopierIdentity))
+        identities = result.scalars().all()
+        assert [i.staff_email for i in identities] == ["teacher@district.org"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_copier_identities_honours_the_exclude_list(db_session_factory):
+    """Inactive Employees is nested under the staff OU, so only an
+    explicit exclude can remove it."""
+    async with db_session_factory() as db:
+        settings = GoogleWorkspaceSettings(
+            auto_create_copier_identity_from_employee_id=True,
+            auto_copier_identity_type="staff_id",
+            staff_org_unit_path="/Employees",
+            copier_identity_excluded_org_unit_paths=["/Employees/Inactive Employees"],
+        )
+        await _refresh_google_sourced_copier_identities(
+            db,
+            [
+                ("active@district.org", "11111", "/Employees/High School"),
+                ("former@district.org", "22222", "/Employees/Inactive Employees"),
+            ],
+            settings,
+        )
+        await db.commit()
+
+        result = await db.execute(select(StaffCopierIdentity))
+        assert [i.staff_email for i in result.scalars().all()] == ["active@district.org"]

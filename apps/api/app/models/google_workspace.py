@@ -58,6 +58,32 @@ class GoogleWorkspaceSettings(Base, TimestampMixin):
         default="staff_id", server_default="staff_id"
     )
 
+    # Which OUs count as "trackable staff" for copier accounting — applied
+    # to BOTH the auto-created StaffCopierIdentity rows and the copier PIN
+    # roster export, so the two can never disagree about who is staff.
+    #
+    # They used to disagree, and it mattered: the export filtered by
+    # staff_org_unit_path while the auto-create path filtered by nothing at
+    # all, so every student with an Employee ID set was silently registered
+    # as a staff copier identity (2054 of 2325 rows in one real district —
+    # 1918 students plus 136 inactive employees). Anything reading this
+    # roster to provision accounts onto a device would have pushed students
+    # onto staff copiers.
+    #
+    # Null/empty include list falls back to staff_org_unit_path, and if
+    # that is unset too, no include filter is applied (the pre-existing
+    # permissive default — see staff_org_unit_path's own note on why that
+    # is the safe default rather than silently excluding everyone).
+    #
+    # The exclude list is checked first and wins: sub-OUs like
+    # "/Employees/Inactive Employees" are nested *under* the staff OU, so
+    # an include filter alone cannot remove them. Each entry matches that
+    # OU and anything nested beneath it, same as org_unit_matches().
+    copier_identity_org_unit_paths: Mapped[list[str] | None] = mapped_column(JSON, default=None)
+    copier_identity_excluded_org_unit_paths: Mapped[list[str] | None] = mapped_column(
+        JSON, default=None
+    )
+
 
 class GoogleWorkspaceDevice(Base):
     """Local cache of Workspace's ChromeOS device inventory, refreshed

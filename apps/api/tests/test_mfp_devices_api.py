@@ -137,3 +137,128 @@ def test_check_meter_rejects_non_snmp_connector(client, auth_headers):
 
     response = client.post(f"/api/v1/mfp-devices/{device_id}/check-meter", headers=auth_headers)
     assert response.status_code == 400
+
+
+def test_admin_password_is_write_only(client, auth_headers):
+    """The stored admin password is never echoed back — the API exposes
+    only has_admin_password, same masking as snmp_community."""
+    create = client.post(
+        "/api/v1/mfp-devices",
+        headers=auth_headers,
+        json={
+            "name": "HS Copier - Monica",
+            "vendor": "konica_minolta",
+            "connector_type": "konica_bizhub",
+            "admin_password": "s3cret",
+        },
+    )
+    assert create.status_code == 201, create.text
+    body = create.json()
+    assert body["has_admin_password"] is True
+    assert "admin_password" not in body
+    assert "s3cret" not in create.text
+    # No username is the correct state for a bizhub, not a missing field.
+    assert body["admin_username"] is None
+
+    get_one = client.get(f"/api/v1/mfp-devices/{body['id']}", headers=auth_headers)
+    assert "s3cret" not in get_one.text
+
+
+def test_admin_password_stored_encrypted_not_plaintext(client, auth_headers, db_session_factory):
+    """Guards the actual point of the field: what lands in the column is
+    ciphertext that decrypt() round-trips, never the plaintext."""
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.core.crypto import decrypt
+    from app.models.mfp_device import MfpDevice
+
+    client.post(
+        "/api/v1/mfp-devices",
+        headers=auth_headers,
+        json={
+            "name": "ES Veronica Copier",
+            "connector_type": "konica_bizhub",
+            "admin_password": "s3cret",
+        },
+    )
+
+    async def read_row():
+        async with db_session_factory() as session:
+            result = await session.execute(select(MfpDevice))
+            return result.scalars().one()
+
+    device = asyncio.get_event_loop().run_until_complete(read_row())
+    assert device.admin_password_encrypted != "s3cret"
+    assert decrypt(device.admin_password_encrypted) == "s3cret"
+
+
+def test_admin_password_update_and_clear(client, auth_headers):
+    device_id = client.post(
+        "/api/v1/mfp-devices",
+        headers=auth_headers,
+        json={"name": "CO Danica Copier", "connector_type": "konica_bizhub"},
+    ).json()["id"]
+    assert (
+        client.get(f"/api/v1/mfp-devices/{device_id}", headers=auth_headers).json()[
+            "has_admin_password"
+        ]
+        is False
+    )
+
+    setpw = client.patch(
+        f"/api/v1/mfp-devices/{device_id}",
+        headers=auth_headers,
+        json={"admin_username": "admin", "admin_password": "hunter2"},
+    )
+    assert setpw.status_code == 200, setpw.text
+    assert setpw.json()["has_admin_password"] is True
+    assert setpw.json()["admin_username"] == "admin"
+
+    # An unrelated PATCH must not wipe the credential.
+    renamed = client.patch(
+        f"/api/v1/mfp-devices/{device_id}",
+        headers=auth_headers,
+        json={"room": "Main Office"},
+    )
+    assert renamed.json()["has_admin_password"] is True
+
+    # Empty string clears it, mirroring snmp_community.
+    cleared = client.patch(
+        f"/api/v1/mfp-devices/{device_id}",
+        headers=auth_headers,
+        json={"admin_password": ""},
+    )
+    assert cleared.json()["has_admin_password"] is False
+
+
+def test_provision_org_unit_paths_round_trip(client, auth_headers):
+    """Per-copier OU narrowing: null means "everyone the org-wide filter
+    allows", which is a different thing from an empty list."""
+    device_id = client.post(
+        "/api/v1/mfp-devices",
+        headers=auth_headers,
+        json={"name": "ES Veronica Copier", "connector_type": "konica_bizhub"},
+    ).json()["id"]
+    assert (
+        client.get(f"/api/v1/mfp-devices/{device_id}", headers=auth_headers).json()[
+            "provision_org_unit_paths"
+        ]
+        is None
+    )
+
+    scoped = client.patch(
+        f"/api/v1/mfp-devices/{device_id}",
+        headers=auth_headers,
+        json={"provision_org_unit_paths": ["/Employees/Elementary School"]},
+    )
+    assert scoped.status_code == 200, scoped.text
+    assert scoped.json()["provision_org_unit_paths"] == ["/Employees/Elementary School"]
+
+    cleared = client.patch(
+        f"/api/v1/mfp-devices/{device_id}",
+        headers=auth_headers,
+        json={"provision_org_unit_paths": None},
+    )
+    assert cleared.json()["provision_org_unit_paths"] is None

@@ -75,6 +75,18 @@ class MfpDeviceCreate(BaseModel):
     snmp_community: str | None = None
     snmp_vendor_profile: MfpVendor | None = None
 
+    # The device's admin web UI login, used by connectors that log into the
+    # device (see app/copiers/device_admin.py). admin_password is write-only
+    # like snmp_community above — never echoed back; MfpDeviceOut exposes
+    # only has_admin_password.
+    admin_username: str | None = None
+    admin_password: str | None = None
+
+    # Narrows which staff OUs get provisioned onto this device — see
+    # MfpDevice.provision_org_unit_paths. Null = everyone the org-wide
+    # copier-accounting filter allows.
+    provision_org_unit_paths: list[str] | None = None
+
     notes: str | None = None
 
 
@@ -100,6 +112,13 @@ class MfpDeviceUpdate(BaseModel):
     snmp_version: Literal["v1", "v2c", ""] | None = None
     snmp_community: str | None = None
     snmp_vendor_profile: str | None = None
+
+    # Write-only, same as on MfpDeviceCreate. Sending "" clears the stored
+    # credential (mirrors snmp_community's clear-on-empty behaviour in
+    # routers/mfp_devices.py).
+    admin_username: str | None = None
+    admin_password: str | None = None
+    provision_org_unit_paths: list[str] | None = None
 
     # Manual capability overrides — connector-run checks
     # (check-capabilities) also write these fields, but an admin can set
@@ -136,6 +155,10 @@ class MfpDeviceOut(BaseModel):
     snmp_version: SnmpVersion | None
     has_snmp_community: bool
     snmp_vendor_profile: str | None
+
+    admin_username: str | None
+    has_admin_password: bool
+    provision_org_unit_paths: list[str] | None
 
     page_count_total: int | None
     page_count_copy: int | None

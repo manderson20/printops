@@ -68,12 +68,51 @@ def org_unit_matches(user_org_unit_path: str | None, configured_org_unit_path: s
     """True if a user's OU is the configured one or nested under it — every
     org names/structures this differently ("/Employees", "/Staff",
     "/Personnel/Certified", possibly with sub-OUs like "/Employees/Teachers"),
-    so this is never hardcoded (see GoogleWorkspaceSettings.staff_org_unit_path)."""
+    so this is never hardcoded (see GoogleWorkspaceSettings.staff_org_unit_path).
+
+    The root OU "/" contains everything, and needs its own case: it
+    normalizes to "/", so the nested test would compare against "//" and
+    match nothing but the root itself. An org that set staff_org_unit_path
+    to "/" means "the whole directory", and would otherwise see every user
+    outside the bare root OU silently excluded."""
     if not user_org_unit_path:
         return False
     target = normalize_org_unit_path(configured_org_unit_path)
+    if target == "/":
+        return True
     user_path = normalize_org_unit_path(user_org_unit_path)
     return user_path == target or user_path.startswith(f"{target}/")
+
+
+def resolve_copier_identity_org_units(settings) -> tuple[list[str], list[str]]:
+    """The (include, exclude) OU lists that define "trackable staff" for
+    copier accounting. Falls back to staff_org_unit_path when no explicit
+    include list is configured, so an org that only ever set that one field
+    keeps working unchanged."""
+    includes = [p for p in (settings.copier_identity_org_unit_paths or []) if p]
+    if not includes and settings.staff_org_unit_path:
+        includes = [settings.staff_org_unit_path]
+    excludes = [p for p in (settings.copier_identity_excluded_org_unit_paths or []) if p]
+    return includes, excludes
+
+
+def org_unit_included(
+    user_org_unit_path: str | None, includes: list[str], excludes: list[str]
+) -> bool:
+    """Exclude wins over include, because the OUs an admin needs to remove
+    are normally nested *under* the one they included
+    ("/Employees/Inactive Employees" under "/Employees") — an include-only
+    filter structurally cannot express that.
+
+    An empty include list means "no OU filter", matching the historical
+    behaviour of staff_org_unit_path being unset. Excludes still apply, so
+    an admin can strip out one sub-OU without having to enumerate every
+    other OU that should stay."""
+    if excludes and any(org_unit_matches(user_org_unit_path, path) for path in excludes):
+        return False
+    if not includes:
+        return True
+    return any(org_unit_matches(user_org_unit_path, path) for path in includes)
 
 
 class GoogleWorkspaceClient:
@@ -373,7 +412,7 @@ async def _refresh_google_sourced_aliases(db: AsyncSession, users: list[dict]) -
 
 async def _refresh_google_sourced_copier_identities(
     db: AsyncSession,
-    users_with_employee_id: list[tuple[str, str]],
+    users_with_employee_id: list[tuple[str, str, str | None]],
     settings: GoogleWorkspaceSettings,
 ) -> None:
     """Mirrors GoogleWorkspaceUser.employee_id into a StaffCopierIdentity
@@ -383,8 +422,15 @@ async def _refresh_google_sourced_copier_identities(
     login. Full replace of source="google_workspace_sync" rows only,
     same convention as _refresh_google_sourced_aliases; if the toggle is
     off, any previously auto-created rows are removed so turning it off
-    actually takes effect rather than just freezing stale rows."""
+    actually takes effect rather than just freezing stale rows.
+
+    Filtered to the configured copier-accounting OUs (see
+    GoogleWorkspaceSettings.copier_identity_org_unit_paths) — the same
+    filter the PIN roster export applies, via the same helper, because
+    these two disagreeing is exactly the bug that put students on the
+    staff roster."""
     identity_type = settings.auto_copier_identity_type
+    includes, excludes = resolve_copier_identity_org_units(settings)
 
     if not settings.auto_create_copier_identity_from_employee_id:
         await db.execute(
@@ -404,7 +450,9 @@ async def _refresh_google_sourced_copier_identities(
     await db.execute(
         delete(StaffCopierIdentity).where(StaffCopierIdentity.source == "google_workspace_sync")
     )
-    for email, employee_id in users_with_employee_id:
+    for email, employee_id, org_unit_path in users_with_employee_id:
+        if not org_unit_included(org_unit_path, includes, excludes):
+            continue
         claimed_by = manual_claims.get(employee_id)
         if claimed_by and claimed_by.lower() != email.lower():
             continue  # an admin already manually assigned this value to someone else
@@ -437,7 +485,7 @@ async def sync_users(db: AsyncSession) -> int:
     now = datetime.now(UTC)
     await db.execute(delete(GoogleWorkspaceUser))
     count = 0
-    users_with_employee_id: list[tuple[str, str]] = []
+    users_with_employee_id: list[tuple[str, str, str | None]] = []
     for user in users:
         email = user.get("primaryEmail")
         if not email:
@@ -455,7 +503,7 @@ async def sync_users(db: AsyncSession) -> int:
         )
         count += 1
         if employee_id:
-            users_with_employee_id.append((email.lower(), employee_id))
+            users_with_employee_id.append((email.lower(), employee_id, user.get("orgUnitPath")))
 
     await _refresh_google_sourced_aliases(db, users)
     await _refresh_google_sourced_copier_identities(db, users_with_employee_id, settings)
