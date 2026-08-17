@@ -327,12 +327,100 @@ source for `get_user_accounting` given §3.2 and §3.6 ruled out the WebAPI —
 its underlying request is **not yet captured**, because the device has no
 account data to show while Account Track is off.
 
+## 3.9 Account Track, with the feature ENABLED — **verified**
+
+Re-captured on a 950i after Account Track was switched on
+(`TrackMode.TrackType = "Password"`, i.e. Password Only; User
+Authentication left `"None"`).
+
+**`AppReqGetTrackSetting` starts working.** Same request as §3.3; with the
+feature on it returns `Ack` instead of `AuthNotTrackMode`:
+
+```json
+{"MFP":{"Result":{"ResultInfo":"Ack"},"TrackList":{"ArraySize":"0"}}}
+```
+
+`ArraySize` is the account count — this is the endpoint to poll to read the
+device's current account list, and to diff against before provisioning.
+
+**Per-account counters are still not on the WebAPI.** With Account Track
+enabled and a valid admin session, all of these still return
+`Nack / "Webapi not supported."`:
+
+```
+AppReqGetCounterInfo/_Account      AppReqGetTrackCounter
+AppReqGetCounterInfo/_Track        AppReqGetTrackCounter  (+TrackListCondition)
+```
+
+So §3.2's conclusion holds even after enabling the feature: per-account
+counters must come from the classic admin pages, not `/wcd/api`.
+
+### 3.9.1 The admin pages behind Account Track — **verified**
+
+The SPA loads per-page templates by code, fetchable unauthenticated:
+
+```
+GET /wcd/spa_<code>.tmpl.html
+```
+
+| Code | Page |
+|---|---|
+| `003_000_AUT000` | Authentication Method |
+| `003_001_USR000` | User Registration |
+| `003_002_TRA000` | Account Track Registration (list) |
+| `003_002_TRA001` | Account Track account — **add/edit form** |
+| `003_002_TRA002` | Account Track account — delete confirm |
+| `003_002_TCR000` | Account Track Counter (list) |
+| `003_002_TCR001` | Account Track Counter — per-account detail |
+
+These are classic form posts carrying `func` and the rotating `h_token`,
+distinct from the JSON WebAPI in §2. Admin-scoped funcs post to
+`a_user.cgi` (the same endpoint as the `PSL_ACO_LGO` logout); public ones
+post to `user.cgi`.
+
+**Account list paging** (`003_002_TRA000`):
+
+```
+func=PSL_AA_TRA_PAG   h_token=<token>
+H_SRT=<start>  H_END=<end>  AA_TRA_H_BOX=Public  H_FLAG=Delete
+```
+
+**Add / edit an account** (`003_002_TRA001`) — `func=PSL_AA_TRA_TRA`,
+`AA_TRA_H_NUM=new` for a new account (an existing index to edit):
+
+| Field | Max | Meaning |
+|---|---|---|
+| `AA_TRA_T_NUM` | 4 | account number |
+| `AA_TRA_T_NAM` | — | account name |
+| `AA_TRA_P_UP` | 64 | password — **the 5-digit staff ID in Password Only mode** |
+| `AA_TRA_P_CMP` | 64 | password confirmation (must match) |
+| `AA_TRA_T_INF` | 20 | free-text info |
+| `AA_TRA_S_ACS`, `_ASA`, `_COP`, `_CCP`, `_SCP`, `_SFP`, `_UPA`, `_FUA`, `_FCP`, `_FSC`, `_FFA`, `_FPR`, `_FPS` | — | per-function permission flags |
+| `AA_TRA_C_TPL` / `AA_TRA_T_TPL` | — | total page limit: enable flag / value |
+| `AA_TRA_C_CPL` / `AA_TRA_T_CPL` | 7 | colour page limit: enable / value |
+| `AA_TRA_C_BPL` / `AA_TRA_T_BPL` | 7 | black page limit: enable / value |
+| `AA_TRA_C_BNL` / `AA_TRA_T_BNL` | 4 | (limit pair, units unconfirmed) |
+
+Note `AA_TRA_P_UP` accepts 64 characters, so the commonly-cited 8-character
+Account Track password cap is not a limit this firmware imposes on the
+field itself. A 5-digit ID fits regardless.
+
+The per-account limit pairs overlap PrintOps' own page-quota feature —
+decide which system owns the limit rather than setting both.
+
+**Still unverified:** the exact success/failure response of
+`PSL_AA_TRA_TRA`, the defaults required for the permission/limit fields on
+a minimal create, the Account Track Counter read (`003_002_TCR000/TCR001`
+field semantics), and the bulk Authentication-Information import. All
+need at least one real account to exist.
+
 ## 4. Not yet captured
 
 These items from §5.1 of the task brief remain open, all blocked by Account
 Track being off (§0) — there is nothing to list, count, or export yet:
 
-- **Add an account** (the write call + token handling).
+- **Add an account** — form contract now captured (§3.9.1); the response
+  shape and minimal-field set are not.
 - **Bulk import** of Authentication Information (the multipart upload and its
   CSV column format) — the intended bulk-provisioning path.
 - **Export** of the same category, to learn the exact columns.
