@@ -498,28 +498,49 @@ async def test_create_job_hold_reason_pin_release(client, backend_headers, db_se
     assert body["status"] == "forwarding"
 
 
-async def test_create_job_hold_reason_quota_when_over_limit(
-    client, auth_headers, backend_headers, printer_id
-):
-    quota = client.post(
-        f"/api/v1/printers/{printer_id}/quotas",
-        headers=auth_headers,
-        json={"user_email": None, "period": "monthly", "page_limit": 10},
-    )
-    assert quota.status_code == 201
-    enable = client.put("/api/v1/settings/quotas", headers=auth_headers, json={"enabled": True})
-    assert enable.status_code == 200
+@pytest_asyncio.fixture
+async def quota_roster(db_session_factory):
+    """Per-user quota rows are rejected for addresses not in the synced
+    roster (app/routers/printers.py:create_printer_quota), so the two staff
+    the quota-mode tests below name have to exist."""
+    async with db_session_factory() as session:
+        for email in ("matt@example.org", "someone.else@example.org"):
+            session.add(
+                GoogleWorkspaceUser(email=email, name=email, synced_at=datetime.now(UTC))
+            )
+        await session.commit()
 
+
+def _use_up_quota(client, backend_headers, printer_id, email, pages):
+    """Burns `pages` at this printer as `email`, so the next job is submitted
+    by someone already at their limit (quotas only ever look at historical
+    usage — see app/quotas/service.py's module docstring)."""
     first = client.post(
         "/api/v1/jobs",
-        json={"printer_id": printer_id, "submitted_by": "matt@example.org"},
+        json={"printer_id": printer_id, "submitted_by": email},
         headers=backend_headers,
     )
     client.patch(
         f"/api/v1/jobs/{first.json()['id']}",
         headers=backend_headers,
-        json={"status": "forwarded", "page_count": 10},
+        json={"status": "forwarded", "page_count": pages},
     )
+
+
+async def test_create_job_hold_reason_quota_when_over_limit(
+    client, auth_headers, backend_headers, printer_id, quota_roster
+):
+    """Include mode (the default): the user's own row is what caps them."""
+    quota = client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": "matt@example.org", "period": "monthly", "page_limit": 10},
+    )
+    assert quota.status_code == 201
+    enable = client.put("/api/v1/settings/quotas", headers=auth_headers, json={"enabled": True})
+    assert enable.status_code == 200
+
+    _use_up_quota(client, backend_headers, printer_id, "matt@example.org", 10)
 
     second = client.post(
         "/api/v1/jobs",
@@ -527,6 +548,82 @@ async def test_create_job_hold_reason_quota_when_over_limit(
         headers=backend_headers,
     )
     assert second.json()["hold_reason"] == "quota"
+
+
+async def test_include_mode_ignores_a_blanket_quota_row(
+    client, auth_headers, backend_headers, printer_id
+):
+    """A blanket row left over from a stint in exclude mode must not cap
+    anyone once the printer is back in include mode — otherwise flipping the
+    toggle back wouldn't actually let the school print again."""
+    assert (
+        client.post(
+            f"/api/v1/printers/{printer_id}/quotas",
+            headers=auth_headers,
+            json={"user_email": None, "period": "monthly", "page_limit": 10},
+        ).status_code
+        == 201
+    )
+    client.put("/api/v1/settings/quotas", headers=auth_headers, json={"enabled": True})
+
+    _use_up_quota(client, backend_headers, printer_id, "matt@example.org", 50)
+
+    second = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "matt@example.org"},
+        headers=backend_headers,
+    )
+    assert second.json()["hold_reason"] is None
+
+
+async def test_exclude_mode_holds_unlisted_user_and_lets_exempt_user_through(
+    client, auth_headers, backend_headers, printer_id, quota_roster
+):
+    """The whole point of the feature: one blanket limit, and the people
+    named on the printer are the ones who get out of it."""
+    assert (
+        client.patch(
+            f"/api/v1/printers/{printer_id}",
+            headers=auth_headers,
+            json={"quota_mode": "exclude"},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/api/v1/printers/{printer_id}/quotas",
+            headers=auth_headers,
+            json={"user_email": None, "period": "monthly", "page_limit": 10},
+        ).status_code
+        == 201
+    )
+    assert (
+        client.post(
+            f"/api/v1/printers/{printer_id}/quotas",
+            headers=auth_headers,
+            json={"user_email": "matt@example.org", "period": "monthly", "page_limit": None},
+        ).status_code
+        == 201
+    )
+    client.put("/api/v1/settings/quotas", headers=auth_headers, json={"enabled": True})
+
+    # Both are well past the blanket limit; only the un-exempt one is held.
+    _use_up_quota(client, backend_headers, printer_id, "matt@example.org", 50)
+    _use_up_quota(client, backend_headers, printer_id, "someone.else@example.org", 50)
+
+    exempt = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "matt@example.org"},
+        headers=backend_headers,
+    )
+    assert exempt.json()["hold_reason"] is None
+
+    capped = client.post(
+        "/api/v1/jobs",
+        json={"printer_id": printer_id, "submitted_by": "someone.else@example.org"},
+        headers=backend_headers,
+    )
+    assert capped.json()["hold_reason"] == "quota"
 
 
 async def test_create_job_no_hold_reason_when_quotas_disabled(

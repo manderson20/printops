@@ -7,6 +7,11 @@ from app.models.base import Base, TimestampMixin
 
 QUOTA_PERIODS = ("daily", "weekly", "monthly", "quarterly", "yearly")
 
+# How a printer's quota rows are read — see Printer.quota_mode
+# (app/models/printer.py) for what each one means, and
+# app/quotas/service.py:get_effective_quota for where it's applied.
+QUOTA_MODES = ("include", "exclude")
+
 
 class QuotaSettings(Base, TimestampMixin):
     """Singleton (one row, same pattern as SnmpDefaultsSettings) — the
@@ -29,7 +34,13 @@ class PrinterUserQuota(Base, TimestampMixin):
     without their own row at this printer"), enforced to at most one per
     printer via a partial unique index (see the migration) rather than a
     separate table — mirrors how Printer's nullable SNMP override columns
-    mean "fall back to the global default" without a second model."""
+    mean "fall back to the global default" without a second model.
+
+    What a row *means* depends on the owning printer's quota_mode
+    (app/models/printer.py): in "include" mode a per-user row caps that user
+    and the wildcard row is ignored; in "exclude" mode the wildcard row caps
+    everyone and a per-user row exempts that user instead. The same rows are
+    kept across a mode switch and simply read the other way."""
 
     __tablename__ = "printer_user_quotas"
     __table_args__ = (
@@ -58,4 +69,9 @@ class PrinterUserQuota(Base, TimestampMixin):
     # the API layer (schemas/quota.py), not a DB constraint, same convention
     # as PrinterTonerCartridge.color.
     period: Mapped[str]
-    page_limit: Mapped[int]
+    # None = no cap. How an "exclude" mode exemption row is stored: it names
+    # the user who is let out of the blanket limit without giving them a
+    # number of their own. A row that does carry a limit still keeps it
+    # across a mode switch, so flipping back to "include" restores exactly
+    # what was there before.
+    page_limit: Mapped[int | None] = mapped_column(default=None)

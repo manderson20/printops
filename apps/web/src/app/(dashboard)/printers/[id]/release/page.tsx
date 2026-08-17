@@ -11,7 +11,7 @@ export default function ReleaseAndQuotasTab() {
   return (
     <div className="flex flex-col gap-6">
       <PrintReleaseCard printer={printer} onUpdate={setPrinter} />
-      <QuotasCard printerId={printer.id} />
+      <QuotasCard printer={printer} onUpdate={setPrinter} />
       <SelfServiceAccessCard printerId={printer.id} />
     </div>
   );

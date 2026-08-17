@@ -791,7 +791,32 @@ async def detect_toner_cartridges(printer_id: UUID, db: AsyncSession = Depends(g
     return DetectCartridgesResult(cartridges=result.scalars().all(), unmatched=unmatched)
 
 
-async def _quota_out(db: AsyncSession, quota: PrinterUserQuota) -> PrinterUserQuotaOut:
+def _quota_is_active(quota: PrinterUserQuota, quota_mode: str) -> bool:
+    """Whether this row does anything under the printer's current mode.
+
+    In exclude mode both kinds pull their weight — the blanket row caps
+    everyone and a per-user row exempts someone from it — with one exception
+    the caller handles, since it needs the whole set to see it: an exemption
+    is a no-op on a printer that has no blanket row to be exempt from.
+
+    In include mode only per-user rows are read; a blanket row left over from
+    a previous stint in exclude mode is deliberately ignored (see
+    app/quotas/service.py:get_effective_quota), so it's reported inactive
+    rather than displayed as a limit nothing is enforcing.
+
+    A per-user row also needs an actual limit to be doing anything in
+    include mode. An exemption created in exclude mode carries
+    page_limit=None, and get_effective_quota happily returns it, but
+    resolve_hold_reason reads a null limit as "no cap" — so reporting it
+    active would show the row as enforced while nothing enforces it."""
+    if quota_mode == "exclude":
+        return True
+    return quota.user_email is not None and quota.page_limit is not None
+
+
+async def _quota_out(
+    db: AsyncSession, quota: PrinterUserQuota, quota_mode: str, active: bool | None = None
+) -> PrinterUserQuotaOut:
     start, end = period_bounds(quota.period, datetime.now(UTC))
     pages_used = (
         await get_pages_used(db, quota.printer_id, quota.user_email, start, end)
@@ -805,18 +830,40 @@ async def _quota_out(db: AsyncSession, quota: PrinterUserQuota) -> PrinterUserQu
         period=quota.period,
         page_limit=quota.page_limit,
         pages_used=pages_used,
+        active=_quota_is_active(quota, quota_mode) if active is None else active,
     )
 
 
 @router.get("/{printer_id}/quotas", response_model=list[PrinterUserQuotaOut])
 async def list_printer_quotas(printer_id: UUID, db: AsyncSession = Depends(get_db)):
-    await _get_printer_or_404(printer_id, db)
+    printer = await _get_printer_or_404(printer_id, db)
     result = await db.execute(
         select(PrinterUserQuota)
         .where(PrinterUserQuota.printer_id == printer_id)
         .order_by(PrinterUserQuota.user_email.is_(None).desc(), PrinterUserQuota.user_email)
     )
-    return [await _quota_out(db, quota) for quota in result.scalars().all()]
+    quotas = list(result.scalars().all())
+    # An exemption only does something if there's a blanket row to be exempt
+    # from, so in exclude mode a printer with no blanket row has a list of
+    # exemptions that are all currently no-ops — flag them rather than
+    # letting the card imply people are being let out of a cap that
+    # doesn't exist.
+    has_blanket = any(quota.user_email is None for quota in quotas)
+    return [
+        await _quota_out(
+            db,
+            quota,
+            printer.quota_mode,
+            active=(
+                False
+                if printer.quota_mode == "exclude"
+                and quota.user_email is not None
+                and not has_blanket
+                else None
+            ),
+        )
+        for quota in quotas
+    ]
 
 
 @router.post(
@@ -831,10 +878,35 @@ async def create_printer_quota(
     """A quota's user_email is a specific staff member, or None for a
     per-printer default/wildcard row (see PrinterUserQuota's docstring) —
     at most one of each per printer, enforced below (specific rows) and by
-    a partial unique index (default rows, see app/models/quota.py)."""
-    await _get_printer_or_404(printer_id, db)
+    a partial unique index (default rows, see app/models/quota.py).
+
+    A row with no page_limit is an exclude-mode exemption; it needs both a
+    user to exempt and a printer whose mode gives it meaning, so it's
+    rejected otherwise rather than stored as a row that silently does
+    nothing."""
+    printer = await _get_printer_or_404(printer_id, db)
 
     email = payload.user_email.strip().lower() if payload.user_email else None
+
+    if payload.page_limit is None:
+        if email is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A default quota needs a page limit.",
+            )
+        if printer.quota_mode != "exclude":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Exemptions only apply to a printer in exclude mode. Switch this "
+                    "printer's quota mode first, or give this user a page limit."
+                ),
+            )
+    elif payload.page_limit < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A page limit must be at least 1.",
+        )
     if email is not None:
         roster_match = await db.execute(
             select(GoogleWorkspaceUser).where(func.lower(GoogleWorkspaceUser.email) == email)
@@ -873,7 +945,7 @@ async def create_printer_quota(
     db.add(quota)
     await db.commit()
     await db.refresh(quota)
-    return await _quota_out(db, quota)
+    return await _quota_out(db, quota, printer.quota_mode)
 
 
 @router.patch(
@@ -887,16 +959,22 @@ async def update_printer_quota(
     payload: PrinterUserQuotaUpdate,
     db: AsyncSession = Depends(get_db),
 ):
+    printer = await _get_printer_or_404(printer_id, db)
     quota = await db.get(PrinterUserQuota, quota_id)
     if quota is None or quota.printer_id != printer_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quota not found")
     if payload.period is not None:
         quota.period = payload.period
     if payload.page_limit is not None:
+        if payload.page_limit < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A page limit must be at least 1.",
+            )
         quota.page_limit = payload.page_limit
     await db.commit()
     await db.refresh(quota)
-    return await _quota_out(db, quota)
+    return await _quota_out(db, quota, printer.quota_mode)
 
 
 @router.delete(

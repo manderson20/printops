@@ -74,36 +74,101 @@ def test_period_bounds_weekly_monday_start():
     assert end == datetime(2026, 7, 13, tzinfo=UTC)
 
 
-async def test_get_effective_quota_prefers_specific_over_default(session_factory):
-    printer = await _make_printer(session_factory)
+async def _add_quotas(session_factory, printer_id, rows):
     async with session_factory() as session:
-        session.add(
-            PrinterUserQuota(
-                printer_id=printer.id, user_email=None, period="monthly", page_limit=100
+        for user_email, period, page_limit in rows:
+            session.add(
+                PrinterUserQuota(
+                    printer_id=printer_id,
+                    user_email=user_email,
+                    period=period,
+                    page_limit=page_limit,
+                )
             )
-        )
-        session.add(
-            PrinterUserQuota(
-                printer_id=printer.id, user_email="matt@example.org", period="daily", page_limit=10
-            )
-        )
         await session.commit()
 
+
+async def test_include_mode_caps_only_listed_users(session_factory):
+    """Default mode: a per-user row caps that user, and everyone else prints
+    freely — a blanket row present from a previous stint in exclude mode is
+    deliberately ignored rather than quietly capping the whole school."""
+    printer = await _make_printer(session_factory, quota_mode="include")
+    await _add_quotas(
+        session_factory,
+        printer.id,
+        [(None, "monthly", 100), ("matt@example.org", "daily", 10)],
+    )
+
     async with session_factory() as session:
-        quota = await get_effective_quota(session, printer.id, "matt@example.org")
+        quota = await get_effective_quota(session, printer, "matt@example.org")
         assert quota is not None
         assert quota.period == "daily" and quota.page_limit == 10
 
-        fallback = await get_effective_quota(session, printer.id, "someone.else@example.org")
-        assert fallback is not None
-        assert fallback.period == "monthly" and fallback.page_limit == 100
+        assert await get_effective_quota(session, printer, "someone.else@example.org") is None
+
+
+async def test_exclude_mode_caps_everyone_but_listed_users(session_factory):
+    """The inverse: the blanket row applies to anyone who isn't named, and
+    naming someone lets them out instead of giving them their own number."""
+    printer = await _make_printer(session_factory, quota_mode="exclude")
+    await _add_quotas(
+        session_factory,
+        printer.id,
+        [(None, "monthly", 100), ("matt@example.org", "monthly", None)],
+    )
+
+    async with session_factory() as session:
+        assert await get_effective_quota(session, printer, "matt@example.org") is None
+
+        capped = await get_effective_quota(session, printer, "someone.else@example.org")
+        assert capped is not None
+        assert capped.period == "monthly" and capped.page_limit == 100
+
+
+async def test_exclude_mode_exempts_a_listed_user_that_still_carries_a_limit(session_factory):
+    """Rows are kept, not rewritten, when an admin flips modes — so a row
+    entered in include mode (with a real limit) is read as an exemption once
+    the printer is in exclude mode, and flipping back restores its limit."""
+    printer = await _make_printer(session_factory, quota_mode="exclude")
+    await _add_quotas(
+        session_factory,
+        printer.id,
+        [(None, "monthly", 100), ("matt@example.org", "daily", 10)],
+    )
+
+    async with session_factory() as session:
+        assert await get_effective_quota(session, printer, "matt@example.org") is None
+
+
+async def test_exclude_mode_without_a_blanket_row_caps_nobody(session_factory):
+    printer = await _make_printer(session_factory, quota_mode="exclude")
+    await _add_quotas(session_factory, printer.id, [("matt@example.org", "monthly", None)])
+
+    async with session_factory() as session:
+        assert await get_effective_quota(session, printer, "nobody@example.org") is None
 
 
 async def test_get_effective_quota_none_when_unconfigured(session_factory):
     printer = await _make_printer(session_factory)
     async with session_factory() as session:
-        quota = await get_effective_quota(session, printer.id, "nobody@example.org")
+        quota = await get_effective_quota(session, printer, "nobody@example.org")
         assert quota is None
+
+
+async def test_exemption_row_read_in_include_mode_does_not_hold(session_factory):
+    """An exemption (page_limit=None) left behind by a flip back to include
+    mode must not be treated as a zero-page cap — that would hold every job
+    from the very person who was explicitly let out."""
+    printer = await _make_printer(session_factory, quota_mode="include")
+    await _add_quotas(session_factory, printer.id, [("matt@example.org", "monthly", None)])
+    async with session_factory() as session:
+        session.add(QuotaSettings(enabled=True))
+        await session.commit()
+
+    await _make_job(session_factory, printer.id, "matt@example.org", 500, datetime.now(UTC))
+
+    async with session_factory() as session:
+        assert await resolve_hold_reason(session, printer, "matt@example.org") is None
 
 
 async def test_get_pages_used_scopes_by_printer_user_and_range(session_factory):

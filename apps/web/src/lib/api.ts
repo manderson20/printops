@@ -140,6 +140,7 @@ export type Printer = {
   // shows the toggle for those. See RollMediaCard.
   roll_autocut: boolean;
   release_token: string | null;
+  quota_mode: QuotaMode;
   snmp_enabled: boolean;
   snmp_port: number | null;
   snmp_version: SnmpVersion | null;
@@ -197,6 +198,7 @@ export type PrinterUpdateInput = Partial<PrinterCreateInput> & {
   release_required?: boolean;
   follow_me_enabled?: boolean;
   roll_autocut?: boolean;
+  quota_mode?: QuotaMode;
   snmp_enabled?: boolean;
   snmp_port?: number | null;
   // "" clears the override back to the global default (see
@@ -2109,19 +2111,29 @@ export async function bulkUpdateTonerCartridges(
 export type QuotaPeriod =
   "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
 
+// How a printer's quota rows are read. "include" caps only the users listed;
+// "exclude" caps everyone via the blanket row and lets the listed users out.
+// See Printer.quota_mode in apps/api/app/models/printer.py.
+export type QuotaMode = "include" | "exclude";
+
 export type PrinterQuota = {
   id: string;
   printer_id: string;
   user_email: string | null;
   period: QuotaPeriod;
-  page_limit: number;
+  // null = an exclude-mode exemption: this user is let out of the blanket
+  // limit rather than given a number of their own.
+  page_limit: number | null;
   pages_used: number;
+  // False when the printer's current mode means this row isn't governing
+  // anyone — e.g. a blanket row on an include-mode printer.
+  active: boolean;
 };
 
 export type PrinterQuotaInput = {
   user_email?: string | null;
   period: QuotaPeriod;
-  page_limit: number;
+  page_limit: number | null;
 };
 
 export type PrinterQuotaUpdateInput = {

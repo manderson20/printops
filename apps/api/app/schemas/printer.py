@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, IPvAnyAddress
 
+from app.schemas.quota import QuotaMode
 from app.schemas.snmp import SnmpVersion, VendorProfile
 
 
@@ -108,6 +109,10 @@ class PrinterUpdate(BaseModel):
     release_required: bool | None = None
     follow_me_enabled: bool | None = None
     roll_autocut: bool | None = None
+    # Switching this never rewrites the printer's quota rows — it changes how
+    # they're read (see Printer.quota_mode, app/models/printer.py). The UI
+    # spells out what the existing rows will mean before an admin confirms.
+    quota_mode: QuotaMode | None = None
 
     snmp_enabled: bool | None = None
     snmp_port: int | None = None
@@ -215,6 +220,7 @@ class PrinterOut(BaseModel):
     follow_me_enabled: bool
     roll_autocut: bool
     release_token: str | None
+    quota_mode: QuotaMode
 
     snmp_enabled: bool
     snmp_port: int | None
