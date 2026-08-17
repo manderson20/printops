@@ -10,8 +10,7 @@ from fastapi.responses import JSONResponse
 from jwt import PyJWTError
 from sqlalchemy import delete, select
 
-from app.copiers.provisioning import build_provisioning_plan
-from app.copiers.registry import get_connector
+from app.copiers.sync_jobs import create_sync_job, run_sync_job
 from app.core.config import get_settings
 from app.core.security import decode_access_token
 from app.db import AsyncSessionLocal
@@ -410,23 +409,16 @@ async def _copier_user_sync_loop() -> None:
                     .all()
                 )
                 for device in devices:
-                    now = datetime.now(UTC)
-                    try:
-                        connector = get_connector(device.connector_type)
-                        plan = await build_provisioning_plan(db, device)
-                        result = await connector.sync_users_to_device(device, plan.identities)
-                    except Exception as exc:  # noqa: BLE001
-                        # Includes CapabilityNotSupported / credentials
-                        # missing / device busy — all admin-fixable, and all
-                        # worth surfacing on the device rather than only in
-                        # the log.
-                        logger.warning("Copier user sync failed for %s: %s", device.name, exc)
-                        device.last_user_sync_ok = False
-                        device.last_user_sync_message = str(exc)[:500]
-                    else:
-                        device.last_user_sync_ok = result.failed_count == 0
-                        device.last_user_sync_message = result.message
-                    device.last_user_sync_at = now
+                    # Goes through the job runner, not the connector
+                    # directly: that is what consults the provisioning
+                    # record and skips people already on the device. Calling
+                    # the connector here would re-add everyone and the
+                    # device would reject every one as a duplicate password
+                    # — which it did, every cycle, until this was fixed.
+                    job = await create_sync_job(db, device, trigger="schedule")
+                    if job is None:
+                        continue  # a run is already in flight for this device
+                    await run_sync_job(job.id)
                 await db.commit()
         except Exception:
             logger.exception("Unexpected error in copier user sync loop")

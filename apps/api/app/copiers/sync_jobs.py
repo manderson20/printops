@@ -143,6 +143,32 @@ async def run_sync_job(job_id: UUID, rewrite: bool = False) -> None:
             await db.commit()
 
 
+async def create_sync_job(db, device: MfpDevice, trigger: str = "manual") -> CopierSyncJob | None:
+    """Create the job row, or return None if one is already in flight for
+    this device. Split from start_sync_job so the scheduled loop can await
+    the run instead of spawning it — the loop wants devices handled one at
+    a time."""
+    existing = (
+        (
+            await db.execute(
+                select(CopierSyncJob).where(
+                    CopierSyncJob.mfp_device_id == device.id,
+                    CopierSyncJob.status.in_(("pending", "running")),
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if existing is not None:
+        return None
+    job = CopierSyncJob(mfp_device_id=device.id, status="pending", trigger=trigger)
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+    return job
+
+
 async def start_sync_job(
     db, device: MfpDevice, trigger: str = "manual", rewrite: bool = False
 ) -> CopierSyncJob:
