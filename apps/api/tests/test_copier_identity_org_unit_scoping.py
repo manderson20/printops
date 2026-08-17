@@ -13,6 +13,7 @@ import pytest
 
 from app.integrations.google_workspace import (
     org_unit_included,
+    org_unit_matches,
     resolve_copier_identity_org_units,
 )
 from app.models.google_workspace import GoogleWorkspaceSettings
@@ -121,3 +122,31 @@ class TestOrgUnitIncluded:
             )
         )
         assert org_unit_included(path, includes, excludes) is expected
+
+
+class TestRootOrgUnit:
+    """ "/" is the whole directory. It normalizes to "/", so a naive nested
+    check compares against "//" and matches nothing but the bare root — an
+    install with staff_org_unit_path="/" would silently lose every user in
+    a child OU on the next sync."""
+
+    def test_root_matches_nested_org_units(self):
+        assert org_unit_matches("/Employees", "/")
+        assert org_unit_matches("/Employees/Elementary School", "/")
+        assert org_unit_matches("/Students/3rd Grade", "/")
+
+    def test_root_as_the_configured_staff_ou_includes_everyone(self):
+        includes, excludes = resolve_copier_identity_org_units(_settings(staff_org_unit_path="/"))
+        assert includes == ["/"]
+        assert org_unit_included("/Employees/High School", includes, excludes)
+        assert org_unit_included("/Students/3rd Grade", includes, excludes)
+
+    def test_excludes_still_apply_under_a_root_include(self):
+        includes, excludes = resolve_copier_identity_org_units(
+            _settings(
+                staff_org_unit_path="/",
+                copier_identity_excluded_org_unit_paths=["/Students"],
+            )
+        )
+        assert org_unit_included("/Employees/High School", includes, excludes)
+        assert not org_unit_included("/Students/3rd Grade", includes, excludes)

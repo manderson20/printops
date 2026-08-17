@@ -1,8 +1,13 @@
 # Konica Minolta bizhub i-Series — admin interface capture
 
-Captured live against **HS Monica, bizhub 750i, 10.30.1.210** on 2026-08-17
-from the PrintOps server, using the stored admin password in
-`Printer.web_login_password_encrypted`.
+Captured live against a **bizhub 750i** and a **bizhub 950i** on 2026-08-17,
+using the device admin password stored in PrintOps.
+
+Device names and addresses are deliberately omitted, and the sample values
+below are illustrative — this is a public repository, and a list of which
+internal devices run which authentication configuration is useful only to
+someone who shouldn't have it. Substitute your own device's address
+throughout; `DEVICE` stands for it in every example.
 
 Method note: rather than a browser DevTools capture, the contracts below were
 read directly out of the device's own admin SPA bundle
@@ -17,9 +22,9 @@ marked verified or unverified.
 
 ---
 
-## 0. Headline finding — Account Track is OFF
+## 0. Headline finding — Account Track may well be OFF
 
-**verified**
+**verified on the units tested**
 
 ```
 MFP.AuthSetting.AuthMode.AuthType   = "None"
@@ -27,10 +32,12 @@ MFP.AuthSetting.TrackMode.TrackType = "None"
 MFP.JobLog.Enable                   = "Off"
 ```
 
-The 750i has **no** user authentication and **no** Account Track enabled.
-Staff walk up and copy with no identification today. This is why
-`AppReqGetTrackSetting` returns `AuthNotTrackMode` — there is no account data
-because the feature is switched off.
+Both units tested had **no** user authentication and **no** Account Track
+enabled — i.e. walk-up copying with no identification. That is why
+`AppReqGetTrackSetting` returns `AuthNotTrackMode`: there is no account data
+because the feature is switched off. Check your own devices before assuming
+either state; this is the default a bizhub ships in, not a finding about any
+particular installation.
 
 Consequence: `sync_users_to_device` and `get_user_accounting` cannot do
 anything useful on this device until Account Track is enabled on it. Enabling
@@ -39,12 +46,10 @@ then enter a code. It is a rollout decision, not an implementation detail.
 
 `ManageMode = "Mode2"`, `MarketArea = "NorthAmerica"`.
 
-**ES Veronica (10.10.3.36, bizhub 950i) is in the same state** —
-`AuthType = "None"`, `TrackType = "None"` — except that its
-`MFP.JobLog.Enable` is `"On"`.
+The two units differed only in `MFP.JobLog.Enable`, which was `"Off"` on one
+and `"On"` on the other — worth checking per device rather than assuming.
 
-Two settings that matter before enabling Account Track anywhere, both read
-live from Veronica:
+Two settings that matter before enabling Account Track anywhere:
 
 | Key | Value | Why it matters |
 |---|---|---|
@@ -262,7 +267,7 @@ POST /wcd/api/AppReqGetJobList/_Print    ->  Nack "Webapi not supported."
                           _Send, _Save, _Receive, _All   ->  same
 ```
 
-Tested on **ES Veronica (10.10.3.36)**, which has `MFP.JobLog.Enable = "On"`
+Tested on the 950i, which had `MFP.JobLog.Enable = "On"`
 — so this is a firmware limitation, not an empty-log artifact.
 
 Taken with §3.2, the conclusion for this firmware generation is: the WebAPI

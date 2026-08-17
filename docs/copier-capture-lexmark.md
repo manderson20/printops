@@ -1,7 +1,9 @@
 # Lexmark XM3350 — admin interface capture
 
-Attempted live against **CO Enrollment Room, XM3350, 10.30.1.10** on
-2026-08-17 from the PrintOps server.
+Attempted live against a **Lexmark XM3350** on 2026-08-17.
+
+Device names and addresses are deliberately omitted — this is a public
+repository. `DEVICE` stands for your own device's address throughout.
 
 **Status: incomplete — admin login was rejected.** Everything below the
 session section is unverified. See §3.
@@ -129,7 +131,7 @@ POST /webglue/session/destroy      (body: the session object)
 Blocked on a working admin login (§2.2). All of §5.2 of the task brief
 remains open:
 
-- **Is Device Quotas installed?** Unknown for all four XM3350s.
+- **Is Device Quotas installed?** Not yet confirmed on any unit.
   `rawcontent?c=DeviceQuotas` returns 200 with `guestSession:1` and empty
   nodes when unauthenticated — that is *not* evidence the app is present, it
   is what every component returns to a guest. Components probed
@@ -145,7 +147,7 @@ No test account was created during this attempt.
 
 ## 4. Credential note
 
-`SS Fax Copier (10.10.1.96)` has **no** admin web password stored in PrintOps
-at all; the other nine copiers do. Additionally, `web_login_username` is blank
-on all of them — correct for the Konicas (no username field), but the
-Lexmarks may require a named admin account.
+The XM3350's sole login method declares `credentials: ["password"]`, so its
+admin login has **no username field at all** — `web_login_username` is
+correctly left blank for these devices, and supplying a username cannot fix
+a rejected login. The password is the only variable.

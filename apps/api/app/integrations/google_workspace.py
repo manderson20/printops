@@ -68,10 +68,18 @@ def org_unit_matches(user_org_unit_path: str | None, configured_org_unit_path: s
     """True if a user's OU is the configured one or nested under it — every
     org names/structures this differently ("/Employees", "/Staff",
     "/Personnel/Certified", possibly with sub-OUs like "/Employees/Teachers"),
-    so this is never hardcoded (see GoogleWorkspaceSettings.staff_org_unit_path)."""
+    so this is never hardcoded (see GoogleWorkspaceSettings.staff_org_unit_path).
+
+    The root OU "/" contains everything, and needs its own case: it
+    normalizes to "/", so the nested test would compare against "//" and
+    match nothing but the root itself. An org that set staff_org_unit_path
+    to "/" means "the whole directory", and would otherwise see every user
+    outside the bare root OU silently excluded."""
     if not user_org_unit_path:
         return False
     target = normalize_org_unit_path(configured_org_unit_path)
+    if target == "/":
+        return True
     user_path = normalize_org_unit_path(user_org_unit_path)
     return user_path == target or user_path.startswith(f"{target}/")
 
