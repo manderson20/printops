@@ -132,6 +132,8 @@ class _FakeSession:
         self.fail_on = fail_on or set()
         self.list_error = list_error
         self.created: list[tuple[str, str, str]] = []
+        self.labels: list[str | None] = []
+        self.replacements: list[bool] = []
         self.logged_out = False
 
     async def __aenter__(self):
@@ -145,10 +147,20 @@ class _FakeSession:
             raise self.list_error
         return self.existing
 
-    async def create_account(self, track_number, name, password, registration_max=1000):
+    async def write_account(
+        self,
+        track_number,
+        name,
+        password,
+        label=None,
+        registration_max=1000,
+        replace_existing=False,
+    ):
         if password in self.fail_on:
             raise KonicaAdminError("GeneralIllegalValue (TrackName)")
         self.created.append((track_number, name, password))
+        self.labels.append(label)
+        self.replacements.append(replace_existing)
 
 
 def _identity(email, value):
@@ -306,3 +318,76 @@ async def test_single_account_object_is_normalised_to_a_list():
 
     accounts = await KonicaAdminSession.list_accounts(_One())
     assert [a.track_id for a in accounts] == ["7"]
+
+
+@pytest.mark.asyncio
+async def test_already_provisioned_people_are_skipped_not_retried(monkeypatch):
+    """The device rejects a password already in use, so re-running without
+    skipping fails every account — which is exactly what happened the first
+    time this ran twice."""
+    fake = _FakeSession()
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    result = await KonicaBizhubConnector().sync_users_to_device(
+        _device(),
+        [_identity("a@d.org", "10001"), _identity("b@d.org", "10002")],
+        already_provisioned={"10001"},
+    )
+    assert result.synced_count == 1
+    assert result.skipped_count == 1
+    assert result.failed_count == 0
+    assert [pw for _, _, pw in fake.created] == ["10002"]
+    # "Already set up" is success, and the wording should not read as an error.
+    assert "failed" not in result.message
+
+
+@pytest.mark.asyncio
+async def test_sync_records_who_landed_in_which_account_slot(monkeypatch):
+    """The device can never tell us this afterwards, so it has to be
+    captured at write time."""
+    fake = _FakeSession()
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    result = await KonicaBizhubConnector().sync_users_to_device(
+        _device(), [_identity("amy@d.org", "10001"), _identity("bob@d.org", "10002")]
+    )
+    assert [(a.device_account_id, a.staff_email) for a in result.accounts] == [
+        ("1", "amy@d.org"),
+        ("2", "bob@d.org"),
+    ]
+    # The readable label is what shows on the copier's own account list.
+    assert [a.device_account_name for a in result.accounts] == ["amy", "bob"]
+    assert fake.labels == ["amy", "bob"]
+
+
+@pytest.mark.asyncio
+async def test_rewrite_reseats_everyone_into_deterministic_slots(monkeypatch):
+    """Repair path for a device whose accounts exist but whose owners were
+    never recorded — the mapping becomes a fact rather than an inference."""
+    fake = _FakeSession(existing=[TrackAccount("1", None, True, False)])
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    result = await KonicaBizhubConnector().sync_users_to_device(
+        _device(),
+        [_identity("amy@d.org", "10001"), _identity("bob@d.org", "10002")],
+        already_provisioned={"10001", "10002"},
+        rewrite=True,
+    )
+    # already_provisioned is ignored under rewrite, and slots are positional.
+    assert result.synced_count == 2
+    assert [n for n, _, _ in fake.created] == ["1", "2"]
+    assert all(fake.replacements)
+
+
+@pytest.mark.asyncio
+async def test_progress_is_reported_per_account(monkeypatch):
+    fake = _FakeSession()
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    seen = []
+
+    async def on_progress(done, total, synced, failed):
+        seen.append((done, total, synced, failed))
+
+    await KonicaBizhubConnector().sync_users_to_device(
+        _device(),
+        [_identity("a@d.org", "1"), _identity("b@d.org", "2"), _identity("c@d.org", "3")],
+        on_progress=on_progress,
+    )
+    assert seen == [(1, 3, 1, 0), (2, 3, 2, 0), (3, 3, 3, 0)]

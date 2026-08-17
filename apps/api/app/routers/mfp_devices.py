@@ -10,9 +10,11 @@ from app.copiers.device_admin import DeviceCredentialsMissing
 from app.copiers.konica_admin import KonicaAdminBusy, KonicaAdminError
 from app.copiers.provisioning import build_provisioning_plan
 from app.copiers.registry import CONNECTOR_REGISTRY, get_connector
+from app.copiers.sync_jobs import start_sync_job
 from app.core.crypto import encrypt
 from app.db import get_db
 from app.deps import require_role
+from app.models.copier_provisioning import CopierProvisionedAccount, CopierSyncJob
 from app.models.copier_usage import CopierUsageRecord
 from app.models.mfp_device import MfpDevice
 from app.models.printer import Printer
@@ -23,12 +25,28 @@ from app.schemas.mfp_device import (
     MfpDeviceCreate,
     MfpDeviceOut,
     MfpDeviceUpdate,
+    ProvisionedAccountOut,
     ProvisioningPreviewOut,
-    SyncUsersResultOut,
+    SyncJobOut,
     available_connector_types,
 )
 
 router = APIRouter(dependencies=[Depends(require_role("admin"))])
+
+
+def _job_out(job) -> "SyncJobOut":
+    return SyncJobOut(
+        id=job.id,
+        status=job.status,
+        trigger=job.trigger,
+        total=job.total,
+        completed=job.completed,
+        failed=job.failed,
+        skipped=job.skipped,
+        message=job.message,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+    )
 
 
 def _device_out(device: MfpDevice) -> MfpDeviceOut:
@@ -321,44 +339,81 @@ async def preview_device_provisioning(device_id: UUID, db: AsyncSession = Depend
     )
 
 
-@router.post("/{device_id}/sync-users", response_model=SyncUsersResultOut)
-async def sync_device_users(device_id: UUID, db: AsyncSession = Depends(get_db)):
-    """Register the in-scope staff as accounts on the copier.
+@router.post(
+    "/{device_id}/sync-users",
+    response_model=SyncJobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def sync_device_users(
+    device_id: UUID, rewrite: bool = False, db: AsyncSession = Depends(get_db)
+):
+    """Queue a sync and return immediately.
 
-    Errors are translated to 4xx with an admin-actionable message rather
-    than a 500: "Account Track is off", "someone else is logged into the
-    copier", and "no admin password stored" are all setup problems a person
-    can fix, not server faults."""
+    Not blocking: a few hundred accounts is one device round trip each
+    against a single-session copier, i.e. minutes. Poll the returned job
+    for progress.
+
+    rewrite=true re-seats every in-scope person into a deterministic
+    account slot, overwriting what's there. It exists to repair a device
+    whose accounts were created before PrintOps recorded who owned which —
+    inferring that mapping from creation order would be a guess, whereas
+    rewriting makes it a fact. It changes codes on the device, so it is
+    never the default.
+    """
     device = await _get_device_or_404(device_id, db)
-    connector = get_connector(device.connector_type)
-    plan = await build_provisioning_plan(db, device)
+    job = await start_sync_job(db, device, trigger="rewrite" if rewrite else "manual")
+    return _job_out(job)
 
-    try:
-        result = await connector.sync_users_to_device(device, plan.identities)
-    except CapabilityNotSupported as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except DeviceCredentialsMissing as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except KonicaAdminBusy as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except KonicaAdminError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    # Record the outcome on the device, exactly as the scheduled loop
-    # does — a manual sync that leaves "Last sync" blank looks like it
-    # never ran, which is precisely the confusion this field exists to
-    # prevent.
-    device.last_user_sync_at = datetime.now(UTC)
-    device.last_user_sync_ok = result.failed_count == 0
-    device.last_user_sync_message = result.message
-    await db.commit()
-
-    return SyncUsersResultOut(
-        synced_count=result.synced_count,
-        failed_count=result.failed_count,
-        selected_count=plan.count,
-        message=result.message,
+@router.get("/{device_id}/sync-jobs/latest", response_model=SyncJobOut | None)
+async def latest_sync_job(device_id: UUID, db: AsyncSession = Depends(get_db)):
+    """The most recent sync for this copier, running or finished — what the
+    progress display polls."""
+    await _get_device_or_404(device_id, db)
+    job = (
+        (
+            await db.execute(
+                select(CopierSyncJob)
+                .where(CopierSyncJob.mfp_device_id == device_id)
+                .order_by(CopierSyncJob.created_at.desc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
     )
+    return _job_out(job) if job else None
+
+
+@router.get("/{device_id}/provisioned-accounts", response_model=list[ProvisionedAccountOut])
+async def list_provisioned_accounts(device_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Who PrintOps put on this copier, and in which account slot — the
+    mapping the device itself cannot provide."""
+    await _get_device_or_404(device_id, db)
+    rows = (
+        (
+            await db.execute(
+                select(CopierProvisionedAccount)
+                .where(
+                    CopierProvisionedAccount.mfp_device_id == device_id,
+                    CopierProvisionedAccount.removed_at.is_(None),
+                )
+                .order_by(CopierProvisionedAccount.device_account_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        ProvisionedAccountOut(
+            device_account_id=r.device_account_id,
+            device_account_name=r.device_account_name,
+            staff_email=r.staff_email,
+            identity_value=r.identity_value,
+            provisioned_at=r.provisioned_at,
+        )
+        for r in rows
+    ]
 
 
 @router.get("/{device_id}/device-accounts", response_model=list[DeviceUserOut])

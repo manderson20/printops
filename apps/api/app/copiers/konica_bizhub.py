@@ -30,6 +30,8 @@ from app.copiers.connector import (
     DeviceCapabilityReport,
     DeviceUser,
     MeterSnapshot,
+    ProgressCallback,
+    ProvisionedAccount,
     SyncResult,
 )
 from app.copiers.device_admin import get_admin_credentials
@@ -181,29 +183,42 @@ class KonicaBizhubConnector(CopierConnector):
         ]
 
     async def sync_users_to_device(
-        self, device: MfpDevice, identities: list[StaffCopierIdentity]
+        self,
+        device: MfpDevice,
+        identities: list[StaffCopierIdentity],
+        already_provisioned: set[str] | None = None,
+        on_progress: ProgressCallback | None = None,
+        rewrite: bool = False,
     ) -> SyncResult:
         """Register each staff identity as an Account Track account, with
-        the 5-digit staff ID as the account password ("Password Only"
-        mode) — see docs/copier-capture-konica.md §3.9.2.
+        the staff ID as the account password ("Password Only" mode) — see
+        docs/copier-capture-konica.md §3.9.2.
 
-        Additive only: accounts already on the device are left alone.
-        The device never reveals an account's password
-        (TrackPasswordExist is a boolean), so an existing account can't be
-        diffed against the intended code — rewriting one blindly could
-        change a working login for someone standing at the panel. Removing
-        accounts is deliberately not done here either: the delete contract
-        isn't captured yet, and silently deleting accounts is not something
-        to guess at.
+        `already_provisioned` is the set of identity values PrintOps has
+        previously put on THIS device. It is required for correctness, not
+        an optimisation: the device rejects a password that is already in
+        use, and it never reveals an account's password, so a re-run
+        without it re-adds everyone and fails every single one. Skips are
+        counted separately from failures — "already there" is success.
 
-        Failures are per-account and counted, not fatal: one rejected ID
-        shouldn't abandon the other 30. The device names the offending
-        field on rejection, so the message says which account failed and
-        why."""
+        Additive. Existing accounts are never rewritten or deleted: their
+        codes can't be read back to compare, and rewriting one blindly
+        could change a working login for someone at the panel.
+
+        Per-account failures are counted and reported with the device's
+        own field-level reason rather than abandoning the run."""
         if not device.ip_address:
             raise CapabilityNotSupported("This copier has no IP address configured.")
 
         credentials = get_admin_credentials(device)
+        seen = set() if rewrite else (already_provisioned or set())
+        pending = [i for i in identities if i.identity_value not in seen]
+        skipped = len(identities) - len(pending)
+
+        results: list[ProvisionedAccount] = []
+        synced = 0
+        failed = 0
+        messages: list[str] = []
 
         async with KonicaAdminSession(device.ip_address, credentials) as session:
             try:
@@ -219,17 +234,48 @@ class KonicaBizhubConnector(CopierConnector):
 
             used_numbers = {account.track_id for account in existing}
             existing_count = len(existing)
-
-            synced = 0
-            failed = 0
-            messages: list[str] = []
             next_number = 1
+            total = len(pending)
 
-            for identity in identities:
+            for index, identity in enumerate(pending):
+                if rewrite:
+                    # Deterministic slot per person, overwriting whatever is
+                    # in it. Used to repair a device whose accounts exist but
+                    # whose owners were never recorded: inferring the mapping
+                    # from creation order would be a guess, whereas writing
+                    # each person into a known slot makes it a fact.
+                    number = str(index + 1)
+                    local_part = (identity.staff_email or "").split("@")[0]
+                    try:
+                        await session.write_account(
+                            track_number=number,
+                            name=local_part[:8] or number,
+                            password=identity.identity_value,
+                            label=local_part[:20] or number,
+                            replace_existing=True,
+                        )
+                    except KonicaAdminError as exc:
+                        failed += 1
+                        messages.append(f"{identity.staff_email}: {exc}")
+                    else:
+                        synced += 1
+                        results.append(
+                            ProvisionedAccount(
+                                staff_email=identity.staff_email,
+                                identity_value=identity.identity_value,
+                                identity_type=identity.identity_type,
+                                device_account_id=number,
+                                device_account_name=local_part[:20] or number,
+                            )
+                        )
+                    if on_progress is not None:
+                        await on_progress(index + 1, total, synced, failed)
+                    continue
+
                 if existing_count + synced >= MAX_ACCOUNTS:
                     messages.append(
                         f"Stopped at the copier's {MAX_ACCOUNTS}-account limit; "
-                        f"{len(identities) - synced - failed} not added."
+                        f"{total - synced - failed} not added."
                     )
                     break
 
@@ -239,15 +285,15 @@ class KonicaBizhubConnector(CopierConnector):
                     messages.append("No free account numbers left on this copier.")
                     break
 
-                # 8 characters max, and it's what a person sees at the panel,
-                # so prefer the local part of their email over a truncated
-                # display name.
-                label = (identity.staff_email or "").split("@")[0][:8] or str(next_number)
+                local_part = (identity.staff_email or "").split("@")[0]
+                name = local_part[:8] or str(next_number)
+                label = local_part[:20] or str(next_number)
                 try:
-                    await session.create_account(
+                    await session.write_account(
                         track_number=str(next_number),
-                        name=label,
+                        name=name,
                         password=identity.identity_value,
+                        label=label,
                     )
                 except KonicaAdminError as exc:
                     failed += 1
@@ -255,13 +301,35 @@ class KonicaBizhubConnector(CopierConnector):
                 else:
                     used_numbers.add(str(next_number))
                     synced += 1
+                    results.append(
+                        ProvisionedAccount(
+                            staff_email=identity.staff_email,
+                            identity_value=identity.identity_value,
+                            identity_type=identity.identity_type,
+                            device_account_id=str(next_number),
+                            device_account_name=label,
+                        )
+                    )
+                if on_progress is not None:
+                    await on_progress(index + 1, total, synced, failed)
 
-        summary = f"{synced} added, {failed} failed, {existing_count} already on the copier."
+        parts = [f"{synced} added"]
+        if failed:
+            parts.append(f"{failed} failed")
+        if skipped:
+            parts.append(f"{skipped} already set up")
+        summary = ", ".join(parts) + "."
         if messages:
             summary = f"{summary} " + " ".join(messages[:5])
             if len(messages) > 5:
                 summary += f" (+{len(messages) - 5} more)"
-        return SyncResult(synced_count=synced, failed_count=failed, message=summary)
+        return SyncResult(
+            synced_count=synced,
+            failed_count=failed,
+            message=summary,
+            skipped_count=skipped,
+            accounts=results,
+        )
 
     async def import_accounting_file(
         self, device: MfpDevice, raw_bytes: bytes, template: CopierImportTemplate

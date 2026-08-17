@@ -11,8 +11,10 @@ import {
   getMfpDevice,
   listConnectorTypes,
   listGoogleWorkspaceOrgUnits,
+  getLatestMfpSyncJob,
   listMfpDeviceAccounts,
   listMfpDeviceUsage,
+  listMfpProvisionedAccounts,
   previewMfpDeviceProvisioning,
   syncMfpDeviceUsers,
   testMfpDeviceConnection,
@@ -22,7 +24,9 @@ import {
   type DeviceCapabilities,
   type MfpDevice,
   type DeviceUser,
+  type ProvisionedAccount,
   type ProvisioningPreview,
+  type SyncJob,
 } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
 import { useCurrentUser } from "@/lib/useCurrentUser";
@@ -100,10 +104,11 @@ export default function MfpDeviceDetailPage() {
   const [preview, setPreview] = useState<ProvisioningPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<string | null>(null);
   const [deviceAccounts, setDeviceAccounts] = useState<DeviceUser[] | null>(null);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [job, setJob] = useState<SyncJob | null>(null);
+  const [owners, setOwners] = useState<ProvisionedAccount[] | null>(null);
 
   useEffect(() => {
     getMfpDevice(params.id)
@@ -136,6 +141,12 @@ export default function MfpDeviceDetailPage() {
     previewMfpDeviceProvisioning(params.id)
       .then(setPreview)
       .catch(() => setPreview(null));
+    getLatestMfpSyncJob(params.id)
+      .then(setJob)
+      .catch(() => setJob(null));
+    listMfpProvisionedAccounts(params.id)
+      .then(setOwners)
+      .catch(() => setOwners(null));
   }, [params.id]);
 
   async function handleSave() {
@@ -163,6 +174,27 @@ export default function MfpDeviceDetailPage() {
     }
   }
 
+  // Poll while a sync is in flight. A sync is minutes long, so without
+  // this the page can only show a spinner and an admin cannot tell a slow
+  // run from a stuck one.
+  useEffect(() => {
+    if (!job || (job.status !== "running" && job.status !== "pending")) return;
+    const timer = setInterval(() => {
+      getLatestMfpSyncJob(params.id)
+        .then((latest) => {
+          setJob(latest);
+          if (latest && latest.status !== "running" && latest.status !== "pending") {
+            listMfpProvisionedAccounts(params.id).then(setOwners).catch(() => {});
+            getMfpDevice(params.id)
+              .then((d) => setState({ phase: "ok", device: d }))
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [job, params.id]);
+
   async function handleLoadDeviceAccounts() {
     setLoadingAccounts(true);
     setAccountsError(null);
@@ -181,7 +213,6 @@ export default function MfpDeviceDetailPage() {
   async function handlePreviewUsers() {
     setPreviewing(true);
     setActionError(null);
-    setSyncResult(null);
     try {
       setPreview(await previewMfpDeviceProvisioning(params.id));
     } catch (err) {
@@ -191,26 +222,21 @@ export default function MfpDeviceDetailPage() {
     }
   }
 
-  async function handleSyncUsers() {
-    if (
-      !confirm(
-        `Add ${preview?.count ?? "these"} staff accounts to ${state.phase === "ok" ? state.device.name : "this copier"}?\n\n` +
-          "Existing accounts on the copier are left alone. Nothing is deleted.",
-      )
-    )
-      return;
+  async function handleSyncUsers(rewrite = false) {
+    const question = rewrite
+      ? `Rewrite all staff accounts on ${state.phase === "ok" ? state.device.name : "this copier"}?\n\n` +
+        "Every in-scope person is re-seated into a known account slot and their code is " +
+        "re-set, so PrintOps knows exactly whose account is whose. Existing codes on the " +
+        "copier will change."
+      : `Add ${preview?.count ?? "these"} staff accounts to ${state.phase === "ok" ? state.device.name : "this copier"}?\n\n` +
+        "Anyone already set up is skipped. Nothing is deleted.";
+    if (!confirm(question)) return;
     setSyncing(true);
     setActionError(null);
     try {
-      const result = await syncMfpDeviceUsers(params.id);
-      setSyncResult(
-        `${result.synced_count} added, ${result.failed_count} failed, of ${result.selected_count} selected.` +
-          (result.message ? ` ${result.message}` : ""),
-      );
-      setPreview(await previewMfpDeviceProvisioning(params.id));
-      await handleLoadDeviceAccounts();
+      setJob(await syncMfpDeviceUsers(params.id, { rewrite }));
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : "Sync failed");
+      setActionError(err instanceof ApiError ? err.message : "Could not start the sync");
     } finally {
       setSyncing(false);
     }
@@ -445,8 +471,13 @@ export default function MfpDeviceDetailPage() {
               <Button variant="secondary" onClick={handlePreviewUsers} disabled={previewing}>
                 {previewing ? "Checking…" : "Preview"}
               </Button>
-              <Button onClick={handleSyncUsers} disabled={syncing}>
-                {syncing ? "Syncing…" : "Sync Users to Copier"}
+              <Button
+                onClick={() => handleSyncUsers(false)}
+                disabled={syncing || job?.status === "running" || job?.status === "pending"}
+              >
+                {job?.status === "running" || job?.status === "pending"
+                  ? "Syncing…"
+                  : "Sync Users to Copier"}
               </Button>
             </div>
           </div>
@@ -495,8 +526,85 @@ export default function MfpDeviceDetailPage() {
             </div>
           )}
 
-          {syncResult && (
-            <p className="mb-3 text-sm text-zinc-700 dark:text-zinc-300">{syncResult}</p>
+          {job && (
+            <div className="mb-3 rounded border border-black/[.08] p-3 dark:border-white/[.12]">
+              {(job.status === "running" || job.status === "pending") && job.total > 0 ? (
+                <>
+                  <div className="mb-1 flex items-center justify-between text-sm">
+                    <span>Adding accounts to the copier…</span>
+                    <span className="font-mono text-xs">
+                      {job.completed + job.failed} of {job.total}
+                    </span>
+                  </div>
+                  <div
+                    className="h-2 w-full overflow-hidden rounded bg-black/[.08] dark:bg-white/[.15]"
+                    role="progressbar"
+                    aria-valuenow={job.completed + job.failed}
+                    aria-valuemin={0}
+                    aria-valuemax={job.total}
+                  >
+                    <div
+                      className="h-full bg-emerald-600 transition-all"
+                      style={{
+                        width: `${Math.round(((job.completed + job.failed) / job.total) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    This takes a few minutes — the copier accepts one account at a time. You can
+                    leave this page; it keeps running.
+                  </p>
+                </>
+              ) : job.status === "pending" || job.status === "running" ? (
+                <p className="text-sm">Starting…</p>
+              ) : (
+                <p className="text-sm">
+                  <strong>
+                    {job.status === "succeeded" ? "Sync finished" : "Sync finished with problems"}
+                  </strong>
+                  {" — "}
+                  {job.completed} added
+                  {job.failed > 0 && `, ${job.failed} failed`}
+                  {job.skipped > 0 && `, ${job.skipped} already set up`}.
+                  {job.message && (
+                    <span className="mt-1 block text-xs text-zinc-500">{job.message}</span>
+                  )}
+                </p>
+              )}
+            </div>
+          )}
+
+          {owners && owners.length > 0 && (
+            <div className="mb-3">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                  Who is who on this copier
+                </span>
+                <Button
+                  variant="secondary"
+                  onClick={() => handleSyncUsers(true)}
+                  disabled={syncing || job?.status === "running" || job?.status === "pending"}
+                >
+                  Rewrite All
+                </Button>
+              </div>
+              <p className="mb-1 text-xs text-zinc-500">
+                {owners.length} accounts PrintOps has set up here. The copier itself can&apos;t
+                tell you this — it never reveals an account&apos;s code — so this is the record of
+                which slot belongs to whom.
+              </p>
+              <ul className="max-h-56 overflow-y-auto text-xs">
+                {owners.map((o) => (
+                  <li key={o.device_account_id} className="py-0.5">
+                    <span className="font-mono">#{o.device_account_id}</span>{" "}
+                    <span className="font-mono text-zinc-500">
+                      {o.device_account_name ?? "—"}
+                    </span>{" "}
+                    — {o.staff_email}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
 
           <div className="mb-3 border-t border-black/[.06] pt-3 dark:border-white/[.1]">

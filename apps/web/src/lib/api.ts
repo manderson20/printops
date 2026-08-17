@@ -527,12 +527,38 @@ export type ProvisioningPreview = {
   sample_emails: string[];
 };
 
-export type SyncUsersResult = {
-  synced_count: number;
-  failed_count: number;
-  selected_count: number;
+export type SyncJob = {
+  id: string;
+  status: "pending" | "running" | "succeeded" | "failed";
+  trigger: string;
+  total: number;
+  completed: number;
+  failed: number;
+  skipped: number;
   message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
 };
+
+export type ProvisionedAccount = {
+  device_account_id: string;
+  device_account_name: string | null;
+  staff_email: string;
+  identity_value: string;
+  provisioned_at: string;
+};
+
+export async function getLatestMfpSyncJob(id: string): Promise<SyncJob | null> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/sync-jobs/latest`);
+  return response.json();
+}
+
+export async function listMfpProvisionedAccounts(
+  id: string,
+): Promise<ProvisionedAccount[]> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/provisioned-accounts`);
+  return response.json();
+}
 
 export async function previewMfpDeviceProvisioning(
   id: string,
@@ -543,8 +569,12 @@ export async function previewMfpDeviceProvisioning(
   return response.json();
 }
 
-export async function syncMfpDeviceUsers(id: string): Promise<SyncUsersResult> {
-  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/sync-users`, {
+export async function syncMfpDeviceUsers(
+  id: string,
+  options: { rewrite?: boolean } = {},
+): Promise<SyncJob> {
+  const query = options.rewrite ? "?rewrite=true" : "";
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/sync-users${query}`, {
     method: "POST",
   });
   return response.json();

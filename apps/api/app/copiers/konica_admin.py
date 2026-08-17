@@ -252,24 +252,53 @@ class KonicaAdminSession:
             start += length
         return accounts
 
-    async def create_account(
-        self, track_number: str, name: str, password: str, registration_max: int = 1000
+    async def write_account(
+        self,
+        track_number: str,
+        name: str,
+        password: str,
+        label: str | None = None,
+        registration_max: int = MAX_ACCOUNTS,
+        replace_existing: bool = False,
     ) -> None:
-        """Register one Account Track account.
+        """Register (or, with replace_existing, edit) one Account Track
+        account.
 
-        `name` is capped at 8 characters by the device (AA_TRA_T_NAM) —
-        the password field takes 64, which is the opposite of the usual
-        assumption and the reason staff IDs go in the password."""
+        Three field-length facts, all verified against hardware:
+        AA_TRA_T_NAM is capped at 8 characters, AA_TRA_T_INF at 20, and the
+        password at 64 — the opposite of the usual assumption that the
+        8-character cap applies to the password, and the reason staff IDs
+        go in the password.
+
+        `label` (AA_TRA_T_INF) is the only one of the three that reads back
+        through the API, as TrackInfo, and it is what an admin sees when
+        looking at the copier's own account list. Without it every account
+        shows blank and there is no way to tell whose is whose.
+
+        The device refuses a password already in use ("Don't set Duplicate
+        Password"), so re-registering an existing person fails — which is
+        why callers must skip accounts already provisioned rather than
+        relying on the device to no-op."""
         await self.cgi(
             {
                 "func": "PSL_AA_TRA_TRA",
-                "AA_TRA_H_NUM": "new",
+                # "new" registers; an existing number edits in place, which
+                # is how an account gains a label without being deleted
+                # (the delete contract is not captured).
+                "AA_TRA_H_NUM": str(track_number) if replace_existing else "new",
                 "trackType": "Password",
                 "AA_TRA_R_RNM": "Direct",
                 "AA_TRA_T_MAX": str(registration_max),
                 "AA_TRA_T_NUM": str(track_number),
                 "AA_TRA_T_NAM": name[:8],
+                "AA_TRA_T_INF": (label or name)[:20],
                 "AA_TRA_P_UP": password,
                 "AA_TRA_P_CMP": password,
             }
         )
+
+    # Kept for callers that only ever create.
+    async def create_account(
+        self, track_number: str, name: str, password: str, registration_max: int = MAX_ACCOUNTS
+    ) -> None:
+        await self.write_account(track_number, name, password, registration_max=registration_max)

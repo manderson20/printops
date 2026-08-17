@@ -238,3 +238,31 @@ class DeviceUserOut(BaseModel):
     name: str | None
     has_password: bool
     disabled: bool
+
+
+class SyncJobOut(BaseModel):
+    """Progress of a running or finished user sync. `completed` counts
+    accounts actually written; `skipped` counts people already set up on
+    the device, which is a success rather than a failure."""
+
+    id: UUID
+    status: str
+    trigger: str
+    total: int
+    completed: int
+    failed: int
+    skipped: int
+    message: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+class ProvisionedAccountOut(BaseModel):
+    """Which person occupies which account slot on the copier — the mapping
+    the device can't report, since it never reveals account passwords."""
+
+    device_account_id: str
+    device_account_name: str | None
+    staff_email: str
+    identity_value: str
+    provisioned_at: datetime
