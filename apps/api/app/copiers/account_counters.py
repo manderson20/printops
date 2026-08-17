@@ -131,6 +131,10 @@ class CounterPollResult:
     unchanged: int = 0
     changed: int = 0
     usage_rows: int = 0
+    # Of those usage rows, the ones recovered from a first reading of an
+    # account PrintOps provisioned itself — pages made between provisioning
+    # and the first poll, which are otherwise lost.
+    baseline_usage_rows: int = 0
     resets: int = 0
     # Accounts on the device that PrintOps has no provisioning record for —
     # usage is still recorded, with no staff_email, and surfaces in the
@@ -141,7 +145,12 @@ class CounterPollResult:
     def message(self) -> str:
         parts = [f"{self.accounts_read} accounts read"]
         if self.baselines:
-            parts.append(f"{self.baselines} first readings (no usage yet)")
+            first = f"{self.baselines} first readings"
+            if self.baseline_usage_rows:
+                first += f" ({self.baseline_usage_rows} with usage since provisioning)"
+            else:
+                first += " (no usage yet)"
+            parts.append(first)
         if self.usage_rows:
             parts.append(f"{self.usage_rows} usage rows from {self.changed} accounts")
         elif not self.baselines:
@@ -246,6 +255,50 @@ def _usage_rows(
     return rows
 
 
+def _baseline_usage_rows(
+    device: MfpDevice,
+    account: DeviceAccountCounters,
+    owner: CopierProvisionedAccount | None,
+    now: datetime,
+) -> list[CopierUsageRecord]:
+    """Usage from an account's *first* reading — normally thrown away, and
+    kept only when PrintOps put the account on the device itself.
+
+    The default has to be to discard it. A copier that has been in service
+    for years reports years of pages the first time it is read, and
+    recording that would invent a day on which everyone copied their entire
+    history.
+
+    But an account PrintOps created started at zero, so its first reading
+    is not history — it is everything that account has done since it was
+    provisioned, which is usually the same day. Discarding that loses real
+    pages by real people: it swallowed ten on the first copier this ran
+    against, and would have swallowed a term's worth on a device polled
+    monthly.
+
+    The distinction is exactly whether a CopierProvisionedAccount row
+    exists. No row means PrintOps did not create the account and knows
+    nothing about where its counter started — discard. A row means we
+    created it and the counter began at zero.
+
+    One caveat, recorded on the row itself as from_provisioning_baseline:
+    a sync that *rewrites* an existing account edits it in place and does
+    not reset its counters, so a rewritten account adopted from an earlier
+    system could carry pages made before PrintOps was involved. The flag is
+    there so such a row can be found and discounted rather than silently
+    trusted."""
+    if owner is None:
+        return []
+    delta = AccountDelta(account_id=account.account_id, lists=account.lists)
+    if not any(any(counters.values()) for counters in account.lists.values()):
+        return []
+    provisioned_at = _ensure_utc(owner.provisioned_at)
+    rows = _usage_rows(device, delta, owner, provisioned_at, now)
+    for row in rows:
+        row.raw_payload["from_provisioning_baseline"] = True
+    return rows
+
+
 async def poll_account_counters(
     db: AsyncSession, device: MfpDevice, now: datetime | None = None
 ) -> CounterPollResult:
@@ -289,6 +342,11 @@ async def poll_account_counters(
                 )
             )
             result.baselines += 1
+            owner = owners.get(account.account_id)
+            for row in _baseline_usage_rows(device, account, owner, now):
+                db.add(row)
+                result.usage_rows += 1
+                result.baseline_usage_rows += 1
             continue
 
         if previous.counters == account.lists:

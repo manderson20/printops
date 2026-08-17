@@ -708,6 +708,13 @@ export default function MfpDeviceDetailPage() {
                   is nothing to compare against yet, so no usage was recorded. The next read is
                   the one that produces numbers.
                 </>
+              ) : pollResult.baseline_usage_rows > 0 ? (
+                <>
+                  <strong>{pollResult.usage_rows}</strong>{" "}
+                  {pollResult.usage_rows === 1 ? "entry" : "entries"} recorded, of which{" "}
+                  {pollResult.baseline_usage_rows} came from a first reading — pages made
+                  between PrintOps setting the account up and this read.
+                </>
               ) : (
                 <>
                   <strong>{pollResult.usage_rows}</strong>{" "}

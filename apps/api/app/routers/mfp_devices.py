@@ -396,6 +396,7 @@ async def poll_device_counters(device_id: UUID, db: AsyncSession = Depends(get_d
     return CounterPollOut(
         accounts_read=result.accounts_read,
         baselines=result.baselines,
+        baseline_usage_rows=result.baseline_usage_rows,
         changed=result.changed,
         unchanged=result.unchanged,
         usage_rows=result.usage_rows,

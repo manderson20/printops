@@ -588,6 +588,7 @@ export async function syncMfpDeviceUsers(
 export type CounterPollResult = {
   accounts_read: number;
   baselines: number;
+  baseline_usage_rows: number;
   changed: number;
   unchanged: number;
   usage_rows: number;
@@ -1896,6 +1897,39 @@ export type UntrackedCopySummary = {
   tracking_since: string | null;
   printers: UntrackedCopyPrinterEntry[];
 };
+
+export type TrackedCopyDeviceEntry = {
+  device_id: string;
+  device_name: string;
+  building: string | null;
+  copy_pages: number;
+  scan_pages: number;
+  fax_pages: number;
+  people: number;
+  unattributed_pages: number;
+};
+
+export type TrackedCopySummary = {
+  copy_pages: number;
+  scan_pages: number;
+  fax_pages: number;
+  people: number;
+  unattributed_pages: number;
+  devices_reporting: number;
+  devices: TrackedCopyDeviceEntry[];
+};
+
+/** Walk-up copier activity attributed to a named person — the counterpart
+ * to getUntrackedCopySummary, meant to be read alongside it. */
+export async function getTrackedCopySummary(
+  filters?: ReportFilters,
+): Promise<TrackedCopySummary> {
+  const qs = buildReportQuery(filters);
+  const response = await authorizedFetch(
+    `/api/v1/reports/tracked-copies${qs ? `?${qs}` : ""}`,
+  );
+  return response.json();
+}
 
 export async function getUntrackedCopySummary(
   filters?: ReportFilters,

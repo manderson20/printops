@@ -254,6 +254,7 @@ class CounterPollOut(BaseModel):
 
     accounts_read: int
     baselines: int
+    baseline_usage_rows: int
     changed: int
     unchanged: int
     usage_rows: int

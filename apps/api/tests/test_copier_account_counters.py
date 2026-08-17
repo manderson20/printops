@@ -141,9 +141,10 @@ def test_large_and_paper_counters_are_not_added_into_the_page_total():
 
 
 @pytest.mark.asyncio
-async def test_first_poll_stores_a_baseline_and_claims_no_usage(db, device, monkeypatch):
+async def test_first_poll_of_an_account_we_did_not_create_claims_no_usage(db, device, monkeypatch):
     """A copier that has been in service for years reports years of pages
-    on the first read. Recording that as usage would invent a day on which
+    on the first read. With no provisioning record there is nothing to say
+    where that counter started, so recording it would invent a day on which
     everyone copied their entire history."""
     _install(monkeypatch, _FakeConnector([{"1": _counters(copy_bw=48211)}]))
     result = await poll_account_counters(db, device)
@@ -155,11 +156,74 @@ async def test_first_poll_stores_a_baseline_and_claims_no_usage(db, device, monk
 
 
 @pytest.mark.asyncio
+async def test_first_poll_of_an_account_we_provisioned_counts_its_pages(db, device, monkeypatch):
+    """PrintOps created this account, so its counter started at zero and
+    the first reading is usage since provisioning — not history. Throwing
+    it away loses real pages by real people between provisioning and the
+    first poll."""
+    await _own(db, device, "1", "bailey@d.org")
+    _install(monkeypatch, _FakeConnector([{"1": _counters(copy_bw=2)}]))
+    result = await poll_account_counters(db, device)
+
+    rows = await _usage(db)
+    assert result.baseline_usage_rows == 1
+    assert [(r.activity_type, r.page_count, r.staff_email) for r in rows] == [
+        ("copy", 2, "bailey@d.org")
+    ]
+    # Flagged, because a sync that rewrote an adopted account rather than
+    # creating it could carry pages from before PrintOps was involved.
+    assert rows[0].raw_payload["from_provisioning_baseline"] is True
+    assert "usage since provisioning" in result.message
+
+
+@pytest.mark.asyncio
+async def test_a_provisioned_account_that_has_done_nothing_yet_records_nothing(
+    db, device, monkeypatch
+):
+    _install(monkeypatch, _FakeConnector([{"1": _counters(copy_bw=0)}]))
+    await _own(db, device, "1", "bailey@d.org")
+    result = await poll_account_counters(db, device)
+
+    assert result.baseline_usage_rows == 0
+    assert await _usage(db) == []
+
+
+@pytest.mark.asyncio
+async def test_the_baseline_window_starts_when_the_account_was_provisioned(
+    db, device, monkeypatch
+):
+    """Not at the first poll — the pages were made across the whole span
+    between the account existing and PrintOps first looking at it."""
+    provisioned = datetime(2026, 8, 17, 8, 37, tzinfo=UTC)
+    await _own(db, device, "1", "bailey@d.org", provisioned_at=provisioned)
+    _install(monkeypatch, _FakeConnector([{"1": _counters(copy_bw=2)}]))
+    at = datetime(2026, 8, 17, 16, 36, tzinfo=UTC)
+    await poll_account_counters(db, device, now=at)
+
+    row = (await _usage(db))[0]
+    assert row.period_start.replace(tzinfo=UTC) == provisioned
+    assert row.period_end.replace(tzinfo=UTC) == at
+
+
+@pytest.mark.asyncio
+async def test_a_baseline_is_counted_once_and_not_again(db, device, monkeypatch):
+    """The reading is stored, so the next poll has something to subtract
+    from and must not re-report the same pages."""
+    await _own(db, device, "1", "bailey@d.org")
+    _install(monkeypatch, _FakeConnector([{"1": _counters(copy_bw=2)}]))
+    await poll_account_counters(db, device)
+    await poll_account_counters(db, device)
+
+    rows = await _usage(db)
+    assert [r.page_count for r in rows] == [2]
+
+
+@pytest.mark.asyncio
 async def test_second_poll_records_only_what_happened_in_between(db, device, monkeypatch):
     await _own(db, device, "1", "amy@d.org")
     _install(
         monkeypatch,
-        _FakeConnector([{"1": _counters(copy_bw=48211)}, {"1": _counters(copy_bw=48261)}]),
+        _FakeConnector([{"1": _counters(copy_bw=0)}, {"1": _counters(copy_bw=50)}]),
     )
     await poll_account_counters(db, device)
     result = await poll_account_counters(db, device)
@@ -181,9 +245,9 @@ async def test_usage_window_starts_at_the_last_poll_not_the_last_change(db, devi
         monkeypatch,
         _FakeConnector(
             [
-                {"1": _counters(copy_bw=10)},
-                {"1": _counters(copy_bw=10)},
-                {"1": _counters(copy_bw=60)},
+                {"1": _counters(copy_bw=0)},
+                {"1": _counters(copy_bw=0)},
+                {"1": _counters(copy_bw=50)},
             ]
         ),
     )
@@ -311,7 +375,9 @@ async def test_a_cleared_counter_is_recorded_and_flagged(db, device, monkeypatch
     await poll_account_counters(db, device)
     result = await poll_account_counters(db, device)
 
-    row = (await _usage(db))[0]
+    # The baseline row (500 pages since provisioning) is its own record;
+    # the one under test is the row the reset produced.
+    row = next(r for r in await _usage(db) if r.raw_payload.get("follows_counter_reset"))
     assert result.resets == 1
     assert row.page_count == 6
     assert row.raw_payload["follows_counter_reset"] is True

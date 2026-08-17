@@ -37,6 +37,7 @@ from app.reports.formulas import (
     job_cost,
 )
 from app.reports.fun_facts import generate_fun_facts
+from app.reports.tracked_copies import get_tracked_copy_summary
 from app.reports.untracked_copies import get_untracked_copy_summary
 from app.schemas.auth import UserOut
 from app.schemas.report import (
@@ -52,7 +53,12 @@ from app.schemas.report import (
     SummaryOut,
     TimelineBucketOut,
 )
-from app.schemas.untracked_copies import UntrackedCopyPrinterEntryOut, UntrackedCopySummaryOut
+from app.schemas.untracked_copies import (
+    TrackedCopyDeviceEntryOut,
+    TrackedCopySummaryOut,
+    UntrackedCopyPrinterEntryOut,
+    UntrackedCopySummaryOut,
+)
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -413,6 +419,38 @@ async def report_peak_times(
 ):
     peak = await get_peak_times(db, filters)
     return PeakTimesOut(by_day_of_week=peak.by_day_of_week, by_hour=peak.by_hour)
+
+
+@router.get("/tracked-copies", response_model=TrackedCopySummaryOut)
+async def report_tracked_copies(
+    filters: ReportFilters = Depends(_report_filters), db: AsyncSession = Depends(get_db)
+):
+    """Walk-up copier activity PrintOps can attribute to a named person,
+    read back from per-account counters — the counterpart to
+    /untracked-copies, and meant to be read alongside it rather than on its
+    own (see app/reports/tracked_copies.py's module docstring)."""
+    summary = await get_tracked_copy_summary(db, filters)
+    return TrackedCopySummaryOut(
+        copy_pages=summary.copy_pages,
+        scan_pages=summary.scan_pages,
+        fax_pages=summary.fax_pages,
+        people=summary.people,
+        unattributed_pages=summary.unattributed_pages,
+        devices_reporting=summary.devices_reporting,
+        devices=[
+            TrackedCopyDeviceEntryOut(
+                device_id=str(d.device_id),
+                device_name=d.device_name,
+                building=d.building,
+                copy_pages=d.copy_pages,
+                scan_pages=d.scan_pages,
+                fax_pages=d.fax_pages,
+                people=d.people,
+                unattributed_pages=d.unattributed_pages,
+            )
+            for d in summary.devices
+        ],
+    )
 
 
 @router.get("/untracked-copies", response_model=UntrackedCopySummaryOut)
