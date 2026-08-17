@@ -414,6 +414,81 @@ a minimal create, the Account Track Counter read (`003_002_TCR000/TCR001`
 field semantics), and the bulk Authentication-Information import. All
 need at least one real account to exist.
 
+### 3.9.2 Creating an account — **verified end to end**
+
+```http
+POST /wcd/a_user.cgi
+Content-Type: application/x-www-form-urlencoded
+
+func=PSL_AA_TRA_TRA
+h_token=<token from the login response's id="h_token">
+AA_TRA_H_NUM=new          # "new", or an existing index to edit
+trackType=Password        # matches TrackMode.TrackType
+AA_TRA_R_RNM=Direct       # "Direct" = use the number below; "Space" = next free
+AA_TRA_T_MAX=1000         # the device's registration maximum
+AA_TRA_T_NUM=999          # account number (1..max)
+AA_TRA_T_NAM=POTEST       # account name — MAX 8 CHARACTERS
+AA_TRA_P_UP=99999         # password = the staff ID in Password Only mode
+AA_TRA_P_CMP=99999        # must match
+```
+
+**Success** (HTTP 200, XML):
+
+```xml
+<Message><Item Code="Ok_1" Param="999" SubCode="Record">Ok_1</Item></Message>
+<Redirect>a_authentication_track.xml</Redirect>
+```
+
+`Param` echoes the account number created. **Validation failure** uses the
+same envelope with an error code and the offending field named:
+
+```xml
+<Message><Item Code="Err_1">GeneralIllegalValue</Item>
+<ErrorDescription>TrackName</ErrorDescription></Message>
+```
+
+So success/failure is `Item Code` = `Ok_*` vs `Err_*`, **not** the HTTP
+status, which is 200 either way. `ErrorDescription` names the bad field,
+which is good enough to report per-account failures precisely during a bulk
+sync.
+
+**The 8-character limit is on the account NAME (`AA_TRA_T_NAM`), not the
+password.** `AA_TRA_P_UP` accepts 64. This is the opposite of what is
+usually assumed, and it matters: staff IDs go in the password, so their
+length is unconstrained in practice, while any human-readable account name
+must be squeezed into 8 characters.
+
+The minimal accepted field set is the one above — the `AA_TRA_S_*`
+permission flags and `AA_TRA_C_*`/`AA_TRA_T_*` limit pairs may all be
+omitted, and the device applies its defaults (verified in the created
+record: `FunctionLimit` all `"All"`, `TotalPrint.LimitOn "false"`,
+`AccountStop "Off"`).
+
+The created account reads back through `AppReqGetTrackSetting` as:
+
+```json
+{"TrackID":"999","TrackType":"Private","TrackPasswordExist":"true",
+ "TotalPrint":{"LimitOn":"false","Limit":"0"},"AccountStop":"Off",
+ "FunctionLimit":{"EnablePrint":"All","EnableCopy":"All","EnableScan":"All",
+                  "EnablePrintSend":"All","EnableFaxSend":"All"}}
+```
+
+Note `TrackPasswordExist` is a boolean — the password is never read back,
+so a sync cannot diff passwords, only presence. Re-pushing an account is
+the only way to change its code.
+
+`AccountStop` is the per-account disable switch — the natural target for
+"suspended" in a lifecycle sync, as distinct from deleting the account.
+
+**Deleting is NOT yet captured.** `func=PSL_AA_TRA_PAG` with
+`H_FLAG=Delete`, `AA_TrackID=<id>`, `AA_TRA_H_BOX=Public` and the paging
+fields returns a `waitmove` envelope (`RedirectUrl` + `Interval`) but the
+account survives, including after following the redirect. The delete func
+is not present in `Integrated_main.js` and `a_authentication_track.xml` is
+a data document rather than a form, so it needs another route — most
+likely the bulk Authentication-Information import with replace semantics,
+which is the preferred provisioning path anyway.
+
 ## 4. Not yet captured
 
 These items from §5.1 of the task brief remain open, all blocked by Account
