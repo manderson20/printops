@@ -34,6 +34,28 @@ REQUEST_TIMEOUT_SECONDS = 30
 PAGE_SIZE = 100
 MAX_ACCOUNTS = 1000
 
+# The counter read has its own, smaller window: 51 accounts is accepted and
+# 266 is refused with GeneralRangeIllegal, so the exact ceiling sits
+# somewhere between. 50 is what the device's own Account Track Counter
+# screen asks for, which is the number to trust.
+COUNTER_PAGE_SIZE = 50
+
+# A window past the end of the account list comes back ArraySize 0 rather
+# than as an error, so an empty page is not proof there is nothing beyond
+# it — account numbers can be sparse. Two empty windows in a row ends the
+# read; anything more thorough would mean 20 round trips to cover a
+# 1000-account range that in practice holds a few hundred.
+EMPTY_PAGES_BEFORE_STOP = 2
+
+# The device's per-activity counter lists, mapped to the names used
+# everywhere above this module.
+COUNTER_LISTS = {
+    "TotalCounterList": "total",
+    "CopyCounterList": "copy",
+    "PrintCounterList": "print",
+    "ScanFaxCounterList": "scan_fax",
+}
+
 # One lock per device IP. The constraint is the device's, not this
 # process's, so the key is the address rather than the MfpDevice row.
 _DEVICE_LOCKS: dict[str, asyncio.Lock] = {}
@@ -56,6 +78,44 @@ class KonicaAdminBusy(KonicaAdminError):
     """The device already has an admin session open, so PrintOps can't get
     one. Usually a person logged into the web UI — worth saying so plainly
     rather than reporting a generic failure."""
+
+
+@dataclass
+class TrackCounters:
+    """One account's counters as the device reports them: lifetime totals,
+    never a period.
+
+    The device only ever increments these; the sole way one goes down is an
+    admin pressing Counter Clear on the Account Track Counter page. So a
+    caller reading this twice and subtracting is reading usage — reading it
+    once tells you the account's whole history, which is almost never the
+    question being asked.
+
+    `lists` is kept as the device's own {list: {Type: Count}} rather than
+    flattened into named fields: the Type vocabulary differs by model (a
+    mono device reports only Bw/BwLarge where a colour one adds FullColor,
+    BiColor and MonoColor), and collapsing that here would silently drop
+    whatever this firmware happens to report."""
+
+    track_id: str
+    lists: dict[str, dict[str, int]]
+
+    @classmethod
+    def from_device(cls, row: dict) -> "TrackCounters":
+        lists: dict[str, dict[str, int]] = {}
+        for device_key, name in COUNTER_LISTS.items():
+            counters = row.get(device_key, {}).get("Counter", [])
+            # Single-element arrays arrive as an object, same as TrackList.
+            if isinstance(counters, dict):
+                counters = [counters]
+            parsed: dict[str, int] = {}
+            for counter in counters:
+                try:
+                    parsed[str(counter["Type"])] = int(counter["Count"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+            lists[name] = parsed
+        return cls(track_id=str(row.get("TrackID", "")), lists=lists)
 
 
 @dataclass
@@ -251,6 +311,44 @@ class KonicaAdminSession:
                 break
             start += length
         return accounts
+
+    async def list_account_counters(self, limit: int = MAX_ACCOUNTS) -> list[TrackCounters]:
+        """Every account's lifetime counters.
+
+        `AppReqGetTrackCounterInfo` — read out of the Account Track Counter
+        screen's own JS (spa_003_002_TCR001.tmpl.html), which is why an
+        earlier capture concluded per-account counters weren't on the
+        WebAPI at all: the endpoint that returns Nack/"Webapi not
+        supported" is `AppReqGetTrackCounter`, one word short of the real
+        one.
+
+        Windows are ID ranges, not offsets — Start/End are account numbers,
+        and only the accounts that exist within the range come back."""
+        counters: list[TrackCounters] = []
+        start = 1
+        empty_pages = 0
+        while start <= limit and empty_pages < EMPTY_PAGES_BEFORE_STOP:
+            end = min(start + COUNTER_PAGE_SIZE - 1, limit)
+            mfp = await self.webapi(
+                "AppReqGetTrackCounterInfo",
+                {
+                    "TrackCounterListCondition": {
+                        "TrackType": "Private",
+                        "ObtainCondition": {
+                            "Type": "IndexList",
+                            "IndexRange": {"Start": start, "End": end},
+                        },
+                        "BackUp": "false",
+                    }
+                },
+            )
+            rows = mfp.get("TrackCounterList", {}).get("TrackCounter", [])
+            if isinstance(rows, dict):
+                rows = [rows]
+            empty_pages = empty_pages + 1 if not rows else 0
+            counters.extend(TrackCounters.from_device(row) for row in rows)
+            start = end + 1
+        return counters
 
     async def write_account(
         self,

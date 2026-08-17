@@ -87,6 +87,7 @@ class MfpDeviceCreate(BaseModel):
     # copier-accounting filter allows.
     provision_org_unit_paths: list[str] | None = None
     auto_sync_users: bool = False
+    auto_poll_counters: bool = False
 
     notes: str | None = None
 
@@ -121,6 +122,7 @@ class MfpDeviceUpdate(BaseModel):
     admin_password: str | None = None
     provision_org_unit_paths: list[str] | None = None
     auto_sync_users: bool | None = None
+    auto_poll_counters: bool | None = None
 
     # Manual capability overrides — connector-run checks
     # (check-capabilities) also write these fields, but an admin can set
@@ -165,6 +167,10 @@ class MfpDeviceOut(BaseModel):
     last_user_sync_at: datetime | None
     last_user_sync_ok: bool | None
     last_user_sync_message: str | None
+    auto_poll_counters: bool
+    last_counter_poll_at: datetime | None
+    last_counter_poll_ok: bool | None
+    last_counter_poll_message: str | None
 
     page_count_total: int | None
     page_count_copy: int | None
@@ -238,6 +244,22 @@ class DeviceUserOut(BaseModel):
     name: str | None
     has_password: bool
     disabled: bool
+
+
+class CounterPollOut(BaseModel):
+    """What one counter poll found. `baselines` is the count of accounts
+    read for the first time — those produce no usage, because there is no
+    earlier reading to subtract, and saying so is the difference between
+    "nothing happened" and "nothing could have happened yet"."""
+
+    accounts_read: int
+    baselines: int
+    changed: int
+    unchanged: int
+    usage_rows: int
+    resets: int
+    unmapped: int
+    message: str
 
 
 class SyncJobOut(BaseModel):

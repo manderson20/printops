@@ -16,11 +16,13 @@ import {
   listMfpDeviceUsage,
   listMfpProvisionedAccounts,
   previewMfpDeviceProvisioning,
+  pollMfpDeviceCounters,
   syncMfpDeviceUsers,
   testMfpDeviceConnection,
   updateMfpDevice,
   type ConnectorTypeOption,
   type CopierUsageRecord,
+  type CounterPollResult,
   type DeviceCapabilities,
   type MfpDevice,
   type DeviceUser,
@@ -108,6 +110,10 @@ export default function MfpDeviceDetailPage() {
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [accountsError, setAccountsError] = useState<string | null>(null);
   const [job, setJob] = useState<SyncJob | null>(null);
+  const [autoPollCounters, setAutoPollCounters] = useState(false);
+  const [pollingCounters, setPollingCounters] = useState(false);
+  const [pollResult, setPollResult] = useState<CounterPollResult | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
   const [owners, setOwners] = useState<ProvisionedAccount[] | null>(null);
 
   useEffect(() => {
@@ -123,6 +129,7 @@ export default function MfpDeviceDetailPage() {
         setProvisionOus(device.provision_org_unit_paths ?? []);
         setAdminUsername(device.admin_username ?? "");
         setAutoSyncUsers(device.auto_sync_users);
+        setAutoPollCounters(device.auto_poll_counters);
       })
       .catch((error: unknown) =>
         setState({
@@ -161,6 +168,7 @@ export default function MfpDeviceDetailPage() {
         provision_org_unit_paths: provisionOus.length > 0 ? provisionOus : null,
         admin_username: adminUsername || null,
         auto_sync_users: autoSyncUsers,
+        auto_poll_counters: autoPollCounters,
         // Only sent when retyped; omitting it leaves the stored password
         // alone, same as the SNMP community field elsewhere.
         ...(adminPassword ? { admin_password: adminPassword } : {}),
@@ -239,6 +247,24 @@ export default function MfpDeviceDetailPage() {
       setActionError(err instanceof ApiError ? err.message : "Could not start the sync");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function handlePollCounters() {
+    setPollingCounters(true);
+    setPollError(null);
+    try {
+      setPollResult(await pollMfpDeviceCounters(params.id));
+      // The counters just produced usage rows, and the device row now
+      // carries when it last worked — both are on this page.
+      listMfpDeviceUsage(params.id, 20).then(setUsage).catch(() => {});
+      getMfpDevice(params.id)
+        .then((d) => setState({ phase: "ok", device: d }))
+        .catch(() => {});
+    } catch (err) {
+      setPollError(err instanceof ApiError ? err.message : "Failed to read the copier's counters");
+    } finally {
+      setPollingCounters(false);
     }
   }
 
@@ -651,6 +677,88 @@ export default function MfpDeviceDetailPage() {
               Last sync {formatRelativeTime(device.last_user_sync_at)}
               {device.last_user_sync_ok === false && " — had problems"}
               {device.last_user_sync_message && `: ${device.last_user_sync_message}`}
+            </p>
+          )}
+        </Card>
+      )}
+
+      {isAdmin && (
+        <Card>
+          <div className="mb-1 flex items-center justify-between">
+            <CardTitle>Copy Counts From This Copier</CardTitle>
+            <Button onClick={handlePollCounters} disabled={pollingCounters}>
+              {pollingCounters ? "Reading…" : "Read Counts Now"}
+            </Button>
+          </div>
+          <p className="mb-3 text-xs text-zinc-500">
+            The copier counts pages per account as a running total that never resets, so it can
+            only say how many pages an account has made <em>ever</em>. PrintOps records each
+            reading and reports the difference from the one before it — which is why the first
+            read produces no usage at all, and every one after it covers exactly the time since
+            the last read.
+          </p>
+
+          {pollError && <ErrorState>{pollError}</ErrorState>}
+
+          {pollResult && (
+            <div className="mb-3 rounded border border-black/[.08] p-3 text-sm dark:border-white/[.12]">
+              {pollResult.baselines > 0 && pollResult.usage_rows === 0 ? (
+                <>
+                  <strong>First reading taken</strong> — {pollResult.baselines} accounts. There
+                  is nothing to compare against yet, so no usage was recorded. The next read is
+                  the one that produces numbers.
+                </>
+              ) : (
+                <>
+                  <strong>{pollResult.usage_rows}</strong>{" "}
+                  {pollResult.usage_rows === 1 ? "entry" : "entries"} recorded from{" "}
+                  {pollResult.changed} {pollResult.changed === 1 ? "account" : "accounts"}, out of{" "}
+                  {pollResult.accounts_read} read.
+                </>
+              )}
+              {pollResult.unmapped > 0 && (
+                <div className="mt-1 text-xs text-amber-700 dark:text-amber-500">
+                  {pollResult.unmapped} of them{" "}
+                  {pollResult.unmapped === 1 ? "is an account" : "are accounts"} PrintOps
+                  didn&apos;t set up, so the pages aren&apos;t matched to anyone. They&apos;re
+                  kept, and show up under Unmapped Activity.
+                </div>
+              )}
+              {pollResult.resets > 0 && (
+                <div className="mt-1 text-xs text-amber-700 dark:text-amber-500">
+                  {pollResult.resets}{" "}
+                  {pollResult.resets === 1 ? "account's counter was" : "accounts' counters were"}{" "}
+                  cleared on the copier since the last read. The pages counted since that clear
+                  were recorded.
+                </div>
+              )}
+            </div>
+          )}
+
+          <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={autoPollCounters}
+              onChange={(e) => setAutoPollCounters(e.target.checked)}
+            />
+            <span>
+              Read the counts automatically
+              <br />
+              <span className="text-xs text-zinc-500">
+                Every hour. This only reads — it never changes anything on the copier. The
+                interval is also how precisely a copy can be dated, since the counters carry no
+                timestamps: all PrintOps can say is that the pages happened between two reads.
+                Remember to Save.
+              </span>
+            </span>
+          </label>
+
+          {device.last_counter_poll_at && (
+            <p className="mt-3 text-xs text-zinc-500">
+              Last read {formatRelativeTime(device.last_counter_poll_at)}
+              {device.last_counter_poll_ok === false && " — failed"}
+              {device.last_counter_poll_message && `: ${device.last_counter_poll_message}`}
             </p>
           )}
         </Card>

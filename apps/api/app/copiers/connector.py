@@ -109,6 +109,25 @@ class DeviceUser:
     disabled: bool = False
 
 
+@dataclass
+class DeviceAccountCounters:
+    """One account's counters as the device reports them right now.
+
+    These are lifetime running totals, not usage in a period — the whole
+    point of the type is to stop callers treating them as the latter.
+    Turning them into usage means storing a reading and subtracting the
+    previous one (app/copiers/account_counters.py), the same shape as
+    app/printers/counter_history.py does for SNMP printer meters.
+
+    `lists` is {activity: {counter_type: value}} — "total", "copy",
+    "print", "scan_fax" as the activity, and vendor counter type names
+    (Bw, FullColor, …) beneath, kept verbatim because the vocabulary is
+    model-dependent."""
+
+    account_id: str
+    lists: dict[str, dict[str, int]] = field(default_factory=dict)
+
+
 # Called after each account so a long sync can report progress:
 # (done, total, synced, failed).
 ProgressCallback = Callable[[int, int, int, int], Awaitable[None]]
@@ -183,6 +202,18 @@ class CopierConnector(ABC):
         raise CapabilityNotSupported(
             f"The {self.connector_type} connector can't retrieve per-user accounting directly "
             "— use a CSV import instead."
+        )
+
+    async def read_account_counters(self, device: MfpDevice) -> list["DeviceAccountCounters"]:
+        """Current lifetime counters for every account on the device.
+
+        Separate from get_user_accounting because it is a different kind of
+        answer: this is a meter reading, and usage only exists once two
+        readings are subtracted. A connector whose device reports genuine
+        per-period activity (a job log) should implement get_user_accounting
+        instead."""
+        raise CapabilityNotSupported(
+            f"The {self.connector_type} connector can't read per-account counters."
         )
 
     async def list_device_users(self, device: MfpDevice) -> list["DeviceUser"]:

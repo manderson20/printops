@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.copiers.account_counters import poll_account_counters
 from app.copiers.connector import CapabilityNotSupported, ConnectionTestResult, refresh_device_meter
 from app.copiers.device_admin import DeviceCredentialsMissing
 from app.copiers.konica_admin import KonicaAdminBusy, KonicaAdminError
@@ -21,6 +22,7 @@ from app.models.printer import Printer
 from app.schemas.copier_usage import CopierUsageRecordOut
 from app.schemas.mfp_device import (
     ConnectorTypeOut,
+    CounterPollOut,
     DeviceUserOut,
     MfpDeviceCreate,
     MfpDeviceOut,
@@ -98,6 +100,10 @@ def _device_out(device: MfpDevice) -> MfpDeviceOut:
         last_user_sync_at=device.last_user_sync_at,
         last_user_sync_ok=device.last_user_sync_ok,
         last_user_sync_message=device.last_user_sync_message,
+        auto_poll_counters=device.auto_poll_counters,
+        last_counter_poll_at=device.last_counter_poll_at,
+        last_counter_poll_ok=device.last_counter_poll_ok,
+        last_counter_poll_message=device.last_counter_poll_message,
         page_count_total=device.page_count_total,
         page_count_copy=device.page_count_copy,
         page_count_print=device.page_count_print,
@@ -363,6 +369,49 @@ async def sync_device_users(
     device = await _get_device_or_404(device_id, db)
     job = await start_sync_job(db, device, trigger="rewrite" if rewrite else "manual")
     return _job_out(job)
+
+
+@router.post("/{device_id}/poll-counters", response_model=CounterPollOut)
+async def poll_device_counters(device_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Read per-account counters now and record whatever usage happened
+    since the last read.
+
+    Blocking, unlike sync-users: the whole fleet's counters come back 50
+    accounts per request, so a few hundred accounts is a handful of round
+    trips rather than one per person.
+
+    The first poll of a device produces no usage at all — it stores the
+    baseline the next poll subtracts from. That is not a failure and the
+    result says so."""
+    device = await _get_device_or_404(device_id, db)
+    try:
+        result = await poll_account_counters(db, device)
+    except (CapabilityNotSupported, DeviceCredentialsMissing) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except KonicaAdminBusy as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except KonicaAdminError as exc:
+        await _record_counter_poll_failure(db, device, str(exc))
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return CounterPollOut(
+        accounts_read=result.accounts_read,
+        baselines=result.baselines,
+        changed=result.changed,
+        unchanged=result.unchanged,
+        usage_rows=result.usage_rows,
+        resets=result.resets,
+        unmapped=result.unmapped,
+        message=result.message,
+    )
+
+
+async def _record_counter_poll_failure(db: AsyncSession, device: MfpDevice, message: str) -> None:
+    """A failed poll is recorded on the device like a failed sync is, so
+    "when did this last work" is answerable without reading logs."""
+    device.last_counter_poll_at = datetime.now(UTC)
+    device.last_counter_poll_ok = False
+    device.last_counter_poll_message = message
+    await db.commit()
 
 
 @router.get("/{device_id}/sync-jobs/latest", response_model=SyncJobOut | None)

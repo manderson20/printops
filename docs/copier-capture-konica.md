@@ -183,10 +183,11 @@ This is the important negative result: these return `Webapi not supported`
 firmware, per-account counters are *not* available through
 `AppReqGetCounterInfo`.
 
-`get_user_accounting` therefore needs a different source — the counter
-export from the classic `a_*.xml` admin pages, or the Track Report — which
-is **not yet captured** (the device has no account data to export while
-Account Track is off).
+`get_user_accounting` therefore needs a different source. **It has one** —
+`AppReqGetTrackCounterInfo`, a different endpoint on the same WebAPI. See
+§3.9.3. The conclusion to draw from this section is narrower than it first
+looks: `AppReqGetCounterInfo` has no per-account variant, not that the
+WebAPI has no per-account counters.
 
 ### 3.3 Account Track list — **verified reachable, blocked by device mode**
 
@@ -343,17 +344,19 @@ feature on it returns `Ack` instead of `AuthNotTrackMode`:
 `ArraySize` is the account count — this is the endpoint to poll to read the
 device's current account list, and to diff against before provisioning.
 
-**Per-account counters are still not on the WebAPI.** With Account Track
-enabled and a valid admin session, all of these still return
-`Nack / "Webapi not supported."`:
+**These four endpoints stay unsupported**, with Account Track enabled and
+a valid admin session:
 
 ```
 AppReqGetCounterInfo/_Account      AppReqGetTrackCounter
 AppReqGetCounterInfo/_Track        AppReqGetTrackCounter  (+TrackListCondition)
 ```
 
-So §3.2's conclusion holds even after enabling the feature: per-account
-counters must come from the classic admin pages, not `/wcd/api`.
+That was read at the time as "per-account counters are not on the WebAPI".
+It is not: the working endpoint is **`AppReqGetTrackCounterInfo`** (§3.9.3)
+— `AppReqGetTrackCounter` above is the same name one word short. Guessing
+endpoint names is what produced the wrong conclusion; §3.9.3 came from
+reading the device's own screen JS instead.
 
 ### 3.9.1 The admin pages behind Account Track — **verified**
 
@@ -489,6 +492,79 @@ a data document rather than a form, so it needs another route — most
 likely the bulk Authentication-Information import with replace semantics,
 which is the preferred provisioning path anyway.
 
+### 3.9.3 Per-account counters — **verified working**
+
+The endpoint the Account Track Counter screen actually uses:
+
+```http
+POST /wcd/api/AppReqGetTrackCounterInfo
+Content-Type: application/json
+
+{"TrackCounterListCondition":{
+   "TrackType":"Private",
+   "ObtainCondition":{"Type":"IndexList","IndexRange":{"Start":1,"End":50}},
+   "BackUp":"false"},
+ "Token":"<rotating token>"}
+```
+
+**How it was found, because the method matters more than the result:**
+every SPA screen loads its data from `api/AppReqGetCustomData/_<screenId>`
+(`Integrated_content.js:spa_ajax_contentsData`), and each screen's own JS
+is appended to its `spa_<screenId>.tmpl.html`, *after* the underscore
+template. Reading `spa_003_002_TCR001.tmpl.html` gives the request, the
+response paths, and the counter type vocabulary in one file, with no login
+and no browser. That is where every "not supported" answer above should
+have been checked first — the four dead endpoints were guesses at names,
+and one of them was one word off.
+
+**Windows are account-number ranges, not offsets.** `Start`/`End` are
+account numbers; only accounts that exist within the range come back, and
+a range past the last account returns `ArraySize 0` rather than an error —
+so paging stops on an empty window, not on a short one. 51 accounts in one
+call is accepted and 266 is refused with `GeneralRangeIllegal`; the
+device's own screen asks for 50, which is the number to use.
+
+**Response**, per account:
+
+```json
+{"TrackCounterList":{"ArraySize":"1","TrackCounter":{
+  "TrackType":"Private","TrackID":"1",
+  "TotalCounterList":{"ArraySize":"7","Counter":[
+     {"Type":"Bw","Count":"0"},{"Type":"BwLarge","Count":"0"},
+     {"Type":"Document","Count":"0"},{"Type":"Paper","Count":"0"},
+     {"Type":"DuplexTotal","Count":"0"},{"Type":"PrintPageTotal","Count":"0"},
+     {"Type":"BlackPrintPaper","Count":"0"}]},
+  "CopyCounterList":{...},"PrintCounterList":{...},
+  "ScanFaxCounterList":{...},"OtherTrackCounterList":{...},
+  "TotalCounterData":{"Nin1TotalRate":"0.000","DuplexTotalRate":"0.000"}}}}
+```
+
+Single-element arrays collapse to an object, same trap as `TrackList`.
+
+| List | Types seen on the 950i (mono) | Types the screen JS also handles |
+|---|---|---|
+| `TotalCounterList` | Bw, BwLarge, Document, Paper, DuplexTotal, PrintPageTotal, BlackPrintPaper | Total, TotalLarge, FullColor, BiColor, MonoColor (+`*Large`) |
+| `CopyCounterList` | Bw, BwLarge, BlackPrintPaper | FullColor, BiColor, MonoColor (+`*Large`) |
+| `PrintCounterList` | Bw, BwLarge, BlackPrintPaper | FullColor, BiColor (+`*Large`) |
+| `ScanFaxCounterList` | PrintTotalBw, PrintLargeBw, FaxSend, DocumentReadTotal, DocumentReadLarge, BlackPrintPaper | PrintTotalColor, PrintLargeColor |
+| `OtherTrackCounterList` | Nin12in1, Nin14in1, Nin1Other | — |
+
+Two things about these numbers that decide how they can be used:
+
+- **They are lifetime totals and only ever climb.** Read once, an account
+  reports its whole history. Usage is the difference between two reads —
+  see `app/copiers/account_counters.py`. The only thing that lowers one is
+  the Counter Clear button on this screen (`func` posted by `ID_AA_CLR_CNT`
+  — **not captured, and never to be run against a production counter**).
+- **The colour modes are disjoint, and `*Large` is not.** Bw, FullColor,
+  BiColor and MonoColor each count a page once; `BwLarge` re-counts
+  large-format pages already in `Bw`, and `Paper`/`Document` count sheets
+  and originals rather than pages. Summing everything double-counts.
+
+Counters carry no timestamps, so the read interval is the resolution of
+any usage derived from them: all that can honestly be said is that the
+pages happened between two reads.
+
 ## 4. Not yet captured
 
 These items from §5.1 of the task brief remain open, all blocked by Account
@@ -499,8 +575,6 @@ Track being off (§0) — there is nothing to list, count, or export yet:
 - **Bulk import** of Authentication Information (the multipart upload and its
   CSV column format) — the intended bulk-provisioning path.
 - **Export** of the same category, to learn the exact columns.
-- **Per-account counter read** — needs a source other than
-  `AppReqGetCounterInfo` (§3.2).
 - **Counter reset** request shape (capture only; never execute on a
   production counter).
 

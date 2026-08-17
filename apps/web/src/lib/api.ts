@@ -469,6 +469,10 @@ export type MfpDevice = {
   last_user_sync_at: string | null;
   last_user_sync_ok: boolean | null;
   last_user_sync_message: string | null;
+  auto_poll_counters: boolean;
+  last_counter_poll_at: string | null;
+  last_counter_poll_ok: boolean | null;
+  last_counter_poll_message: string | null;
   page_count_total: number | null;
   page_count_copy: number | null;
   page_count_print: number | null;
@@ -512,6 +516,7 @@ export type MfpDeviceCreateInput = {
   admin_password?: string | null;
   provision_org_unit_paths?: string[] | null;
   auto_sync_users?: boolean;
+  auto_poll_counters?: boolean;
   notes?: string | null;
 };
 
@@ -575,6 +580,27 @@ export async function syncMfpDeviceUsers(
 ): Promise<SyncJob> {
   const query = options.rewrite ? "?rewrite=true" : "";
   const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/sync-users${query}`, {
+    method: "POST",
+  });
+  return response.json();
+}
+
+export type CounterPollResult = {
+  accounts_read: number;
+  baselines: number;
+  changed: number;
+  unchanged: number;
+  usage_rows: number;
+  resets: number;
+  unmapped: number;
+  message: string;
+};
+
+/** Reads the copier's per-account counters and records whatever usage has
+ * happened since the last read. The first run of a device only stores the
+ * baseline — see CounterPollResult.baselines. */
+export async function pollMfpDeviceCounters(id: string): Promise<CounterPollResult> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/poll-counters`, {
     method: "POST",
   });
   return response.json();

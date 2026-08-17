@@ -148,6 +148,17 @@ class MfpDevice(Base, TimestampMixin):
     last_user_sync_ok: Mapped[bool | None] = mapped_column(default=None)
     last_user_sync_message: Mapped[str | None] = mapped_column(default=None)
 
+    # Whether the background loop reads per-account counters off this
+    # device. Separate from auto_sync_users because it is the opposite kind
+    # of operation — this one only reads — and an admin will usually want
+    # it on well before they are ready to let PrintOps write accounts.
+    auto_poll_counters: Mapped[bool] = mapped_column(default=False, server_default="false")
+    last_counter_poll_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    last_counter_poll_ok: Mapped[bool | None] = mapped_column(default=None)
+    last_counter_poll_message: Mapped[str | None] = mapped_column(default=None)
+
     last_test_connection_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )

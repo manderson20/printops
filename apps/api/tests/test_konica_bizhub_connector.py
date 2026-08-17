@@ -45,7 +45,11 @@ async def test_get_capabilities_reflects_known_konica_feature_set():
     report = await connector.get_capabilities(_device())
     assert report.capabilities["department_id_accounting"] is True
     assert report.capabilities["user_code_pin_auth"] is True
-    assert report.capabilities["api_accounting_retrieval"] is False
+    # Was False until AppReqGetTrackCounterInfo was verified against
+    # hardware (docs/copier-capture-konica.md §3.9.3). What it returns is
+    # per-account running totals, not a job log — read_account_counters,
+    # not get_user_accounting.
+    assert report.capabilities["api_accounting_retrieval"] is True
 
 
 @pytest.mark.asyncio

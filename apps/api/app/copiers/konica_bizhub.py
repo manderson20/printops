@@ -27,6 +27,7 @@ from app.copiers.connector import (
     CapabilityNotSupported,
     ConnectionTestResult,
     CopierConnector,
+    DeviceAccountCounters,
     DeviceCapabilityReport,
     DeviceUser,
     MeterSnapshot,
@@ -147,7 +148,11 @@ class KonicaBizhubConnector(CopierConnector):
                 "user_code_pin_auth": True,  # User Authentication
                 "csv_accounting_export": True,
                 "snmp_meter_counters": True,
-                "api_accounting_retrieval": False,
+                # Per-account counters are readable over the WebAPI
+                # (read_account_counters). They are running totals rather
+                # than a job log, so what comes back is pages-since-last-
+                # read, not individual jobs.
+                "api_accounting_retrieval": True,
                 # Verified against real hardware — PrintOps registers
                 # Account Track accounts directly (see sync_users_to_device
                 # and docs/copier-capture-konica.md §3.9.2).
@@ -181,6 +186,28 @@ class KonicaBizhubConnector(CopierConnector):
             )
             for a in accounts
         ]
+
+    async def read_account_counters(self, device: MfpDevice) -> list[DeviceAccountCounters]:
+        """Lifetime counters for every Account Track account.
+
+        Note what this is not: a job log. The bizhub has no per-user job
+        history on the WebAPI (docs/copier-capture-konica.md §3.6), so
+        there is no "who copied what at 10:41" to be had — only running
+        totals per account, which become usage by subtraction upstream."""
+        if not device.ip_address:
+            raise CapabilityNotSupported("This copier has no IP address configured.")
+        credentials = get_admin_credentials(device)
+        async with KonicaAdminSession(device.ip_address, credentials) as session:
+            try:
+                counters = await session.list_account_counters()
+            except KonicaAdminError as exc:
+                if "AuthNotTrackMode" in str(exc):
+                    raise CapabilityNotSupported(
+                        "Account Track is switched off on this copier, so it counts "
+                        "no per-account usage."
+                    ) from exc
+                raise
+        return [DeviceAccountCounters(account_id=c.track_id, lists=c.lists) for c in counters]
 
     async def sync_users_to_device(
         self,

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from jwt import PyJWTError
 from sqlalchemy import delete, select
 
+from app.copiers.account_counters import poll_account_counters
 from app.copiers.sync_jobs import create_sync_job, run_sync_job
 from app.core.config import get_settings
 from app.core.security import decode_access_token
@@ -425,6 +426,57 @@ async def _copier_user_sync_loop() -> None:
         await asyncio.sleep(COPIER_USER_SYNC_INTERVAL_SECONDS)
 
 
+COPIER_COUNTER_POLL_INTERVAL_SECONDS = 60 * 60
+
+
+async def _copier_counter_poll_loop() -> None:
+    """Reads per-account counters from copiers that have
+    auto_poll_counters on, and records the usage since the last read.
+
+    Hourly, where the user sync is six-hourly: this one only reads, it is
+    a handful of requests rather than one per person, and the interval is
+    what bounds how precisely a copy can be dated. The counters carry no
+    timestamps at all — all PrintOps can say is "between these two reads"
+    — so the poll interval *is* the resolution of the resulting usage
+    data. An hour is a good deal more useful than six for that.
+
+    Sequentially and for the same reason as the sync loop: one admin
+    session per device.
+
+    A device that has never been polled produces no usage on its first
+    run, only a baseline to subtract from next time. That is expected, and
+    the message recorded on the device says as much rather than implying
+    nobody used the copier."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                devices = (
+                    (
+                        await db.execute(
+                            select(MfpDevice).where(MfpDevice.auto_poll_counters.is_(True))
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for device in devices:
+                    try:
+                        result = await poll_account_counters(db, device)
+                        logger.info("Counter poll for %s: %s", device.name, result.message)
+                    except Exception as exc:  # noqa: BLE001
+                        # One unreachable copier must not stop the rest of
+                        # the fleet being read, and the reason belongs on
+                        # the device where an admin will look for it.
+                        logger.warning("Counter poll failed for %s: %s", device.name, exc)
+                        device.last_counter_poll_at = datetime.now(UTC)
+                        device.last_counter_poll_ok = False
+                        device.last_counter_poll_message = str(exc)
+                        await db.commit()
+        except Exception:
+            logger.exception("Unexpected error in copier counter poll loop")
+        await asyncio.sleep(COPIER_COUNTER_POLL_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tasks = [
@@ -447,6 +499,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_held_job_purge_loop()),
         asyncio.create_task(_failed_job_purge_loop()),
         asyncio.create_task(_copier_user_sync_loop()),
+        asyncio.create_task(_copier_counter_poll_loop()),
     ]
     yield
     for task in tasks:
