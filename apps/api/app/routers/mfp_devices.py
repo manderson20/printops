@@ -19,6 +19,7 @@ from app.models.printer import Printer
 from app.schemas.copier_usage import CopierUsageRecordOut
 from app.schemas.mfp_device import (
     ConnectorTypeOut,
+    DeviceUserOut,
     MfpDeviceCreate,
     MfpDeviceOut,
     MfpDeviceUpdate,
@@ -343,9 +344,45 @@ async def sync_device_users(device_id: UUID, db: AsyncSession = Depends(get_db))
     except KonicaAdminError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
+    # Record the outcome on the device, exactly as the scheduled loop
+    # does — a manual sync that leaves "Last sync" blank looks like it
+    # never ran, which is precisely the confusion this field exists to
+    # prevent.
+    device.last_user_sync_at = datetime.now(UTC)
+    device.last_user_sync_ok = result.failed_count == 0
+    device.last_user_sync_message = result.message
+    await db.commit()
+
     return SyncUsersResultOut(
         synced_count=result.synced_count,
         failed_count=result.failed_count,
         selected_count=plan.count,
         message=result.message,
     )
+
+
+@router.get("/{device_id}/device-accounts", response_model=list[DeviceUserOut])
+async def list_device_accounts(device_id: UUID, db: AsyncSession = Depends(get_db)):
+    """The accounts that actually exist ON the copier right now.
+
+    Read live from the device rather than from anything PrintOps stored,
+    because the point is to confirm what the machine will accept — a cached
+    answer would defeat it."""
+    device = await _get_device_or_404(device_id, db)
+    connector = get_connector(device.connector_type)
+    try:
+        users = await connector.list_device_users(device)
+    except CapabilityNotSupported as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except DeviceCredentialsMissing as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except KonicaAdminBusy as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except KonicaAdminError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return [
+        DeviceUserOut(
+            identifier=u.identifier, name=u.name, has_password=u.has_password, disabled=u.disabled
+        )
+        for u in users
+    ]

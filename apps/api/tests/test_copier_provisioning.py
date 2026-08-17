@@ -228,3 +228,29 @@ async def test_missing_admin_password_is_reported_not_crashed():
 
     with pytest.raises(DeviceCredentialsMissing):
         await KonicaBizhubConnector().sync_users_to_device(device, [])
+
+
+@pytest.mark.asyncio
+async def test_list_device_users_reports_what_is_on_the_device(monkeypatch):
+    """The on-device account list is read live from the copier — it's the
+    only way to confirm a sync actually landed."""
+    fake = _FakeSession(
+        existing=[
+            TrackAccount("1", "amy", True, False),
+            TrackAccount("2", "bob", False, True),
+        ]
+    )
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    users = await KonicaBizhubConnector().list_device_users(_device())
+    assert [u.identifier for u in users] == ["1", "2"]
+    assert users[0].has_password is True
+    assert users[1].disabled is True
+
+
+@pytest.mark.asyncio
+async def test_list_device_users_explains_account_track_being_off(monkeypatch):
+    fake = _FakeSession(list_error=KonicaAdminError("AuthNotTrackMode invalid track mode"))
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    with pytest.raises(CapabilityNotSupported) as excinfo:
+        await KonicaBizhubConnector().list_device_users(_device())
+    assert "Account Track is switched off" in str(excinfo.value)

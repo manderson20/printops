@@ -97,6 +97,18 @@ class NormalizedUsageRow:
 
 
 @dataclass
+class DeviceUser:
+    """One login account as it exists on the device. `has_password` rather
+    than the password itself — vendors generally report presence only, and
+    a connector must never invent a value it can't read."""
+
+    identifier: str
+    name: str | None = None
+    has_password: bool = False
+    disabled: bool = False
+
+
+@dataclass
 class SyncResult:
     synced_count: int = 0
     failed_count: int = 0
@@ -148,6 +160,17 @@ class CopierConnector(ABC):
         raise CapabilityNotSupported(
             f"The {self.connector_type} connector can't retrieve per-user accounting directly "
             "— use a CSV import instead."
+        )
+
+    async def list_device_users(self, device: MfpDevice) -> list["DeviceUser"]:
+        """The login accounts currently registered ON the device.
+
+        Distinct from PrintOps' own StaffCopierIdentity rows: those say
+        which code belongs to whom, while these are what the machine will
+        actually accept at the panel. An admin needs to see both to trust
+        that a sync did anything."""
+        raise CapabilityNotSupported(
+            f"The {self.connector_type} connector can't list accounts on the device."
         )
 
     async def sync_users_to_device(

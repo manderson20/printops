@@ -11,6 +11,7 @@ import {
   getMfpDevice,
   listConnectorTypes,
   listGoogleWorkspaceOrgUnits,
+  listMfpDeviceAccounts,
   listMfpDeviceUsage,
   previewMfpDeviceProvisioning,
   syncMfpDeviceUsers,
@@ -20,6 +21,7 @@ import {
   type CopierUsageRecord,
   type DeviceCapabilities,
   type MfpDevice,
+  type DeviceUser,
   type ProvisioningPreview,
 } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
@@ -99,6 +101,9 @@ export default function MfpDeviceDetailPage() {
   const [previewing, setPreviewing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [deviceAccounts, setDeviceAccounts] = useState<DeviceUser[] | null>(null);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
 
   useEffect(() => {
     getMfpDevice(params.id)
@@ -126,6 +131,11 @@ export default function MfpDeviceDetailPage() {
     listConnectorTypes()
       .then(setConnectorTypes)
       .catch(() => setConnectorTypes([]));
+    // Load the preview up front. Requiring a click before the Sync button
+    // becomes usable made it look broken.
+    previewMfpDeviceProvisioning(params.id)
+      .then(setPreview)
+      .catch(() => setPreview(null));
   }, [params.id]);
 
   async function handleSave() {
@@ -150,6 +160,21 @@ export default function MfpDeviceDetailPage() {
       setActionError(err instanceof ApiError ? err.message : "Failed to save changes");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleLoadDeviceAccounts() {
+    setLoadingAccounts(true);
+    setAccountsError(null);
+    try {
+      setDeviceAccounts(await listMfpDeviceAccounts(params.id));
+    } catch (err) {
+      setDeviceAccounts(null);
+      setAccountsError(
+        err instanceof ApiError ? err.message : "Could not read the copier's accounts",
+      );
+    } finally {
+      setLoadingAccounts(false);
     }
   }
 
@@ -183,6 +208,7 @@ export default function MfpDeviceDetailPage() {
           (result.message ? ` ${result.message}` : ""),
       );
       setPreview(await previewMfpDeviceProvisioning(params.id));
+      await handleLoadDeviceAccounts();
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : "Sync failed");
     } finally {
@@ -408,7 +434,7 @@ export default function MfpDeviceDetailPage() {
               <Button variant="secondary" onClick={handlePreviewUsers} disabled={previewing}>
                 {previewing ? "Checking…" : "Preview"}
               </Button>
-              <Button onClick={handleSyncUsers} disabled={syncing || preview === null}>
+              <Button onClick={handleSyncUsers} disabled={syncing}>
                 {syncing ? "Syncing…" : "Sync Users to Copier"}
               </Button>
             </div>
@@ -461,6 +487,45 @@ export default function MfpDeviceDetailPage() {
           {syncResult && (
             <p className="mb-3 text-sm text-zinc-700 dark:text-zinc-300">{syncResult}</p>
           )}
+
+          <div className="mb-3 border-t border-black/[.06] pt-3 dark:border-white/[.1]">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                Accounts currently on the copier
+              </span>
+              <Button
+                variant="secondary"
+                onClick={handleLoadDeviceAccounts}
+                disabled={loadingAccounts}
+              >
+                {loadingAccounts ? "Reading…" : deviceAccounts ? "Refresh" : "Show"}
+              </Button>
+            </div>
+            {accountsError && <ErrorState>{accountsError}</ErrorState>}
+            {deviceAccounts !== null &&
+              (deviceAccounts.length === 0 ? (
+                <p className="text-xs text-zinc-500">
+                  The copier has no accounts registered yet.
+                </p>
+              ) : (
+                <>
+                  <p className="mb-1 text-xs text-zinc-500">
+                    {deviceAccounts.length} registered on the device. Read live from the copier,
+                    not from PrintOps.
+                  </p>
+                  <ul className="max-h-48 overflow-y-auto text-xs">
+                    {deviceAccounts.map((account) => (
+                      <li key={account.identifier} className="py-0.5 font-mono">
+                        #{account.identifier}
+                        {account.name ? ` — ${account.name}` : ""}
+                        {!account.has_password && " (no code set)"}
+                        {account.disabled && " (disabled)"}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ))}
+          </div>
 
           {device.last_user_sync_at && (
             <p className="text-xs text-zinc-500">

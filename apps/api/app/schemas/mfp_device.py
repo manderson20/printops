@@ -227,3 +227,14 @@ class SyncUsersResultOut(BaseModel):
     # device's account limit was reached partway.
     selected_count: int
     message: str | None = None
+
+
+class DeviceUserOut(BaseModel):
+    """A login account as it exists on the copier. No password field —
+    devices report presence only (a Konica's TrackPasswordExist is a
+    boolean), and inventing one would be worse than omitting it."""
+
+    identifier: str
+    name: str | None
+    has_password: bool
+    disabled: bool

@@ -550,6 +550,18 @@ export async function syncMfpDeviceUsers(id: string): Promise<SyncUsersResult> {
   return response.json();
 }
 
+export type DeviceUser = {
+  identifier: string;
+  name: string | null;
+  has_password: boolean;
+  disabled: boolean;
+};
+
+export async function listMfpDeviceAccounts(id: string): Promise<DeviceUser[]> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/device-accounts`);
+  return response.json();
+}
+
 export async function listConnectorTypes(): Promise<ConnectorTypeOption[]> {
   const response = await authorizedFetch("/api/v1/mfp-devices/connector-types");
   return response.json();

@@ -28,6 +28,7 @@ from app.copiers.connector import (
     ConnectionTestResult,
     CopierConnector,
     DeviceCapabilityReport,
+    DeviceUser,
     MeterSnapshot,
     SyncResult,
 )
@@ -153,6 +154,31 @@ class KonicaBizhubConnector(CopierConnector):
                 "ldap_auth": False,
             }
         )
+
+    async def list_device_users(self, device: MfpDevice) -> list[DeviceUser]:
+        """Account Track accounts currently on the copier."""
+        if not device.ip_address:
+            raise CapabilityNotSupported("This copier has no IP address configured.")
+        credentials = get_admin_credentials(device)
+        async with KonicaAdminSession(device.ip_address, credentials) as session:
+            try:
+                accounts = await session.list_accounts()
+            except KonicaAdminError as exc:
+                if "AuthNotTrackMode" in str(exc):
+                    raise CapabilityNotSupported(
+                        "Account Track is switched off on this copier, so it has no "
+                        "accounts to list."
+                    ) from exc
+                raise
+        return [
+            DeviceUser(
+                identifier=a.track_id,
+                name=a.name,
+                has_password=a.has_password,
+                disabled=a.account_stop,
+            )
+            for a in accounts
+        ]
 
     async def sync_users_to_device(
         self, device: MfpDevice, identities: list[StaffCopierIdentity]
