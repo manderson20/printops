@@ -254,3 +254,55 @@ async def test_list_device_users_explains_account_track_being_off(monkeypatch):
     with pytest.raises(CapabilityNotSupported) as excinfo:
         await KonicaBizhubConnector().list_device_users(_device())
     assert "Account Track is switched off" in str(excinfo.value)
+
+
+class _PagingSession:
+    """Records the ObtainCondition windows requested, so the paging bug
+    can't come back: the device rejects an over-large window outright with
+    GeneralRangeIllegal rather than clamping it."""
+
+    def __init__(self, total: int):
+        self.total = total
+        self.windows: list[tuple[int, int]] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return None
+
+    async def webapi(self, endpoint, payload=None):
+        window = payload["TrackListCondition"]["ObtainCondition"]["OffsetRange"]
+        start, length = window["Start"], window["Length"]
+        self.windows.append((start, length))
+        if length > 100:
+            raise KonicaAdminError("AppReqGetTrackSetting failed: GeneralRangeIllegal")
+        rows = [
+            {"TrackID": str(n), "TrackPasswordExist": "true"}
+            for n in range(start, min(start + length, self.total + 1))
+        ]
+        return {"TrackList": {"Track": rows}}
+
+
+@pytest.mark.asyncio
+async def test_account_list_is_paged_within_the_device_window():
+    from app.copiers.konica_admin import KonicaAdminSession
+
+    session = _PagingSession(total=250)
+    accounts = await KonicaAdminSession.list_accounts(session)
+    assert len(accounts) == 250
+    assert all(length <= 100 for _, length in session.windows)
+    assert session.windows[0][0] == 1  # 1-based; Start 0 is rejected
+
+
+@pytest.mark.asyncio
+async def test_single_account_object_is_normalised_to_a_list():
+    """The device collapses a one-element array into a bare object."""
+    from app.copiers.konica_admin import KonicaAdminSession
+
+    class _One:
+        async def webapi(self, endpoint, payload=None):
+            return {"TrackList": {"Track": {"TrackID": "7", "TrackPasswordExist": "true"}}}
+
+    accounts = await KonicaAdminSession.list_accounts(_One())
+    assert [a.track_id for a in accounts] == ["7"]

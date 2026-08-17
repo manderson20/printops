@@ -377,6 +377,8 @@ export default function MfpDeviceDetailPage() {
               disabled={!isAdmin}
               onChange={(e) => setAdminUsername(e.target.value)}
               placeholder="(leave blank if none)"
+              autoComplete="off"
+              name="printops-device-admin-username"
             />
             <span className="text-xs text-zinc-500">
               Konica bizhub and Lexmark XM3350 admin logins ask for a password only — leave this
@@ -384,11 +386,20 @@ export default function MfpDeviceDetailPage() {
             </span>
           </Field>
           <Field label="Device Admin Password">
+            {/* A bare password input invites the browser to autofill a
+                saved password and then save it over a working device
+                credential — which is exactly what happened once. Konica's
+                own admin form sets autocomplete="off" here for the same
+                reason. */}
             <Input
               type="password"
               value={adminPassword}
               disabled={!isAdmin}
               onChange={(e) => setAdminPassword(e.target.value)}
+              autoComplete="new-password"
+              name="printops-device-admin-password"
+              data-lpignore="true"
+              data-1p-ignore="true"
               placeholder={
                 state.device.has_admin_password ? "•••••••• (saved)" : "(none saved)"
               }

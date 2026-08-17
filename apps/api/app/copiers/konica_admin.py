@@ -28,6 +28,12 @@ from app.copiers.device_admin import DeviceAdminCredentials
 
 REQUEST_TIMEOUT_SECONDS = 30
 
+# The device's own admin page reads the account list 100 at a time, and
+# rejects an over-large window with GeneralRangeIllegal instead of
+# clamping it — so this is the device's limit, not a tuning choice.
+PAGE_SIZE = 100
+MAX_ACCOUNTS = 1000
+
 # One lock per device IP. The constraint is the device's, not this
 # process's, so the key is the address rather than the MfpDevice row.
 _DEVICE_LOCKS: dict[str, asyncio.Lock] = {}
@@ -211,29 +217,40 @@ class KonicaAdminSession:
             raise KonicaAdminError(f"{code or 'unrecognised response'}{detail}")
         return response.text
 
-    async def list_accounts(self, limit: int = 1000) -> list[TrackAccount]:
+    async def list_accounts(self, limit: int = MAX_ACCOUNTS) -> list[TrackAccount]:
         """Current Account Track accounts. Returns [] when the feature is
         enabled but empty; raises KonicaAdminError with AuthNotTrackMode
-        when Account Track is switched off entirely."""
-        mfp = await self.webapi(
-            "AppReqGetTrackSetting",
-            {
-                "TrackListCondition": {
-                    "TrackType": "Private",
-                    # 1-based; Start: 0 is rejected as GeneralRangeIllegal.
-                    "ObtainCondition": {
-                        "Type": "OffsetList",
-                        "OffsetRange": {"Start": 1, "Length": limit},
-                    },
-                }
-            },
-        )
-        track_list = mfp.get("TrackList", {})
-        rows = track_list.get("Track", [])
-        # The device collapses a single-element array into an object.
-        if isinstance(rows, dict):
-            rows = [rows]
-        return [TrackAccount.from_device(row) for row in rows]
+        when Account Track is switched off entirely.
+
+        Paged, because the device rejects an over-large window outright
+        with GeneralRangeIllegal rather than clamping it — asking for all
+        1000 in one call fails even when there are three accounts."""
+        accounts: list[TrackAccount] = []
+        start = 1  # 1-based; Start: 0 is rejected as GeneralRangeIllegal.
+        while start <= limit:
+            length = min(PAGE_SIZE, limit - start + 1)
+            mfp = await self.webapi(
+                "AppReqGetTrackSetting",
+                {
+                    "TrackListCondition": {
+                        "TrackType": "Private",
+                        "ObtainCondition": {
+                            "Type": "OffsetList",
+                            "OffsetRange": {"Start": start, "Length": length},
+                        },
+                    }
+                },
+            )
+            track_list = mfp.get("TrackList", {})
+            rows = track_list.get("Track", [])
+            # The device collapses a single-element array into an object.
+            if isinstance(rows, dict):
+                rows = [rows]
+            accounts.extend(TrackAccount.from_device(row) for row in rows)
+            if len(rows) < length:
+                break
+            start += length
+        return accounts
 
     async def create_account(
         self, track_number: str, name: str, password: str, registration_max: int = 1000
