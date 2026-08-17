@@ -29,7 +29,6 @@ from app.models.report import PrinterTonerReading
 from app.models.snmp import PrinterCounterReading
 from app.models.syslog import PrinterSyslogEvent
 from app.printers.discovery import refresh_printer_capabilities
-from app.printers.queue_sync import QueueSyncError, sync_queue
 from app.printers.snmp_counters import (
     SnmpProbeError,
     get_or_create_snmp_defaults,
@@ -38,7 +37,7 @@ from app.printers.snmp_counters import (
     resolve_snmp_config,
     sync_toner_levels,
 )
-from app.printers.status import refresh_printer_status_and_rediscover
+from app.printers.status import refresh_printer_status_and_rediscover, run_automatic_queue_sync
 from app.routers import (
     attribution_aliases,
     auth,
@@ -191,11 +190,11 @@ async def _capability_rediscovery_loop() -> None:
                         current.get("media_trays") != previous_trays
                     )
                     if media_changed:
-                        try:
-                            await asyncio.to_thread(sync_queue, str(printer.id))
-                            printer.queue_sync_error = None
-                        except QueueSyncError as exc:
-                            printer.queue_sync_error = str(exc)
+                        # Rate-limited and gated on cupsd having slots to
+                        # spare, same as the status loop's resync — a
+                        # printer whose reported media flaps would
+                        # otherwise resync every cycle forever.
+                        await run_automatic_queue_sync(printer)
 
                 await asyncio.gather(*(_refresh_one(p) for p in printers), return_exceptions=True)
                 await db.commit()

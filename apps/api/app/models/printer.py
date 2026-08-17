@@ -76,6 +76,22 @@ class Printer(Base, TimestampMixin):
     # probe). None means the queue is in sync as of the last create/update.
     queue_sync_error: Mapped[str | None] = mapped_column(default=None)
 
+    # When PrintOps last resynced this queue on its own initiative, and how
+    # many of those in a row have failed — the two inputs to the cooldown in
+    # app/printers/status.py:auto_resync_due.
+    #
+    # These exist because a queue resync is far more expensive than it
+    # looks: a full `lpadmin -m everywhere` holds a cupsd client slot for
+    # its whole 30-second timeout when the device is slow to answer. One
+    # flapping printer transitioning offline->online every few minutes
+    # produced 137 resyncs in a day and exhausted MaxClients, which reads
+    # to every user in the district as "the printer stopped responding".
+    # A person clicking Resync Queue is never rate-limited; only this.
+    last_auto_queue_sync_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    auto_queue_sync_failures: Mapped[int] = mapped_column(default=0, server_default="0")
+
     # When set, this printer is retired — POST /{id}/archive (routers/
     # printers.py) tears down its CUPS queue (same remove_queue() delete_printer
     # already used, just without deleting the row) so it stops accepting new
