@@ -246,16 +246,18 @@ def test_blanket_row_reported_inactive_in_include_mode(client, auth_headers, pri
         json={"user_email": "manderson@example.com", "period": "monthly", "page_limit": 50},
     )
 
-    rows = {row["user_email"]: row for row in client.get(
-        f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers
-    ).json()}
+    rows = {
+        row["user_email"]: row
+        for row in client.get(f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers).json()
+    }
     assert rows[None]["active"] is False
     assert rows["manderson@example.com"]["active"] is True
 
     _set_mode(client, auth_headers, printer_id, "exclude")
-    rows = {row["user_email"]: row for row in client.get(
-        f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers
-    ).json()}
+    rows = {
+        row["user_email"]: row
+        for row in client.get(f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers).json()
+    }
     assert rows[None]["active"] is True
     assert rows["manderson@example.com"]["active"] is True
 
@@ -296,3 +298,24 @@ def test_create_rejects_zero_or_negative_page_limit(client, auth_headers, printe
         json={"user_email": None, "period": "monthly", "page_limit": 0},
     )
     assert response.status_code == 400
+
+
+def test_exemption_reported_inactive_after_switching_to_include_mode(
+    client, auth_headers, printer_id
+):
+    """An exemption created in exclude mode carries page_limit=None. Read
+    back in include mode, resolve_hold_reason treats a null limit as no cap
+    — so the row must not be reported active, or the card shows it as
+    enforced while nothing enforces it."""
+    _set_mode(client, auth_headers, printer_id, "exclude")
+    client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": "manderson@example.com", "period": "monthly", "page_limit": None},
+    )
+    _set_mode(client, auth_headers, printer_id, "include")
+
+    rows = client.get(f"/api/v1/printers/{printer_id}/quotas", headers=auth_headers).json()
+    assert [row["active"] for row in rows] == [False]
+    # (A per-user row that *does* carry a limit stays active in include mode
+    # — covered by test_blanket_row_reported_inactive_in_include_mode.)

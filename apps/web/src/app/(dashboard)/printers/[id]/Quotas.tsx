@@ -197,7 +197,14 @@ export function QuotasCard({
   }
 
   function renderRow(quota: PrinterQuota) {
-    const isExemption = quota.page_limit === null;
+    // In exclude mode the backend treats the mere *presence* of a per-user
+    // row as an exemption, whatever limit it happens to carry (see
+    // app/quotas/service.py:get_effective_quota). A row created while the
+    // printer was in include mode keeps its old number, so classifying on
+    // page_limit alone would show a stale limit, usage ratio and "Over
+    // limit" warning for someone nothing is capping.
+    const isExemption =
+      quota.page_limit === null || (mode === "exclude" && quota.user_email !== null);
     return (
       <tr
         key={quota.id}

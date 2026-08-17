@@ -802,10 +802,16 @@ def _quota_is_active(quota: PrinterUserQuota, quota_mode: str) -> bool:
     In include mode only per-user rows are read; a blanket row left over from
     a previous stint in exclude mode is deliberately ignored (see
     app/quotas/service.py:get_effective_quota), so it's reported inactive
-    rather than displayed as a limit nothing is enforcing."""
+    rather than displayed as a limit nothing is enforcing.
+
+    A per-user row also needs an actual limit to be doing anything in
+    include mode. An exemption created in exclude mode carries
+    page_limit=None, and get_effective_quota happily returns it, but
+    resolve_hold_reason reads a null limit as "no cap" — so reporting it
+    active would show the row as enforced while nothing enforces it."""
     if quota_mode == "exclude":
         return True
-    return quota.user_email is not None
+    return quota.user_email is not None and quota.page_limit is not None
 
 
 async def _quota_out(
@@ -850,7 +856,8 @@ async def list_printer_quotas(printer_id: UUID, db: AsyncSession = Depends(get_d
             printer.quota_mode,
             active=(
                 False
-                if printer.quota_mode == "exclude" and quota.user_email is not None
+                if printer.quota_mode == "exclude"
+                and quota.user_email is not None
                 and not has_blanket
                 else None
             ),
