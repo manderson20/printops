@@ -6,6 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.copiers.connector import CapabilityNotSupported, ConnectionTestResult, refresh_device_meter
+from app.copiers.device_admin import DeviceCredentialsMissing
+from app.copiers.konica_admin import KonicaAdminBusy, KonicaAdminError
+from app.copiers.provisioning import build_provisioning_plan
 from app.copiers.registry import CONNECTOR_REGISTRY, get_connector
 from app.core.crypto import encrypt
 from app.db import get_db
@@ -19,6 +22,8 @@ from app.schemas.mfp_device import (
     MfpDeviceCreate,
     MfpDeviceOut,
     MfpDeviceUpdate,
+    ProvisioningPreviewOut,
+    SyncUsersResultOut,
     available_connector_types,
 )
 
@@ -70,6 +75,10 @@ def _device_out(device: MfpDevice) -> MfpDeviceOut:
         admin_username=device.admin_username,
         has_admin_password=device.has_admin_password,
         provision_org_unit_paths=device.provision_org_unit_paths,
+        auto_sync_users=device.auto_sync_users,
+        last_user_sync_at=device.last_user_sync_at,
+        last_user_sync_ok=device.last_user_sync_ok,
+        last_user_sync_message=device.last_user_sync_message,
         page_count_total=device.page_count_total,
         page_count_copy=device.page_count_copy,
         page_count_print=device.page_count_print,
@@ -292,3 +301,51 @@ async def list_mfp_device_usage(
         .limit(limit)
     )
     return result.scalars().all()
+
+
+@router.get("/{device_id}/provisioning-preview", response_model=ProvisioningPreviewOut)
+async def preview_device_provisioning(device_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Who a "Sync Users" would put on this copier, without touching it.
+
+    Same code path the sync itself uses (app/copiers/provisioning.py), so
+    the preview can't disagree with what then happens."""
+    device = await _get_device_or_404(device_id, db)
+    plan = await build_provisioning_plan(db, device)
+    return ProvisioningPreviewOut(
+        count=plan.count,
+        org_unit_paths=plan.org_unit_paths,
+        excluded_org_unit_paths=plan.excluded_org_unit_paths,
+        skipped_no_org_unit=plan.skipped_no_org_unit,
+        sample_emails=[i.staff_email for i in plan.identities[:10]],
+    )
+
+
+@router.post("/{device_id}/sync-users", response_model=SyncUsersResultOut)
+async def sync_device_users(device_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Register the in-scope staff as accounts on the copier.
+
+    Errors are translated to 4xx with an admin-actionable message rather
+    than a 500: "Account Track is off", "someone else is logged into the
+    copier", and "no admin password stored" are all setup problems a person
+    can fix, not server faults."""
+    device = await _get_device_or_404(device_id, db)
+    connector = get_connector(device.connector_type)
+    plan = await build_provisioning_plan(db, device)
+
+    try:
+        result = await connector.sync_users_to_device(device, plan.identities)
+    except CapabilityNotSupported as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except DeviceCredentialsMissing as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except KonicaAdminBusy as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except KonicaAdminError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    return SyncUsersResultOut(
+        synced_count=result.synced_count,
+        failed_count=result.failed_count,
+        selected_count=plan.count,
+        message=result.message,
+    )

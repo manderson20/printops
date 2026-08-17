@@ -86,6 +86,7 @@ class MfpDeviceCreate(BaseModel):
     # MfpDevice.provision_org_unit_paths. Null = everyone the org-wide
     # copier-accounting filter allows.
     provision_org_unit_paths: list[str] | None = None
+    auto_sync_users: bool = False
 
     notes: str | None = None
 
@@ -119,6 +120,7 @@ class MfpDeviceUpdate(BaseModel):
     admin_username: str | None = None
     admin_password: str | None = None
     provision_org_unit_paths: list[str] | None = None
+    auto_sync_users: bool | None = None
 
     # Manual capability overrides — connector-run checks
     # (check-capabilities) also write these fields, but an admin can set
@@ -159,6 +161,10 @@ class MfpDeviceOut(BaseModel):
     admin_username: str | None
     has_admin_password: bool
     provision_org_unit_paths: list[str] | None
+    auto_sync_users: bool
+    last_user_sync_at: datetime | None
+    last_user_sync_ok: bool | None
+    last_user_sync_message: str | None
 
     page_count_total: int | None
     page_count_copy: int | None
@@ -197,3 +203,27 @@ def available_connector_types() -> list[ConnectorTypeOut]:
         )
         for key, connector in CONNECTOR_REGISTRY.items()
     ]
+
+
+class ProvisioningPreviewOut(BaseModel):
+    """What a "Sync Users" would do, shown before it's done — an admin
+    should never press a button that writes accounts to a shared device
+    without first seeing how many and from which OUs."""
+
+    count: int
+    org_unit_paths: list[str]
+    excluded_org_unit_paths: list[str]
+    # Identities whose email isn't in the synced directory, so their OU is
+    # unknown and they're left out. Surfaced rather than hidden: a non-zero
+    # count here usually means the Workspace sync is stale.
+    skipped_no_org_unit: int
+    sample_emails: list[str]
+
+
+class SyncUsersResultOut(BaseModel):
+    synced_count: int
+    failed_count: int
+    # How many the plan selected — synced + failed can be lower if the
+    # device's account limit was reached partway.
+    selected_count: int
+    message: str | None = None

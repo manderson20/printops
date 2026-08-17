@@ -136,6 +136,18 @@ class MfpDevice(Base, TimestampMixin):
     # elementary staff.
     provision_org_unit_paths: Mapped[list[str] | None] = mapped_column(JSON, default=None)
 
+    # Whether the background loop pushes staff accounts to this device on a
+    # schedule. Off by default and per device, deliberately: writing login
+    # accounts to a shared machine is not something to start doing to a
+    # whole fleet because a global setting was flipped. An admin turns it on
+    # per copier once they've seen a manual sync do the right thing.
+    auto_sync_users: Mapped[bool] = mapped_column(default=False, server_default="false")
+    last_user_sync_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    last_user_sync_ok: Mapped[bool | None] = mapped_column(default=None)
+    last_user_sync_message: Mapped[str | None] = mapped_column(default=None)
+
     last_test_connection_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )

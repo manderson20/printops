@@ -465,6 +465,10 @@ export type MfpDevice = {
   admin_username: string | null;
   has_admin_password: boolean;
   provision_org_unit_paths: string[] | null;
+  auto_sync_users: boolean;
+  last_user_sync_at: string | null;
+  last_user_sync_ok: boolean | null;
+  last_user_sync_message: string | null;
   page_count_total: number | null;
   page_count_copy: number | null;
   page_count_print: number | null;
@@ -507,12 +511,44 @@ export type MfpDeviceCreateInput = {
   admin_username?: string | null;
   admin_password?: string | null;
   provision_org_unit_paths?: string[] | null;
+  auto_sync_users?: boolean;
   notes?: string | null;
 };
 
 export type MfpDeviceUpdateInput = Partial<MfpDeviceCreateInput> & {
   capabilities?: Partial<DeviceCapabilities>;
 };
+
+export type ProvisioningPreview = {
+  count: number;
+  org_unit_paths: string[];
+  excluded_org_unit_paths: string[];
+  skipped_no_org_unit: number;
+  sample_emails: string[];
+};
+
+export type SyncUsersResult = {
+  synced_count: number;
+  failed_count: number;
+  selected_count: number;
+  message: string | null;
+};
+
+export async function previewMfpDeviceProvisioning(
+  id: string,
+): Promise<ProvisioningPreview> {
+  const response = await authorizedFetch(
+    `/api/v1/mfp-devices/${id}/provisioning-preview`,
+  );
+  return response.json();
+}
+
+export async function syncMfpDeviceUsers(id: string): Promise<SyncUsersResult> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/sync-users`, {
+    method: "POST",
+  });
+  return response.json();
+}
 
 export async function listConnectorTypes(): Promise<ConnectorTypeOption[]> {
   const response = await authorizedFetch("/api/v1/mfp-devices/connector-types");

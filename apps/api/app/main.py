@@ -10,6 +10,8 @@ from fastapi.responses import JSONResponse
 from jwt import PyJWTError
 from sqlalchemy import delete, select
 
+from app.copiers.provisioning import build_provisioning_plan
+from app.copiers.registry import get_connector
 from app.core.config import get_settings
 from app.core.security import decode_access_token
 from app.db import AsyncSessionLocal
@@ -20,6 +22,7 @@ from app.integrations.mosyle import MosyleError
 from app.integrations.mosyle import run_sync as run_mosyle_sync
 from app.models.google_workspace import GoogleWorkspaceSettings
 from app.models.job import Job
+from app.models.mfp_device import MfpDevice
 from app.models.mosyle import MosyleSettings
 from app.models.printer import Printer
 from app.models.report import PrinterTonerReading
@@ -377,6 +380,59 @@ async def _failed_job_purge_loop() -> None:
         await asyncio.sleep(FAILED_JOB_PURGE_INTERVAL_SECONDS)
 
 
+COPIER_USER_SYNC_INTERVAL_SECONDS = 6 * 60 * 60
+
+
+async def _copier_user_sync_loop() -> None:
+    """Pushes staff accounts to copiers that have auto_sync_users on.
+
+    Six-hourly rather than minutes: the input is the Google Workspace
+    roster, which itself syncs on a slow cycle, and each run takes the
+    device's single admin session — polling hard would fight with an admin
+    trying to use the copier's own web UI.
+
+    Devices are handled one at a time, not gathered: the whole point of the
+    per-device lock in app/copiers/konica_admin.py is that a bizhub allows
+    one admin session, and hitting several copiers at once is fine but
+    hitting one twice is not. Sequential keeps the failure modes simple and
+    the load trivial at this fleet size.
+
+    Every outcome is recorded on the device (last_user_sync_*) so an admin
+    can see what happened without reading logs — including the honest
+    failures: Account Track switched off, a person already logged into the
+    copier, or no admin password stored."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                devices = (
+                    (await db.execute(select(MfpDevice).where(MfpDevice.auto_sync_users.is_(True))))
+                    .scalars()
+                    .all()
+                )
+                for device in devices:
+                    now = datetime.now(UTC)
+                    try:
+                        connector = get_connector(device.connector_type)
+                        plan = await build_provisioning_plan(db, device)
+                        result = await connector.sync_users_to_device(device, plan.identities)
+                    except Exception as exc:  # noqa: BLE001
+                        # Includes CapabilityNotSupported / credentials
+                        # missing / device busy — all admin-fixable, and all
+                        # worth surfacing on the device rather than only in
+                        # the log.
+                        logger.warning("Copier user sync failed for %s: %s", device.name, exc)
+                        device.last_user_sync_ok = False
+                        device.last_user_sync_message = str(exc)[:500]
+                    else:
+                        device.last_user_sync_ok = result.failed_count == 0
+                        device.last_user_sync_message = result.message
+                    device.last_user_sync_at = now
+                await db.commit()
+        except Exception:
+            logger.exception("Unexpected error in copier user sync loop")
+        await asyncio.sleep(COPIER_USER_SYNC_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tasks = [
@@ -398,6 +454,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_syslog_event_purge_loop()),
         asyncio.create_task(_held_job_purge_loop()),
         asyncio.create_task(_failed_job_purge_loop()),
+        asyncio.create_task(_copier_user_sync_loop()),
     ]
     yield
     for task in tasks:
@@ -462,7 +519,7 @@ async def block_impersonated_mutations(request: Request, call_next):
                 return JSONResponse(
                     status_code=403,
                     content={
-                        "detail": "This is a read-only \"View as\" session — no changes can be "
+                        "detail": 'This is a read-only "View as" session — no changes can be '
                         "made while impersonating another user."
                     },
                 )
@@ -499,6 +556,4 @@ app.include_router(quota_holds.router, prefix="/api/v1/quota-holds", tags=["quot
 app.include_router(
     self_service_print.router, prefix="/api/v1/self-service-print", tags=["self-service-print"]
 )
-app.include_router(
-    zabbix_integration.router, prefix="/api/v1/integrations/zabbix", tags=["zabbix"]
-)
+app.include_router(zabbix_integration.router, prefix="/api/v1/integrations/zabbix", tags=["zabbix"])

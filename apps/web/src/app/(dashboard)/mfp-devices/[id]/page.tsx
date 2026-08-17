@@ -12,12 +12,15 @@ import {
   listConnectorTypes,
   listGoogleWorkspaceOrgUnits,
   listMfpDeviceUsage,
+  previewMfpDeviceProvisioning,
+  syncMfpDeviceUsers,
   testMfpDeviceConnection,
   updateMfpDevice,
   type ConnectorTypeOption,
   type CopierUsageRecord,
   type DeviceCapabilities,
   type MfpDevice,
+  type ProvisioningPreview,
 } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
 import { useCurrentUser } from "@/lib/useCurrentUser";
@@ -91,6 +94,11 @@ export default function MfpDeviceDetailPage() {
   const [provisionOus, setProvisionOus] = useState<string[]>([]);
   const [adminUsername, setAdminUsername] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
+  const [autoSyncUsers, setAutoSyncUsers] = useState(false);
+  const [preview, setPreview] = useState<ProvisioningPreview | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
 
   useEffect(() => {
     getMfpDevice(params.id)
@@ -104,6 +112,7 @@ export default function MfpDeviceDetailPage() {
         setCapabilities(device.capabilities);
         setProvisionOus(device.provision_org_unit_paths ?? []);
         setAdminUsername(device.admin_username ?? "");
+        setAutoSyncUsers(device.auto_sync_users);
       })
       .catch((error: unknown) =>
         setState({
@@ -130,6 +139,7 @@ export default function MfpDeviceDetailPage() {
         // would read as "provision nobody".
         provision_org_unit_paths: provisionOus.length > 0 ? provisionOus : null,
         admin_username: adminUsername || null,
+        auto_sync_users: autoSyncUsers,
         // Only sent when retyped; omitting it leaves the stored password
         // alone, same as the SNMP community field elsewhere.
         ...(adminPassword ? { admin_password: adminPassword } : {}),
@@ -140,6 +150,43 @@ export default function MfpDeviceDetailPage() {
       setActionError(err instanceof ApiError ? err.message : "Failed to save changes");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handlePreviewUsers() {
+    setPreviewing(true);
+    setActionError(null);
+    setSyncResult(null);
+    try {
+      setPreview(await previewMfpDeviceProvisioning(params.id));
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Could not work out who would sync");
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
+  async function handleSyncUsers() {
+    if (
+      !confirm(
+        `Add ${preview?.count ?? "these"} staff accounts to ${state.phase === "ok" ? state.device.name : "this copier"}?\n\n` +
+          "Existing accounts on the copier are left alone. Nothing is deleted.",
+      )
+    )
+      return;
+    setSyncing(true);
+    setActionError(null);
+    try {
+      const result = await syncMfpDeviceUsers(params.id);
+      setSyncResult(
+        `${result.synced_count} added, ${result.failed_count} failed, of ${result.selected_count} selected.` +
+          (result.message ? ` ${result.message}` : ""),
+      );
+      setPreview(await previewMfpDeviceProvisioning(params.id));
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Sync failed");
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -327,12 +374,103 @@ export default function MfpDeviceDetailPage() {
           </Field>
         </div>
 
+        <label className="mt-4 flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <input
+            type="checkbox"
+            className="mt-1"
+            disabled={!isAdmin}
+            checked={autoSyncUsers}
+            onChange={(e) => setAutoSyncUsers(e.target.checked)}
+          />
+          <span>
+            Keep this copier&apos;s accounts up to date automatically
+            <br />
+            <span className="text-xs text-zinc-500">
+              Checks every six hours and adds any in-scope staff who don&apos;t have an account
+              yet. Off by default — turn it on once a manual sync has done what you expect.
+              Nothing is ever deleted from the copier automatically.
+            </span>
+          </span>
+        </label>
+
         {isAdmin && (
           <Button onClick={handleSave} disabled={saving} className="mt-4">
             {saving ? "Saving…" : "Save"}
           </Button>
         )}
       </Card>
+
+      {isAdmin && (
+        <Card>
+          <div className="mb-1 flex items-center justify-between">
+            <CardTitle>Staff Accounts On This Copier</CardTitle>
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={handlePreviewUsers} disabled={previewing}>
+                {previewing ? "Checking…" : "Preview"}
+              </Button>
+              <Button onClick={handleSyncUsers} disabled={syncing || preview === null}>
+                {syncing ? "Syncing…" : "Sync Users to Copier"}
+              </Button>
+            </div>
+          </div>
+          <p className="mb-3 text-xs text-zinc-500">
+            Adds each in-scope staff member as an account on the copier, with their 5-digit
+            Employee ID as the code they type at the panel. Accounts already on the copier are
+            left alone, and nothing is ever deleted. Preview first — it shows exactly who would
+            be added without touching the copier.
+          </p>
+
+          {preview && (
+            <div className="mb-3 rounded border border-black/[.08] p-3 text-sm dark:border-white/[.12]">
+              <div>
+                <strong>{preview.count}</strong> staff in scope
+                {preview.org_unit_paths.length > 0 && (
+                  <>
+                    {" "}
+                    from <code className="text-[11px]">{preview.org_unit_paths.join(", ")}</code>
+                  </>
+                )}
+                {preview.excluded_org_unit_paths.length > 0 && (
+                  <>
+                    , excluding{" "}
+                    <code className="text-[11px]">
+                      {preview.excluded_org_unit_paths.join(", ")}
+                    </code>
+                  </>
+                )}
+                .
+              </div>
+              {preview.sample_emails.length > 0 && (
+                <div className="mt-1 text-xs text-zinc-500">
+                  For example: {preview.sample_emails.slice(0, 5).join(", ")}
+                  {preview.count > 5 && ` and ${preview.count - 5} more`}
+                </div>
+              )}
+              {preview.skipped_no_org_unit > 0 && (
+                <div className="mt-2 text-xs text-amber-700 dark:text-amber-500">
+                  {preview.skipped_no_org_unit} staff copier{" "}
+                  {preview.skipped_no_org_unit === 1 ? "identity is" : "identities are"} not in the
+                  synced Google Workspace directory, so we can&apos;t tell which organizational
+                  unit they belong to. They are left out. This usually means the Workspace sync
+                  needs to run.
+                </div>
+              )}
+            </div>
+          )}
+
+          {syncResult && (
+            <p className="mb-3 text-sm text-zinc-700 dark:text-zinc-300">{syncResult}</p>
+          )}
+
+          {device.last_user_sync_at && (
+            <p className="text-xs text-zinc-500">
+              Last sync {formatRelativeTime(device.last_user_sync_at)}
+              {device.last_user_sync_ok === false && " — had problems"}
+              {device.last_user_sync_message && `: ${device.last_user_sync_message}`}
+            </p>
+          )}
+        </Card>
+      )}
 
       <Card>
         <div className="mb-1 flex items-center justify-between">

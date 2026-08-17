@@ -24,16 +24,21 @@ the underlying module already does.
 import asyncio
 
 from app.copiers.connector import (
+    CapabilityNotSupported,
     ConnectionTestResult,
     CopierConnector,
     DeviceCapabilityReport,
     MeterSnapshot,
+    SyncResult,
 )
+from app.copiers.device_admin import get_admin_credentials
 from app.copiers.generic_csv import GenericCsvConnector
 from app.copiers.generic_snmp import DEFAULT_SNMP_COMMUNITY, DEFAULT_SNMP_PORT, DEFAULT_SNMP_VERSION
+from app.copiers.konica_admin import KonicaAdminError, KonicaAdminSession
 from app.core.crypto import decrypt
 from app.models.copier_import import CopierImportTemplate
 from app.models.mfp_device import MfpDevice
+from app.models.staff_copier_identity import StaffCopierIdentity
 from app.printers.snmp_counters import (
     SYS_DESCR_OID,
     VENDOR_BREAKDOWN_FNS,
@@ -43,6 +48,12 @@ from app.printers.snmp_counters import (
     get_standard_total,
     snmp_get,
 )
+
+# Konica's published Account Track ceiling for i-Series. Used to stop a
+# sync rather than letting the device reject the overflow one account at a
+# time (see MfpDevice.provision_org_unit_paths for scoping a copier to its
+# own building so this is not reached in the first place).
+MAX_ACCOUNTS = 1000
 
 SETUP_NOTES = (
     "On the device's touchscreen or PageScope Web Connection admin page: "
@@ -134,11 +145,97 @@ class KonicaBizhubConnector(CopierConnector):
                 "csv_accounting_export": True,
                 "snmp_meter_counters": True,
                 "api_accounting_retrieval": False,
-                "remote_user_provisioning": False,
+                # Verified against real hardware — PrintOps registers
+                # Account Track accounts directly (see sync_users_to_device
+                # and docs/copier-capture-konica.md §3.9.2).
+                "remote_user_provisioning": True,
                 "badge_card_auth": False,
                 "ldap_auth": False,
             }
         )
+
+    async def sync_users_to_device(
+        self, device: MfpDevice, identities: list[StaffCopierIdentity]
+    ) -> SyncResult:
+        """Register each staff identity as an Account Track account, with
+        the 5-digit staff ID as the account password ("Password Only"
+        mode) — see docs/copier-capture-konica.md §3.9.2.
+
+        Additive only: accounts already on the device are left alone.
+        The device never reveals an account's password
+        (TrackPasswordExist is a boolean), so an existing account can't be
+        diffed against the intended code — rewriting one blindly could
+        change a working login for someone standing at the panel. Removing
+        accounts is deliberately not done here either: the delete contract
+        isn't captured yet, and silently deleting accounts is not something
+        to guess at.
+
+        Failures are per-account and counted, not fatal: one rejected ID
+        shouldn't abandon the other 30. The device names the offending
+        field on rejection, so the message says which account failed and
+        why."""
+        if not device.ip_address:
+            raise CapabilityNotSupported("This copier has no IP address configured.")
+
+        credentials = get_admin_credentials(device)
+
+        async with KonicaAdminSession(device.ip_address, credentials) as session:
+            try:
+                existing = await session.list_accounts()
+            except KonicaAdminError as exc:
+                if "AuthNotTrackMode" in str(exc):
+                    raise CapabilityNotSupported(
+                        "Account Track is switched off on this copier. Turn it on "
+                        "(User Auth/Account Track > Authentication Method, Account "
+                        "Track = ON, method = Password Only) before syncing users."
+                    ) from exc
+                raise
+
+            used_numbers = {account.track_id for account in existing}
+            existing_count = len(existing)
+
+            synced = 0
+            failed = 0
+            messages: list[str] = []
+            next_number = 1
+
+            for identity in identities:
+                if existing_count + synced >= MAX_ACCOUNTS:
+                    messages.append(
+                        f"Stopped at the copier's {MAX_ACCOUNTS}-account limit; "
+                        f"{len(identities) - synced - failed} not added."
+                    )
+                    break
+
+                while str(next_number) in used_numbers:
+                    next_number += 1
+                if next_number > MAX_ACCOUNTS:
+                    messages.append("No free account numbers left on this copier.")
+                    break
+
+                # 8 characters max, and it's what a person sees at the panel,
+                # so prefer the local part of their email over a truncated
+                # display name.
+                label = (identity.staff_email or "").split("@")[0][:8] or str(next_number)
+                try:
+                    await session.create_account(
+                        track_number=str(next_number),
+                        name=label,
+                        password=identity.identity_value,
+                    )
+                except KonicaAdminError as exc:
+                    failed += 1
+                    messages.append(f"{identity.staff_email}: {exc}")
+                else:
+                    used_numbers.add(str(next_number))
+                    synced += 1
+
+        summary = f"{synced} added, {failed} failed, {existing_count} already on the copier."
+        if messages:
+            summary = f"{summary} " + " ".join(messages[:5])
+            if len(messages) > 5:
+                summary += f" (+{len(messages) - 5} more)"
+        return SyncResult(synced_count=synced, failed_count=failed, message=summary)
 
     async def import_accounting_file(
         self, device: MfpDevice, raw_bytes: bytes, template: CopierImportTemplate

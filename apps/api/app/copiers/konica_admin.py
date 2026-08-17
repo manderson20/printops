@@ -1,0 +1,258 @@
+"""Konica Minolta bizhub Web Connection admin session.
+
+The device's own contracts, captured against real hardware and written up
+in docs/copier-capture-konica.md. Two rules from that capture shape this
+module:
+
+1. **One admin session per device.** A second login is refused outright
+   with AdminAnotherLoginError — including when a human is simply logged
+   into the web UI. So sessions are serialized per device with a lock, held
+   for as little time as possible, and always logged out (a leaked session
+   locks the panel and every other tool).
+
+2. **HTTP 200 means nothing.** Both the JSON WebAPI and the classic CGI
+   return 200 for failures; success lives in the payload
+   (`MFP.Result.ResultInfo` = Ack/Nack, or `<Item Code="Ok_*">` vs
+   `Err_*`). Anything that trusts the status code will silently record
+   failures as successes.
+"""
+
+import asyncio
+import json
+import re
+from dataclasses import dataclass
+
+import httpx
+
+from app.copiers.device_admin import DeviceAdminCredentials
+
+REQUEST_TIMEOUT_SECONDS = 30
+
+# One lock per device IP. The constraint is the device's, not this
+# process's, so the key is the address rather than the MfpDevice row.
+_DEVICE_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _device_lock(ip: str) -> asyncio.Lock:
+    lock = _DEVICE_LOCKS.get(ip)
+    if lock is None:
+        lock = asyncio.Lock()
+        _DEVICE_LOCKS[ip] = lock
+    return lock
+
+
+class KonicaAdminError(Exception):
+    """A device-side failure — unreachable, login refused, or a rejected
+    request. Carries a message fit to show an admin."""
+
+
+class KonicaAdminBusy(KonicaAdminError):
+    """The device already has an admin session open, so PrintOps can't get
+    one. Usually a person logged into the web UI — worth saying so plainly
+    rather than reporting a generic failure."""
+
+
+@dataclass
+class TrackAccount:
+    """One Account Track account as the device reports it. The password is
+    deliberately absent: `TrackPasswordExist` is a boolean and the code is
+    never readable, so a sync can diff presence but never the value."""
+
+    track_id: str
+    name: str | None
+    has_password: bool
+    account_stop: bool
+
+    @classmethod
+    def from_device(cls, row: dict) -> "TrackAccount":
+        return cls(
+            track_id=str(row.get("TrackID", "")),
+            name=row.get("TrackInfo"),
+            has_password=str(row.get("TrackPasswordExist", "")).lower() == "true",
+            account_stop=str(row.get("AccountStop", "Off")) == "On",
+        )
+
+
+_H_TOKEN_RE = re.compile(r'(?:id|name)="h_token"\s+value="([^"]+)"')
+_ITEM_CODE_RE = re.compile(r'<Item Code="([^"]+)"')
+_ERROR_DESC_RE = re.compile(r"<ErrorDescription>([^<]+)</ErrorDescription>")
+
+
+class KonicaAdminSession:
+    """Use via `async with`. Logs in on enter, always logs out on exit."""
+
+    def __init__(self, ip: str, credentials: DeviceAdminCredentials):
+        self.ip = ip
+        self._credentials = credentials
+        self._client: httpx.AsyncClient | None = None
+        self._api_token = ""
+        self._html_token = ""
+        self._lock = _device_lock(ip)
+
+    async def __aenter__(self) -> "KonicaAdminSession":
+        await self._lock.acquire()
+        try:
+            self._client = httpx.AsyncClient(
+                base_url=f"http://{self.ip}/wcd", timeout=REQUEST_TIMEOUT_SECONDS
+            )
+            await self._login()
+        except BaseException:
+            await self._close()
+            self._lock.release()
+            raise
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        try:
+            await self._logout()
+        finally:
+            await self._close()
+            self._lock.release()
+
+    async def _close(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    async def _login(self) -> None:
+        client = self._client
+        assert client is not None
+        try:
+            await client.get("/index.html")
+            response = await client.post(
+                "/login.cgi",
+                data={
+                    "func": "PSL_LP1_LOG",
+                    "R_ADM": "AdminAdmin",
+                    # The bizhub admin login has no username concept; the
+                    # field is posted empty (see device_admin.py).
+                    "username": self._credentials.username,
+                    "password": self._credentials.password,
+                },
+                headers={"Referer": f"http://{self.ip}/wcd/spa_login.html"},
+            )
+        except httpx.HTTPError as exc:
+            raise KonicaAdminError(f"Could not reach the copier at {self.ip}: {exc}") from exc
+
+        if "AdminAnotherLoginError" in response.text:
+            raise KonicaAdminBusy(
+                "Someone is already logged into this copier's admin page. "
+                "Log out of the copier's web interface and try again."
+            )
+
+        match = _H_TOKEN_RE.search(response.text)
+        self._html_token = match.group(1) if match else ""
+
+        # Never trust the login body alone — confirm with an admin-only read.
+        probe = await client.get("/api/AppReqGetCustomData/_A-00-00001")
+        if probe.status_code != 200 or len(probe.content) < 2000:
+            raise KonicaAdminError(
+                "The copier rejected the stored admin password. Check it on the "
+                "copier's page in PrintOps — repeated failures lock the device's "
+                "admin account for 5 minutes."
+            )
+
+    async def _logout(self) -> None:
+        if self._client is None:
+            return
+        try:
+            await self._client.post("/a_user.cgi", data={"func": "PSL_ACO_LGO"})
+        except httpx.HTTPError:
+            # Logout is best-effort; the device times sessions out on its
+            # own. Never mask the original error with a logout failure.
+            pass
+
+    async def webapi(self, endpoint: str, payload: dict | None = None) -> dict:
+        """POST the JSON WebAPI. Raises on Nack — callers that expect a Nack
+        (a capability probe, say) should catch it."""
+        client = self._client
+        assert client is not None
+        body = dict(payload or {})
+        body["Token"] = self._api_token
+        response = await client.post(
+            f"/api/{endpoint}",
+            content=json.dumps(body),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise KonicaAdminError(f"{endpoint} returned a non-JSON response.") from exc
+
+        mfp = data.get("MFP", {})
+        if mfp.get("Token"):
+            self._api_token = mfp["Token"]
+        result = mfp.get("Result", {})
+        if result.get("ResultInfo") != "Ack":
+            detail = result.get("ErrorDetails", "unknown error")
+            field = result.get("ErrorDescription")
+            raise KonicaAdminError(f"{endpoint} failed: {detail}{f' ({field})' if field else ''}")
+        return mfp
+
+    async def cgi(self, payload: dict) -> str:
+        """POST the classic admin CGI, echoing the rotating h_token, and
+        raise unless the reply carries an Ok_* item code. HTTP 200 is
+        returned for failures too, so the code is the only real signal."""
+        client = self._client
+        assert client is not None
+        body = dict(payload)
+        body["h_token"] = self._html_token
+        response = await client.post("/a_user.cgi", data=body)
+
+        token_match = _H_TOKEN_RE.search(response.text)
+        if token_match:
+            self._html_token = token_match.group(1)
+
+        code_match = _ITEM_CODE_RE.search(response.text)
+        code = code_match.group(1) if code_match else ""
+        if not code.startswith("Ok"):
+            field = _ERROR_DESC_RE.search(response.text)
+            detail = f" ({field.group(1)})" if field else ""
+            raise KonicaAdminError(f"{code or 'unrecognised response'}{detail}")
+        return response.text
+
+    async def list_accounts(self, limit: int = 1000) -> list[TrackAccount]:
+        """Current Account Track accounts. Returns [] when the feature is
+        enabled but empty; raises KonicaAdminError with AuthNotTrackMode
+        when Account Track is switched off entirely."""
+        mfp = await self.webapi(
+            "AppReqGetTrackSetting",
+            {
+                "TrackListCondition": {
+                    "TrackType": "Private",
+                    # 1-based; Start: 0 is rejected as GeneralRangeIllegal.
+                    "ObtainCondition": {
+                        "Type": "OffsetList",
+                        "OffsetRange": {"Start": 1, "Length": limit},
+                    },
+                }
+            },
+        )
+        track_list = mfp.get("TrackList", {})
+        rows = track_list.get("Track", [])
+        # The device collapses a single-element array into an object.
+        if isinstance(rows, dict):
+            rows = [rows]
+        return [TrackAccount.from_device(row) for row in rows]
+
+    async def create_account(
+        self, track_number: str, name: str, password: str, registration_max: int = 1000
+    ) -> None:
+        """Register one Account Track account.
+
+        `name` is capped at 8 characters by the device (AA_TRA_T_NAM) —
+        the password field takes 64, which is the opposite of the usual
+        assumption and the reason staff IDs go in the password."""
+        await self.cgi(
+            {
+                "func": "PSL_AA_TRA_TRA",
+                "AA_TRA_H_NUM": "new",
+                "trackType": "Password",
+                "AA_TRA_R_RNM": "Direct",
+                "AA_TRA_T_MAX": str(registration_max),
+                "AA_TRA_T_NUM": str(track_number),
+                "AA_TRA_T_NAM": name[:8],
+                "AA_TRA_P_UP": password,
+                "AA_TRA_P_CMP": password,
+            }
+        )
