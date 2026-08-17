@@ -6,6 +6,7 @@ import {
   ApiError,
   downloadCopierPinRoster,
   getGoogleWorkspaceSettings,
+  listGoogleWorkspaceOrgUnits,
   syncGoogleWorkspaceDevices,
   testGoogleWorkspaceConnection,
   updateGoogleWorkspaceSettings,
@@ -19,6 +20,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input, Textarea } from "@/components/ui/Field";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { OrgUnitPicker } from "@/components/ui/OrgUnitPicker";
 import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 type LoadState =
@@ -35,8 +37,8 @@ export default function GoogleWorkspaceSettingsPage() {
     admin_email: "",
     customer_id: "",
     staff_org_unit_path: "",
-    copier_identity_excluded_org_unit_paths: "",
   });
+  const [excludedOus, setExcludedOus] = useState<string[]>([]);
   const [enabled, setEnabled] = useState(false);
   const [autoCopierIdentity, setAutoCopierIdentity] = useState(false);
   const [autoCopierIdentityType, setAutoCopierIdentityType] = useState<CopierIdentityType>("staff_id");
@@ -65,10 +67,8 @@ export default function GoogleWorkspaceSettingsPage() {
           admin_email: settings.admin_email ?? "",
           customer_id: settings.customer_id,
           staff_org_unit_path: settings.staff_org_unit_path ?? "",
-          copier_identity_excluded_org_unit_paths: (
-            settings.copier_identity_excluded_org_unit_paths ?? []
-          ).join("\n"),
         }));
+        setExcludedOus(settings.copier_identity_excluded_org_unit_paths ?? []);
         setEnabled(settings.enabled);
         setAutoCopierIdentity(settings.auto_create_copier_identity_from_employee_id);
         setAutoCopierIdentityType(settings.auto_copier_identity_type);
@@ -88,12 +88,7 @@ export default function GoogleWorkspaceSettingsPage() {
   }, [currentUser, router]);
 
   function update(
-    field:
-      | "service_account_json"
-      | "admin_email"
-      | "customer_id"
-      | "staff_org_unit_path"
-      | "copier_identity_excluded_org_unit_paths",
+    field: "service_account_json" | "admin_email" | "customer_id" | "staff_org_unit_path",
     value: string,
   ) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -111,12 +106,8 @@ export default function GoogleWorkspaceSettingsPage() {
         // Always sent (even blank) so clearing the field actually clears
         // the saved setting — see app/routers/settings.py's "" -> None rule.
         staff_org_unit_path: form.staff_org_unit_path,
-        // One OU per line in the textarea; always sent so emptying it
-        // actually clears the saved list.
-        copier_identity_excluded_org_unit_paths: form.copier_identity_excluded_org_unit_paths
-          .split("\n")
-          .map((path) => path.trim())
-          .filter(Boolean),
+        // Always sent so clearing the list actually clears the saved one.
+        copier_identity_excluded_org_unit_paths: excludedOus,
         auto_create_copier_identity_from_employee_id: autoCopierIdentity,
         auto_copier_identity_type: autoCopierIdentityType,
       });
@@ -506,15 +497,15 @@ export default function GoogleWorkspaceSettingsPage() {
 
         <div className="mt-4">
           <Field label="Excluded Organizational Units">
-            <textarea
-              value={form.copier_identity_excluded_org_unit_paths}
-              onChange={(e) => update("copier_identity_excluded_org_unit_paths", e.target.value)}
-              placeholder={"/Employees/Inactive Employees"}
-              rows={3}
-              className="w-full rounded border border-black/[.15] bg-transparent px-2 py-1 font-mono text-xs dark:border-white/[.2]"
+            <OrgUnitPicker
+              value={excludedOus}
+              onChange={setExcludedOus}
+              load={listGoogleWorkspaceOrgUnits}
+              addLabel="Add an organizational unit to exclude…"
+              emptyLabel="None excluded."
             />
             <span className="text-xs text-zinc-500">
-              One OU path per line. These are left out of copy tracking even though they sit
+              These are left out of copy tracking even though they sit
               inside the staff OU above — most often people who have left, e.g.{" "}
               <code className="text-[11px]">/Employees/Inactive Employees</code>. An OU listed
               here also excludes anything nested under it. Excluding wins over including, which

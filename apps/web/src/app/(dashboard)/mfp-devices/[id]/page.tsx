@@ -10,6 +10,7 @@ import {
   deleteMfpDevice,
   getMfpDevice,
   listConnectorTypes,
+  listGoogleWorkspaceOrgUnits,
   listMfpDeviceUsage,
   testMfpDeviceConnection,
   updateMfpDevice,
@@ -26,6 +27,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { OrgUnitPicker } from "@/components/ui/OrgUnitPicker";
 import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 
 type LoadState =
@@ -83,10 +85,10 @@ export default function MfpDeviceDetailPage() {
   const [usage, setUsage] = useState<CopierUsageRecord[] | null>(null);
   const [connectorTypes, setConnectorTypes] = useState<ConnectorTypeOption[]>([]);
   // Copy-tracking settings, kept out of `form` because they aren't plain
-  // text fields: the OU list is newline-separated, and the admin password
-  // is write-only (never sent back by the API, so it starts blank and is
-  // only submitted when actually retyped).
-  const [provisionOus, setProvisionOus] = useState("");
+  // text fields: the OU list is a multi-select of real synced OUs, and the
+  // admin password is write-only (never sent back by the API, so it starts
+  // blank and is only submitted when actually retyped).
+  const [provisionOus, setProvisionOus] = useState<string[]>([]);
   const [adminUsername, setAdminUsername] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
 
@@ -100,7 +102,7 @@ export default function MfpDeviceDetailPage() {
           ),
         );
         setCapabilities(device.capabilities);
-        setProvisionOus((device.provision_org_unit_paths ?? []).join("\n"));
+        setProvisionOus(device.provision_org_unit_paths ?? []);
         setAdminUsername(device.admin_username ?? "");
       })
       .catch((error: unknown) =>
@@ -121,16 +123,12 @@ export default function MfpDeviceDetailPage() {
     setSaving(true);
     setActionError(null);
     try {
-      const ous = provisionOus
-        .split("\n")
-        .map((path) => path.trim())
-        .filter(Boolean);
       const device = await updateMfpDevice(params.id, {
         ...form,
         capabilities: capabilities ?? undefined,
         // null (not []) means "no per-copier narrowing" — an empty list
         // would read as "provision nobody".
-        provision_org_unit_paths: ous.length > 0 ? ous : null,
+        provision_org_unit_paths: provisionOus.length > 0 ? provisionOus : null,
         admin_username: adminUsername || null,
         // Only sent when retyped; omitting it leaves the stored password
         // alone, same as the SNMP community field elsewhere.
@@ -282,16 +280,16 @@ export default function MfpDeviceDetailPage() {
         </p>
 
         <Field label="Staff Organizational Units">
-          <textarea
+          <OrgUnitPicker
             value={provisionOus}
+            onChange={setProvisionOus}
+            load={listGoogleWorkspaceOrgUnits}
             disabled={!isAdmin}
-            onChange={(e) => setProvisionOus(e.target.value)}
-            placeholder={"/Employees/Elementary School\n/Employees/School Nurse"}
-            rows={3}
-            className="w-full rounded border border-black/[.15] bg-transparent px-2 py-1 font-mono text-xs disabled:opacity-60 dark:border-white/[.2]"
+            addLabel="Add an organizational unit…"
+            emptyLabel="Everyone covered by the org-wide setting."
           />
           <span className="text-xs text-zinc-500">
-            One OU path per line — the staff who get accounts on <em>this</em> copier. Leave blank
+            The staff who get accounts on <em>this</em> copier. Leave empty
             to include everyone covered by the org-wide setting under Settings → Integrations →
             Google Workspace. Worth narrowing per building: a copier holds a limited number of
             accounts (a Lexmark XM3350 takes 250, a Konica bizhub 1,000), and the people who walk
