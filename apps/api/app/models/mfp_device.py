@@ -103,6 +103,39 @@ class MfpDevice(Base, TimestampMixin):
     )
     page_count_error: Mapped[str | None] = mapped_column(default=None)
 
+    # The device's own admin web UI login, used by connectors that actually
+    # drive the device (per-user accounting pulls, user provisioning) — see
+    # app/copiers/device_admin.py.
+    #
+    # Deliberately NOT the same thing as Printer.web_login_password_encrypted,
+    # despite often holding the same secret: that field is reference-only
+    # storage ("a secure place to look them up instead of a spreadsheet",
+    # see Printer's docstring) and PrintOps never authenticates with it. This
+    # one is a live credential PrintOps logs in with, so it belongs to the
+    # device that the connector talks to and is separated from the reference
+    # copy on purpose — revoking one shouldn't silently change the other.
+    #
+    # admin_username is nullable because several vendors' admin logins have
+    # no username concept at all (a Konica bizhub prompts for a password
+    # only; a Lexmark XM3350's sole login method declares
+    # credentials: ["password"]) — same reasoning as
+    # Printer.web_login_username.
+    admin_username: Mapped[str | None] = mapped_column(default=None)
+    admin_password_encrypted: Mapped[str | None] = mapped_column(default=None)
+
+    # Which staff OUs get provisioned onto THIS device, narrowing the
+    # org-wide copier-accounting OUs (GoogleWorkspaceSettings.
+    # copier_identity_org_unit_paths). Null = everyone the org-wide filter
+    # allows.
+    #
+    # Per-device rather than org-wide only, because device limits are
+    # per-device: a Lexmark XM3350 holds 250 local accounts and a bizhub
+    # 1000, so a district that fits comfortably org-wide can still overflow
+    # one machine. Scoping a copier to its own building is also just
+    # correct — the people who walk up to the elementary copier are the
+    # elementary staff.
+    provision_org_unit_paths: Mapped[list[str] | None] = mapped_column(JSON, default=None)
+
     last_test_connection_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
@@ -116,3 +149,9 @@ class MfpDevice(Base, TimestampMixin):
         """Masks snmp_community_encrypted for MfpDeviceOut — mirrors
         Printer.has_snmp_community exactly."""
         return bool(self.snmp_community_encrypted)
+
+    @property
+    def has_admin_password(self) -> bool:
+        """Masks admin_password_encrypted for MfpDeviceOut — same masking
+        pattern as has_snmp_community above."""
+        return bool(self.admin_password_encrypted)

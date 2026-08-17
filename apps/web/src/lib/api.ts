@@ -462,6 +462,9 @@ export type MfpDevice = {
   snmp_version: SnmpVersion | null;
   has_snmp_community: boolean;
   snmp_vendor_profile: string | null;
+  admin_username: string | null;
+  has_admin_password: boolean;
+  provision_org_unit_paths: string[] | null;
   page_count_total: number | null;
   page_count_copy: number | null;
   page_count_print: number | null;
@@ -501,6 +504,9 @@ export type MfpDeviceCreateInput = {
   snmp_version?: SnmpVersion | null;
   snmp_community?: string | null;
   snmp_vendor_profile?: string | null;
+  admin_username?: string | null;
+  admin_password?: string | null;
+  provision_org_unit_paths?: string[] | null;
   notes?: string | null;
 };
 
@@ -1164,6 +1170,9 @@ export type GoogleWorkspaceSettings = {
   staff_org_unit_path: string | null;
   auto_create_copier_identity_from_employee_id: boolean;
   auto_copier_identity_type: CopierIdentityType;
+  copier_identity_org_unit_paths: string[];
+  copier_identity_excluded_org_unit_paths: string[];
+  effective_copier_identity_org_unit_paths: string[];
 };
 
 export type GoogleWorkspaceSettingsInput = {
@@ -1174,6 +1183,8 @@ export type GoogleWorkspaceSettingsInput = {
   staff_org_unit_path?: string;
   auto_create_copier_identity_from_employee_id?: boolean;
   auto_copier_identity_type?: CopierIdentityType;
+  copier_identity_org_unit_paths?: string[];
+  copier_identity_excluded_org_unit_paths?: string[];
 };
 
 export type GoogleWorkspaceTestResult = {

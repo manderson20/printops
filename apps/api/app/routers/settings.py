@@ -19,7 +19,9 @@ from app.integrations.git_update import REPO_ROOT
 from app.integrations.google_workspace import (
     GoogleWorkspaceClient,
     GoogleWorkspaceError,
+    org_unit_included,
     org_unit_matches,
+    resolve_copier_identity_org_units,
 )
 from app.integrations.google_workspace import run_sync as run_google_workspace_sync
 from app.integrations.mosyle import MosyleClient, MosyleError
@@ -367,6 +369,10 @@ def _google_workspace_to_out(settings: GoogleWorkspaceSettings) -> GoogleWorkspa
         staff_org_unit_path=settings.staff_org_unit_path,
         auto_create_copier_identity_from_employee_id=settings.auto_create_copier_identity_from_employee_id,
         auto_copier_identity_type=settings.auto_copier_identity_type,
+        copier_identity_org_unit_paths=settings.copier_identity_org_unit_paths or [],
+        copier_identity_excluded_org_unit_paths=settings.copier_identity_excluded_org_unit_paths
+        or [],
+        effective_copier_identity_org_unit_paths=resolve_copier_identity_org_units(settings)[0],
     )
 
 
@@ -403,6 +409,12 @@ async def update_google_workspace_settings(
         ]
     if updates.get("auto_copier_identity_type") is not None:
         settings.auto_copier_identity_type = updates["auto_copier_identity_type"]
+    for field in ("copier_identity_org_unit_paths", "copier_identity_excluded_org_unit_paths"):
+        if field in updates:
+            # Empty list clears the filter; stored as None so "unset" has one
+            # representation rather than two, matching staff_org_unit_path.
+            cleaned = [p.strip() for p in (updates[field] or []) if p and p.strip()]
+            setattr(settings, field, cleaned or None)
 
     await db.commit()
     await db.refresh(settings)
@@ -483,9 +495,7 @@ async def list_google_workspace_users(db: AsyncSession = Depends(get_db)):
     response_model=list[str],
     dependencies=[Depends(require_role("admin"))],
 )
-async def list_google_workspace_org_units(
-    scope: str = "staff", db: AsyncSession = Depends(get_db)
-):
+async def list_google_workspace_org_units(scope: str = "staff", db: AsyncSession = Depends(get_db)):
     """Distinct org_unit_path values from the synced roster (sync_users) —
     powers the OU picker on Settings > Permissions (app/models/user.py's
     granted_ou_paths), so an admin picks from real, currently-populated org
@@ -515,9 +525,7 @@ async def list_google_workspace_org_units(
     if scope != "all":
         settings = await _get_or_create_google_workspace_settings(db)
         if settings.staff_org_unit_path:
-            paths = {
-                path for path in paths if org_unit_matches(path, settings.staff_org_unit_path)
-            }
+            paths = {path for path in paths if org_unit_matches(path, settings.staff_org_unit_path)}
     return sorted(paths)
 
 
@@ -539,7 +547,7 @@ async def export_copier_pin_roster(db: AsyncSession = Depends(get_db)):
     device/firmware, so check it against a real device's admin panel and
     adjust the columns here if needed.
 
-    Also filtered to GoogleWorkspaceSettings.staff_org_unit_path (and
+    Also filtered to the configured copier-accounting OUs (and
     anything nested under it) when configured — without it, this roster
     would include anyone with an Employee ID set, which in practice can
     include students, not just staff (every org's OU naming is different,
@@ -551,10 +559,8 @@ async def export_copier_pin_roster(db: AsyncSession = Depends(get_db)):
         .order_by(GoogleWorkspaceUser.email)
     )
     users = result.scalars().all()
-    if settings.staff_org_unit_path:
-        users = [
-            u for u in users if org_unit_matches(u.org_unit_path, settings.staff_org_unit_path)
-        ]
+    includes, excludes = resolve_copier_identity_org_units(settings)
+    users = [u for u in users if org_unit_included(u.org_unit_path, includes, excludes)]
 
     buffer = io.StringIO()
     writer = csv.writer(buffer)

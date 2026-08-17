@@ -35,6 +35,7 @@ export default function GoogleWorkspaceSettingsPage() {
     admin_email: "",
     customer_id: "",
     staff_org_unit_path: "",
+    copier_identity_excluded_org_unit_paths: "",
   });
   const [enabled, setEnabled] = useState(false);
   const [autoCopierIdentity, setAutoCopierIdentity] = useState(false);
@@ -64,6 +65,9 @@ export default function GoogleWorkspaceSettingsPage() {
           admin_email: settings.admin_email ?? "",
           customer_id: settings.customer_id,
           staff_org_unit_path: settings.staff_org_unit_path ?? "",
+          copier_identity_excluded_org_unit_paths: (
+            settings.copier_identity_excluded_org_unit_paths ?? []
+          ).join("\n"),
         }));
         setEnabled(settings.enabled);
         setAutoCopierIdentity(settings.auto_create_copier_identity_from_employee_id);
@@ -84,7 +88,12 @@ export default function GoogleWorkspaceSettingsPage() {
   }, [currentUser, router]);
 
   function update(
-    field: "service_account_json" | "admin_email" | "customer_id" | "staff_org_unit_path",
+    field:
+      | "service_account_json"
+      | "admin_email"
+      | "customer_id"
+      | "staff_org_unit_path"
+      | "copier_identity_excluded_org_unit_paths",
     value: string,
   ) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -102,6 +111,12 @@ export default function GoogleWorkspaceSettingsPage() {
         // Always sent (even blank) so clearing the field actually clears
         // the saved setting — see app/routers/settings.py's "" -> None rule.
         staff_org_unit_path: form.staff_org_unit_path,
+        // One OU per line in the textarea; always sent so emptying it
+        // actually clears the saved list.
+        copier_identity_excluded_org_unit_paths: form.copier_identity_excluded_org_unit_paths
+          .split("\n")
+          .map((path) => path.trim())
+          .filter(Boolean),
         auto_create_copier_identity_from_employee_id: autoCopierIdentity,
         auto_copier_identity_type: autoCopierIdentityType,
       });
@@ -488,6 +503,47 @@ export default function GoogleWorkspaceSettingsPage() {
             ID (e.g. students). Leave blank to include everyone with an Employee ID set.
           </span>
         </Field>
+
+        <div className="mt-4">
+          <Field label="Excluded Organizational Units">
+            <textarea
+              value={form.copier_identity_excluded_org_unit_paths}
+              onChange={(e) => update("copier_identity_excluded_org_unit_paths", e.target.value)}
+              placeholder={"/Employees/Inactive Employees"}
+              rows={3}
+              className="w-full rounded border border-black/[.15] bg-transparent px-2 py-1 font-mono text-xs dark:border-white/[.2]"
+            />
+            <span className="text-xs text-zinc-500">
+              One OU path per line. These are left out of copy tracking even though they sit
+              inside the staff OU above — most often people who have left, e.g.{" "}
+              <code className="text-[11px]">/Employees/Inactive Employees</code>. An OU listed
+              here also excludes anything nested under it. Excluding wins over including, which
+              is the point: a former employee&apos;s OU is normally a sub-folder of the staff OU,
+              so the staff filter on its own can&apos;t remove them.
+            </span>
+          </Field>
+          {state.phase === "ok" && (
+            <p className="mt-2 text-xs text-zinc-500">
+              Currently tracking:{" "}
+              {state.settings.effective_copier_identity_org_unit_paths.length > 0 ? (
+                <code className="text-[11px]">
+                  {state.settings.effective_copier_identity_org_unit_paths.join(", ")}
+                </code>
+              ) : (
+                "everyone with an Employee ID"
+              )}
+              {state.settings.copier_identity_excluded_org_unit_paths.length > 0 && (
+                <>
+                  , except{" "}
+                  <code className="text-[11px]">
+                    {state.settings.copier_identity_excluded_org_unit_paths.join(", ")}
+                  </code>
+                </>
+              )}
+              .
+            </p>
+          )}
+        </div>
 
         <label className="mt-4 flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
           <input

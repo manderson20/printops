@@ -17,6 +17,12 @@ class GoogleWorkspaceSettingsUpdate(BaseModel):
     # app/integrations/google_workspace.py:_refresh_google_sourced_copier_identities).
     auto_create_copier_identity_from_employee_id: bool | None = None
     auto_copier_identity_type: IdentityType | None = None
+    # Which OUs count as trackable staff for copier accounting. Applied to
+    # both the auto-created identities and the PIN roster export — see
+    # GoogleWorkspaceSettings for why excludes are needed alongside
+    # includes. Send [] to clear either list.
+    copier_identity_org_unit_paths: list[str] | None = None
+    copier_identity_excluded_org_unit_paths: list[str] | None = None
 
     # customer_id is interpolated straight into the Directory API request
     # path (app/integrations/google_workspace.py) — restricting it to safe
@@ -40,6 +46,12 @@ class GoogleWorkspaceSettingsOut(BaseModel):
     staff_org_unit_path: str | None
     auto_create_copier_identity_from_employee_id: bool
     auto_copier_identity_type: IdentityType
+    copier_identity_org_unit_paths: list[str]
+    copier_identity_excluded_org_unit_paths: list[str]
+    # What the include/exclude lists actually resolve to right now, after
+    # the staff_org_unit_path fallback — so the UI can show the effective
+    # filter instead of making an admin work it out from two fields.
+    effective_copier_identity_org_unit_paths: list[str]
 
 
 class GoogleWorkspaceTestResult(BaseModel):
