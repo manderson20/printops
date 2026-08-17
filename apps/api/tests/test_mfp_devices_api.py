@@ -231,3 +231,34 @@ def test_admin_password_update_and_clear(client, auth_headers):
         json={"admin_password": ""},
     )
     assert cleared.json()["has_admin_password"] is False
+
+
+def test_provision_org_unit_paths_round_trip(client, auth_headers):
+    """Per-copier OU narrowing: null means "everyone the org-wide filter
+    allows", which is a different thing from an empty list."""
+    device_id = client.post(
+        "/api/v1/mfp-devices",
+        headers=auth_headers,
+        json={"name": "ES Veronica Copier", "connector_type": "konica_bizhub"},
+    ).json()["id"]
+    assert (
+        client.get(f"/api/v1/mfp-devices/{device_id}", headers=auth_headers).json()[
+            "provision_org_unit_paths"
+        ]
+        is None
+    )
+
+    scoped = client.patch(
+        f"/api/v1/mfp-devices/{device_id}",
+        headers=auth_headers,
+        json={"provision_org_unit_paths": ["/Employees/Elementary School"]},
+    )
+    assert scoped.status_code == 200, scoped.text
+    assert scoped.json()["provision_org_unit_paths"] == ["/Employees/Elementary School"]
+
+    cleared = client.patch(
+        f"/api/v1/mfp-devices/{device_id}",
+        headers=auth_headers,
+        json={"provision_org_unit_paths": None},
+    )
+    assert cleared.json()["provision_org_unit_paths"] is None
