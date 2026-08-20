@@ -86,6 +86,9 @@ class MfpDeviceCreate(BaseModel):
     # MfpDevice.provision_org_unit_paths. Null = everyone the org-wide
     # copier-accounting filter allows.
     provision_org_unit_paths: list[str] | None = None
+    auto_sync_users: bool = False
+    auto_poll_counters: bool = False
+    default_owner_email: str | None = None
 
     notes: str | None = None
 
@@ -119,6 +122,11 @@ class MfpDeviceUpdate(BaseModel):
     admin_username: str | None = None
     admin_password: str | None = None
     provision_org_unit_paths: list[str] | None = None
+    auto_sync_users: bool | None = None
+    auto_poll_counters: bool | None = None
+    # Empty string clears the owner, same convention snmp_version and
+    # snmp_vendor_profile already use on this payload.
+    default_owner_email: str | None = None
 
     # Manual capability overrides — connector-run checks
     # (check-capabilities) also write these fields, but an admin can set
@@ -159,6 +167,16 @@ class MfpDeviceOut(BaseModel):
     admin_username: str | None
     has_admin_password: bool
     provision_org_unit_paths: list[str] | None
+    auto_sync_users: bool
+    last_user_sync_at: datetime | None
+    last_user_sync_ok: bool | None
+    last_user_sync_message: str | None
+    auto_poll_counters: bool
+    last_counter_poll_at: datetime | None
+    last_counter_poll_ok: bool | None
+    last_counter_poll_message: str | None
+    default_owner_email: str | None
+    default_owner_attributed_through: datetime | None
 
     page_count_total: int | None
     page_count_copy: int | None
@@ -197,3 +215,100 @@ def available_connector_types() -> list[ConnectorTypeOut]:
         )
         for key, connector in CONNECTOR_REGISTRY.items()
     ]
+
+
+class ProvisioningPreviewOut(BaseModel):
+    """What a "Sync Users" would do, shown before it's done — an admin
+    should never press a button that writes accounts to a shared device
+    without first seeing how many and from which OUs."""
+
+    count: int
+    org_unit_paths: list[str]
+    excluded_org_unit_paths: list[str]
+    # Identities whose email isn't in the synced directory, so their OU is
+    # unknown and they're left out. Surfaced rather than hidden: a non-zero
+    # count here usually means the Workspace sync is stale.
+    skipped_no_org_unit: int
+    sample_emails: list[str]
+
+
+class SyncUsersResultOut(BaseModel):
+    synced_count: int
+    failed_count: int
+    # How many the plan selected — synced + failed can be lower if the
+    # device's account limit was reached partway.
+    selected_count: int
+    message: str | None = None
+
+
+class DeviceUserOut(BaseModel):
+    """A login account as it exists on the copier. No password field —
+    devices report presence only (a Konica's TrackPasswordExist is a
+    boolean), and inventing one would be worse than omitting it."""
+
+    identifier: str
+    name: str | None
+    has_password: bool
+    disabled: bool
+
+
+class DefaultOwnerAttributionOut(BaseModel):
+    """What one default-owner attribution run did.
+
+    `baselined` says the run deliberately produced no usage: an owner was
+    just named (so counting starts now) or the printer's meter was
+    replaced. `skipped_reason` says it could not run at all, and is
+    written to be shown to an admin as-is."""
+
+    attributed_pages: int
+    usage_rows: int
+    baselined: bool
+    meter_reset: bool
+    skipped_reason: str | None
+    message: str
+    attributed_through: datetime | None
+
+
+class CounterPollOut(BaseModel):
+    """What one counter poll found. `baselines` is the count of accounts
+    read for the first time — those produce no usage, because there is no
+    earlier reading to subtract, and saying so is the difference between
+    "nothing happened" and "nothing could have happened yet"."""
+
+    accounts_read: int
+    baselines: int
+    baseline_usage_rows: int
+    changed: int
+    unchanged: int
+    usage_rows: int
+    resets: int
+    unmapped: int
+    message: str
+
+
+class SyncJobOut(BaseModel):
+    """Progress of a running or finished user sync. `completed` counts
+    accounts actually written; `skipped` counts people already set up on
+    the device, which is a success rather than a failure."""
+
+    id: UUID
+    status: str
+    trigger: str
+    total: int
+    completed: int
+    failed: int
+    skipped: int
+    message: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+class ProvisionedAccountOut(BaseModel):
+    """Which person occupies which account slot on the copier — the mapping
+    the device can't report, since it never reveals account passwords."""
+
+    device_account_id: str
+    device_account_name: str | None
+    staff_email: str
+    identity_value: str
+    provisioned_at: datetime

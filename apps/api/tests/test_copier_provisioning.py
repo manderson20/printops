@@ -1,0 +1,501 @@
+"""Choosing who gets an account on a copier, and the Konica sync's
+behaviour when the device pushes back."""
+
+import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
+
+from app.copiers.connector import CapabilityNotSupported
+from app.copiers.konica_admin import KonicaAdminError, TrackAccount
+from app.copiers.konica_bizhub import KonicaBizhubConnector
+from app.copiers.provisioning import build_provisioning_plan
+from app.core.crypto import encrypt
+from app.models.base import Base
+from app.models.google_workspace import GoogleWorkspaceSettings, GoogleWorkspaceUser
+from app.models.mfp_device import MfpDevice
+from app.models.staff_copier_identity import StaffCopierIdentity
+
+
+@pytest_asyncio.fixture
+async def db():
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        yield session
+    await engine.dispose()
+
+
+async def _seed(db, people):
+    """people: (email, employee_id, org_unit_path)"""
+    db.add(
+        GoogleWorkspaceSettings(
+            staff_org_unit_path="/Employees",
+            auto_copier_identity_type="staff_id",
+            copier_identity_excluded_org_unit_paths=["/Employees/Inactive Employees"],
+        )
+    )
+    for email, employee_id, ou in people:
+        db.add(GoogleWorkspaceUser(email=email, org_unit_path=ou, synced_at=_now()))
+        db.add(
+            StaffCopierIdentity(
+                staff_email=email,
+                identity_type="staff_id",
+                identity_value=employee_id,
+                source="google_workspace_sync",
+            )
+        )
+    await db.commit()
+
+
+def _now():
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC)
+
+
+PEOPLE = [
+    ("teacher@d.org", "10001", "/Employees/Elementary School"),
+    ("hs@d.org", "10002", "/Employees/High School"),
+    ("former@d.org", "10003", "/Employees/Inactive Employees"),
+    ("student@d.org", "10004", "/Students/3rd Grade"),
+]
+
+
+@pytest.mark.asyncio
+async def test_plan_uses_org_wide_scope_when_device_is_unscoped(db):
+    await _seed(db, PEOPLE)
+    device = MfpDevice(name="Copier", connector_type="konica_bizhub")
+    plan = await build_provisioning_plan(db, device)
+    assert sorted(i.staff_email for i in plan.identities) == ["hs@d.org", "teacher@d.org"]
+
+
+@pytest.mark.asyncio
+async def test_device_scope_narrows_to_one_building(db):
+    await _seed(db, PEOPLE)
+    device = MfpDevice(
+        name="ES Copier",
+        connector_type="konica_bizhub",
+        provision_org_unit_paths=["/Employees/Elementary School"],
+    )
+    plan = await build_provisioning_plan(db, device)
+    assert [i.staff_email for i in plan.identities] == ["teacher@d.org"]
+
+
+@pytest.mark.asyncio
+async def test_identity_not_in_the_directory_is_skipped_and_counted(db):
+    """Provisioning a code PrintOps can't attribute to a real person would
+    produce usage nobody can resolve — so it's skipped, and surfaced."""
+    await _seed(db, PEOPLE)
+    db.add(
+        StaffCopierIdentity(
+            staff_email="ghost@d.org", identity_type="staff_id", identity_value="10099"
+        )
+    )
+    await db.commit()
+
+    plan = await build_provisioning_plan(db, MfpDevice(name="C", connector_type="konica_bizhub"))
+    assert "ghost@d.org" not in [i.staff_email for i in plan.identities]
+    assert plan.skipped_no_org_unit == 1
+
+
+@pytest.mark.asyncio
+async def test_duplicate_codes_are_not_pushed(db):
+    """A code held by two people can't be attributed either way, so neither
+    holder gets it — not merely "only the first one does".
+
+    Pushing one of them is the worse outcome, not a partial fix: both
+    people can still log in with the code, while every page it produces is
+    credited to whichever of them happened to sort first."""
+    await _seed(db, PEOPLE)
+    db.add(GoogleWorkspaceUser(email="twin@d.org", org_unit_path="/Employees", synced_at=_now()))
+    db.add(
+        StaffCopierIdentity(
+            staff_email="twin@d.org", identity_type="staff_id", identity_value="10001"
+        )
+    )
+    await db.commit()
+
+    plan = await build_provisioning_plan(db, MfpDevice(name="C", connector_type="konica_bizhub"))
+    values = [i.identity_value for i in plan.identities]
+    assert values.count("10001") == 0
+    emails = [i.staff_email for i in plan.identities]
+    assert "twin@d.org" not in emails
+    assert "teacher@d.org" not in emails
+    # Everyone whose code is their own is unaffected.
+    assert "hs@d.org" in emails
+
+
+class _FakeSession:
+    """Stands in for KonicaAdminSession — the HTTP layer is captured in
+    docs/copier-capture-konica.md and exercised against real hardware; what
+    needs testing here is how the connector reacts."""
+
+    def __init__(self, existing=None, fail_on=None, list_error=None):
+        self.existing = existing or []
+        self.fail_on = fail_on or set()
+        self.list_error = list_error
+        self.created: list[tuple[str, str, str]] = []
+        self.labels: list[str | None] = []
+        self.replacements: list[bool] = []
+        self.logged_out = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        self.logged_out = True
+
+    async def list_accounts(self, limit=1000):
+        if self.list_error:
+            raise self.list_error
+        return self.existing
+
+    async def write_account(
+        self,
+        track_number,
+        name,
+        password,
+        label=None,
+        registration_max=1000,
+        replace_existing=False,
+    ):
+        if password in self.fail_on:
+            raise KonicaAdminError("GeneralIllegalValue (TrackName)")
+        self.created.append((track_number, name, password))
+        self.labels.append(label)
+        self.replacements.append(replace_existing)
+
+
+def _identity(email, value):
+    return StaffCopierIdentity(staff_email=email, identity_type="staff_id", identity_value=value)
+
+
+def _device():
+    return MfpDevice(
+        name="ES Copier",
+        connector_type="konica_bizhub",
+        ip_address="192.0.2.10",
+        admin_password_encrypted=encrypt("pw"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_reports_account_track_off_as_actionable(monkeypatch):
+    """AuthNotTrackMode is a setup problem with a fix an admin can carry
+    out, not a server error."""
+    fake = _FakeSession(list_error=KonicaAdminError("AuthNotTrackMode invalid track mode"))
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    with pytest.raises(CapabilityNotSupported) as excinfo:
+        await KonicaBizhubConnector().sync_users_to_device(_device(), [_identity("a@d.org", "1")])
+    assert "Account Track is switched off" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_sync_creates_accounts_and_skips_used_numbers(monkeypatch):
+    fake = _FakeSession(existing=[TrackAccount("1", None, True, False)])
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    result = await KonicaBizhubConnector().sync_users_to_device(
+        _device(), [_identity("amy@d.org", "10001"), _identity("bob@d.org", "10002")]
+    )
+    assert result.synced_count == 2
+    assert result.failed_count == 0
+    # Account number 1 was taken, so the new ones start at 2.
+    assert [n for n, _, _ in fake.created] == ["2", "3"]
+    # The panel label comes from the email local part, capped at 8 chars.
+    assert [name for _, name, _ in fake.created] == ["amy", "bob"]
+    assert [pw for _, _, pw in fake.created] == ["10001", "10002"]
+
+
+@pytest.mark.asyncio
+async def test_one_rejected_account_does_not_abandon_the_rest(monkeypatch):
+    fake = _FakeSession(fail_on={"10002"})
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    result = await KonicaBizhubConnector().sync_users_to_device(
+        _device(),
+        [
+            _identity("a@d.org", "10001"),
+            _identity("b@d.org", "10002"),
+            _identity("c@d.org", "10003"),
+        ],
+    )
+    assert result.synced_count == 2
+    assert result.failed_count == 1
+    assert "b@d.org" in result.message
+
+
+@pytest.mark.asyncio
+async def test_long_email_local_part_is_truncated_to_the_device_limit(monkeypatch):
+    """AA_TRA_T_NAM is capped at 8 characters by the device; overrunning it
+    is what the device rejects with GeneralIllegalValue(TrackName)."""
+    fake = _FakeSession()
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    await KonicaBizhubConnector().sync_users_to_device(
+        _device(), [_identity("verylongname@d.org", "10001")]
+    )
+    assert fake.created[0][1] == "verylong"
+    assert len(fake.created[0][1]) <= 8
+
+
+@pytest.mark.asyncio
+async def test_missing_admin_password_is_reported_not_crashed():
+    device = MfpDevice(name="No creds", connector_type="konica_bizhub", ip_address="192.0.2.11")
+    from app.copiers.device_admin import DeviceCredentialsMissing
+
+    with pytest.raises(DeviceCredentialsMissing):
+        await KonicaBizhubConnector().sync_users_to_device(device, [])
+
+
+@pytest.mark.asyncio
+async def test_list_device_users_reports_what_is_on_the_device(monkeypatch):
+    """The on-device account list is read live from the copier — it's the
+    only way to confirm a sync actually landed."""
+    fake = _FakeSession(
+        existing=[
+            TrackAccount("1", "amy", True, False),
+            TrackAccount("2", "bob", False, True),
+        ]
+    )
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    users = await KonicaBizhubConnector().list_device_users(_device())
+    assert [u.identifier for u in users] == ["1", "2"]
+    assert users[0].has_password is True
+    assert users[1].disabled is True
+
+
+@pytest.mark.asyncio
+async def test_list_device_users_explains_account_track_being_off(monkeypatch):
+    fake = _FakeSession(list_error=KonicaAdminError("AuthNotTrackMode invalid track mode"))
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    with pytest.raises(CapabilityNotSupported) as excinfo:
+        await KonicaBizhubConnector().list_device_users(_device())
+    assert "Account Track is switched off" in str(excinfo.value)
+
+
+class _PagingSession:
+    """Records the ObtainCondition windows requested, so the paging bug
+    can't come back: the device rejects an over-large window outright with
+    GeneralRangeIllegal rather than clamping it."""
+
+    def __init__(self, total: int):
+        self.total = total
+        self.windows: list[tuple[int, int]] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return None
+
+    async def webapi(self, endpoint, payload=None):
+        window = payload["TrackListCondition"]["ObtainCondition"]["OffsetRange"]
+        start, length = window["Start"], window["Length"]
+        self.windows.append((start, length))
+        if length > 100:
+            raise KonicaAdminError("AppReqGetTrackSetting failed: GeneralRangeIllegal")
+        rows = [
+            {"TrackID": str(n), "TrackPasswordExist": "true"}
+            for n in range(start, min(start + length, self.total + 1))
+        ]
+        return {"TrackList": {"Track": rows}}
+
+
+@pytest.mark.asyncio
+async def test_account_list_is_paged_within_the_device_window():
+    from app.copiers.konica_admin import KonicaAdminSession
+
+    session = _PagingSession(total=250)
+    accounts = await KonicaAdminSession.list_accounts(session)
+    assert len(accounts) == 250
+    assert all(length <= 100 for _, length in session.windows)
+    assert session.windows[0][0] == 1  # 1-based; Start 0 is rejected
+
+
+@pytest.mark.asyncio
+async def test_single_account_object_is_normalised_to_a_list():
+    """The device collapses a one-element array into a bare object."""
+    from app.copiers.konica_admin import KonicaAdminSession
+
+    class _One:
+        async def webapi(self, endpoint, payload=None):
+            return {"TrackList": {"Track": {"TrackID": "7", "TrackPasswordExist": "true"}}}
+
+    accounts = await KonicaAdminSession.list_accounts(_One())
+    assert [a.track_id for a in accounts] == ["7"]
+
+
+@pytest.mark.asyncio
+async def test_already_provisioned_people_are_skipped_not_retried(monkeypatch):
+    """The device rejects a password already in use, so re-running without
+    skipping fails every account — which is exactly what happened the first
+    time this ran twice."""
+    fake = _FakeSession()
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    result = await KonicaBizhubConnector().sync_users_to_device(
+        _device(),
+        [_identity("a@d.org", "10001"), _identity("b@d.org", "10002")],
+        already_provisioned={"10001"},
+    )
+    assert result.synced_count == 1
+    assert result.skipped_count == 1
+    assert result.failed_count == 0
+    assert [pw for _, _, pw in fake.created] == ["10002"]
+    # "Already set up" is success, and the wording should not read as an error.
+    assert "failed" not in result.message
+
+
+@pytest.mark.asyncio
+async def test_sync_records_who_landed_in_which_account_slot(monkeypatch):
+    """The device can never tell us this afterwards, so it has to be
+    captured at write time."""
+    fake = _FakeSession()
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    result = await KonicaBizhubConnector().sync_users_to_device(
+        _device(), [_identity("amy@d.org", "10001"), _identity("bob@d.org", "10002")]
+    )
+    assert [(a.device_account_id, a.staff_email) for a in result.accounts] == [
+        ("1", "amy@d.org"),
+        ("2", "bob@d.org"),
+    ]
+    # The readable label is what shows on the copier's own account list.
+    assert [a.device_account_name for a in result.accounts] == ["amy", "bob"]
+    assert fake.labels == ["amy", "bob"]
+
+
+@pytest.mark.asyncio
+async def test_rewrite_reseats_everyone_into_deterministic_slots(monkeypatch):
+    """Repair path for a device whose accounts exist but whose owners were
+    never recorded — the mapping becomes a fact rather than an inference."""
+    fake = _FakeSession(existing=[TrackAccount("1", None, True, False)])
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    result = await KonicaBizhubConnector().sync_users_to_device(
+        _device(),
+        [_identity("amy@d.org", "10001"), _identity("bob@d.org", "10002")],
+        already_provisioned={"10001", "10002"},
+        rewrite=True,
+    )
+    # already_provisioned is ignored under rewrite, and slots are positional.
+    assert result.synced_count == 2
+    assert [n for n, _, _ in fake.created] == ["1", "2"]
+    assert all(fake.replacements)
+
+
+@pytest.mark.asyncio
+async def test_progress_is_reported_per_account(monkeypatch):
+    fake = _FakeSession()
+    monkeypatch.setattr("app.copiers.konica_bizhub.KonicaAdminSession", lambda ip, creds: fake)
+    seen = []
+
+    async def on_progress(done, total, synced, failed):
+        seen.append((done, total, synced, failed))
+
+    await KonicaBizhubConnector().sync_users_to_device(
+        _device(),
+        [_identity("a@d.org", "1"), _identity("b@d.org", "2"), _identity("c@d.org", "3")],
+        on_progress=on_progress,
+    )
+    assert seen == [(1, 3, 1, 0), (2, 3, 2, 0), (3, 3, 3, 0)]
+
+
+# --- A rewrite that partially fails --------------------------------------
+#
+# A rewrite re-seats people into account slots. When some slots fail, the
+# copier still holds the previous occupant's code in them — so what the
+# provisioning records say about those slots must not change.
+
+
+@pytest.mark.asyncio
+async def test_a_partially_failed_rewrite_keeps_the_untouched_slots_mapped(db, monkeypatch):
+    """Closing the mapping for a slot the rewrite never managed to change
+    would leave a live account on the copier with nobody attached, and
+    every page it goes on to produce would arrive as unmapped activity —
+    losing attribution for a person whose account was never touched."""
+    from sqlalchemy import select
+
+    from app.copiers.connector import ProvisionedAccount, SyncResult
+    from app.models.copier_provisioning import CopierProvisionedAccount, CopierSyncJob
+
+    device = MfpDevice(name="Veronica", connector_type="konica_bizhub")
+    db.add(device)
+    await db.commit()
+    await db.refresh(device)
+
+    # Two people already hold slots on the device.
+    for email, slot in (("alice@d.org", "0001"), ("bob@d.org", "0002")):
+        db.add(
+            CopierProvisionedAccount(
+                mfp_device_id=device.id,
+                staff_email=email,
+                identity_value=email.split("@")[0],
+                identity_type="staff_id",
+                device_account_id=slot,
+                provisioned_at=_now(),
+            )
+        )
+    job = CopierSyncJob(mfp_device_id=device.id, status="queued", trigger="rewrite")
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    # The rewrite re-seats slot 0001 and fails on 0002.
+    class _Connector:
+        async def sync_users_to_device(self, device, identities, **kwargs):
+            return SyncResult(
+                synced_count=1,
+                failed_count=1,
+                message="1 of 2 accounts written",
+                accounts=[
+                    ProvisionedAccount(
+                        staff_email="carol@d.org",
+                        identity_value="10009",
+                        identity_type="staff_id",
+                        device_account_id="0001",
+                    )
+                ],
+            )
+
+    monkeypatch.setattr("app.copiers.sync_jobs.get_connector", lambda _t: _Connector())
+    monkeypatch.setattr("app.copiers.sync_jobs.AsyncSessionLocal", _session_factory_returning(db))
+
+    from app.copiers.sync_jobs import run_sync_job
+
+    await run_sync_job(job.id, rewrite=True)
+
+    rows = (
+        (
+            await db.execute(
+                select(CopierProvisionedAccount).where(
+                    CopierProvisionedAccount.mfp_device_id == device.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    live = {r.device_account_id: r for r in rows if r.removed_at is None}
+
+    # Slot 0001 was really rewritten: Alice's mapping closes, Carol's opens.
+    assert live["0001"].staff_email == "carol@d.org"
+    # Slot 0002 failed, so the copier still holds Bob's code — and so do we.
+    assert live["0002"].staff_email == "bob@d.org"
+
+
+def _session_factory_returning(session):
+    """run_sync_job opens its own session because it outlives the request
+    that queued it. Hand it the test's session instead, without letting it
+    be closed out from under the assertions that follow."""
+
+    class _Ctx:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *exc):
+            return False
+
+    return lambda: _Ctx()

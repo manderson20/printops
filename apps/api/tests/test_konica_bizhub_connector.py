@@ -45,7 +45,11 @@ async def test_get_capabilities_reflects_known_konica_feature_set():
     report = await connector.get_capabilities(_device())
     assert report.capabilities["department_id_accounting"] is True
     assert report.capabilities["user_code_pin_auth"] is True
-    assert report.capabilities["api_accounting_retrieval"] is False
+    # Was False until AppReqGetTrackCounterInfo was verified against
+    # hardware (docs/copier-capture-konica.md §3.9.3). What it returns is
+    # per-account running totals, not a job log — read_account_counters,
+    # not get_user_accounting.
+    assert report.capabilities["api_accounting_retrieval"] is True
 
 
 @pytest.mark.asyncio
@@ -85,10 +89,16 @@ async def test_get_user_accounting_honestly_unsupported():
 
 
 @pytest.mark.asyncio
-async def test_sync_users_to_device_honestly_unsupported():
+async def test_sync_users_to_device_requires_an_ip_address():
+    """Provisioning is implemented now (it registers Account Track accounts
+    — see app/copiers/konica_admin.py), so this no longer raises for being
+    unsupported. It still refuses honestly when there's no device to reach:
+    a CSV-only copier has no address at all."""
     connector = KonicaBizhubConnector()
+    device = _device()
+    device.ip_address = None
     with pytest.raises(CapabilityNotSupported):
-        await connector.sync_users_to_device(_device(), identities=[])
+        await connector.sync_users_to_device(device, identities=[])
 
 
 @pytest.mark.asyncio

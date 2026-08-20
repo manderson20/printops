@@ -183,10 +183,11 @@ This is the important negative result: these return `Webapi not supported`
 firmware, per-account counters are *not* available through
 `AppReqGetCounterInfo`.
 
-`get_user_accounting` therefore needs a different source — the counter
-export from the classic `a_*.xml` admin pages, or the Track Report — which
-is **not yet captured** (the device has no account data to export while
-Account Track is off).
+`get_user_accounting` therefore needs a different source. **It has one** —
+`AppReqGetTrackCounterInfo`, a different endpoint on the same WebAPI. See
+§3.9.3. The conclusion to draw from this section is narrower than it first
+looks: `AppReqGetCounterInfo` has no per-account variant, not that the
+WebAPI has no per-account counters.
 
 ### 3.3 Account Track list — **verified reachable, blocked by device mode**
 
@@ -327,17 +328,253 @@ source for `get_user_accounting` given §3.2 and §3.6 ruled out the WebAPI —
 its underlying request is **not yet captured**, because the device has no
 account data to show while Account Track is off.
 
+## 3.9 Account Track, with the feature ENABLED — **verified**
+
+Re-captured on a 950i after Account Track was switched on
+(`TrackMode.TrackType = "Password"`, i.e. Password Only; User
+Authentication left `"None"`).
+
+**`AppReqGetTrackSetting` starts working.** Same request as §3.3; with the
+feature on it returns `Ack` instead of `AuthNotTrackMode`:
+
+```json
+{"MFP":{"Result":{"ResultInfo":"Ack"},"TrackList":{"ArraySize":"0"}}}
+```
+
+`ArraySize` is the account count — this is the endpoint to poll to read the
+device's current account list, and to diff against before provisioning.
+
+**These four endpoints stay unsupported**, with Account Track enabled and
+a valid admin session:
+
+```
+AppReqGetCounterInfo/_Account      AppReqGetTrackCounter
+AppReqGetCounterInfo/_Track        AppReqGetTrackCounter  (+TrackListCondition)
+```
+
+That was read at the time as "per-account counters are not on the WebAPI".
+It is not: the working endpoint is **`AppReqGetTrackCounterInfo`** (§3.9.3)
+— `AppReqGetTrackCounter` above is the same name one word short. Guessing
+endpoint names is what produced the wrong conclusion; §3.9.3 came from
+reading the device's own screen JS instead.
+
+### 3.9.1 The admin pages behind Account Track — **verified**
+
+The SPA loads per-page templates by code, fetchable unauthenticated:
+
+```
+GET /wcd/spa_<code>.tmpl.html
+```
+
+| Code | Page |
+|---|---|
+| `003_000_AUT000` | Authentication Method |
+| `003_001_USR000` | User Registration |
+| `003_002_TRA000` | Account Track Registration (list) |
+| `003_002_TRA001` | Account Track account — **add/edit form** |
+| `003_002_TRA002` | Account Track account — delete confirm |
+| `003_002_TCR000` | Account Track Counter (list) |
+| `003_002_TCR001` | Account Track Counter — per-account detail |
+
+These are classic form posts carrying `func` and the rotating `h_token`,
+distinct from the JSON WebAPI in §2. Admin-scoped funcs post to
+`a_user.cgi` (the same endpoint as the `PSL_ACO_LGO` logout); public ones
+post to `user.cgi`.
+
+**Account list paging** (`003_002_TRA000`):
+
+```
+func=PSL_AA_TRA_PAG   h_token=<token>
+H_SRT=<start>  H_END=<end>  AA_TRA_H_BOX=Public  H_FLAG=Delete
+```
+
+**Add / edit an account** (`003_002_TRA001`) — `func=PSL_AA_TRA_TRA`,
+`AA_TRA_H_NUM=new` for a new account (an existing index to edit):
+
+| Field | Max | Meaning |
+|---|---|---|
+| `AA_TRA_T_NUM` | 4 | account number |
+| `AA_TRA_T_NAM` | — | account name |
+| `AA_TRA_P_UP` | 64 | password — **the 5-digit staff ID in Password Only mode** |
+| `AA_TRA_P_CMP` | 64 | password confirmation (must match) |
+| `AA_TRA_T_INF` | 20 | free-text info |
+| `AA_TRA_S_ACS`, `_ASA`, `_COP`, `_CCP`, `_SCP`, `_SFP`, `_UPA`, `_FUA`, `_FCP`, `_FSC`, `_FFA`, `_FPR`, `_FPS` | — | per-function permission flags |
+| `AA_TRA_C_TPL` / `AA_TRA_T_TPL` | — | total page limit: enable flag / value |
+| `AA_TRA_C_CPL` / `AA_TRA_T_CPL` | 7 | colour page limit: enable / value |
+| `AA_TRA_C_BPL` / `AA_TRA_T_BPL` | 7 | black page limit: enable / value |
+| `AA_TRA_C_BNL` / `AA_TRA_T_BNL` | 4 | (limit pair, units unconfirmed) |
+
+Note `AA_TRA_P_UP` accepts 64 characters, so the commonly-cited 8-character
+Account Track password cap is not a limit this firmware imposes on the
+field itself. A 5-digit ID fits regardless.
+
+The per-account limit pairs overlap PrintOps' own page-quota feature —
+decide which system owns the limit rather than setting both.
+
+**Still unverified:** the exact success/failure response of
+`PSL_AA_TRA_TRA`, the defaults required for the permission/limit fields on
+a minimal create, the Account Track Counter read (`003_002_TCR000/TCR001`
+field semantics), and the bulk Authentication-Information import. All
+need at least one real account to exist.
+
+### 3.9.2 Creating an account — **verified end to end**
+
+```http
+POST /wcd/a_user.cgi
+Content-Type: application/x-www-form-urlencoded
+
+func=PSL_AA_TRA_TRA
+h_token=<token from the login response's id="h_token">
+AA_TRA_H_NUM=new          # "new", or an existing index to edit
+trackType=Password        # matches TrackMode.TrackType
+AA_TRA_R_RNM=Direct       # "Direct" = use the number below; "Space" = next free
+AA_TRA_T_MAX=1000         # the device's registration maximum
+AA_TRA_T_NUM=999          # account number (1..max)
+AA_TRA_T_NAM=POTEST       # account name — MAX 8 CHARACTERS
+AA_TRA_P_UP=99999         # password = the staff ID in Password Only mode
+AA_TRA_P_CMP=99999        # must match
+```
+
+**Success** (HTTP 200, XML):
+
+```xml
+<Message><Item Code="Ok_1" Param="999" SubCode="Record">Ok_1</Item></Message>
+<Redirect>a_authentication_track.xml</Redirect>
+```
+
+`Param` echoes the account number created. **Validation failure** uses the
+same envelope with an error code and the offending field named:
+
+```xml
+<Message><Item Code="Err_1">GeneralIllegalValue</Item>
+<ErrorDescription>TrackName</ErrorDescription></Message>
+```
+
+So success/failure is `Item Code` = `Ok_*` vs `Err_*`, **not** the HTTP
+status, which is 200 either way. `ErrorDescription` names the bad field,
+which is good enough to report per-account failures precisely during a bulk
+sync.
+
+**The 8-character limit is on the account NAME (`AA_TRA_T_NAM`), not the
+password.** `AA_TRA_P_UP` accepts 64. This is the opposite of what is
+usually assumed, and it matters: staff IDs go in the password, so their
+length is unconstrained in practice, while any human-readable account name
+must be squeezed into 8 characters.
+
+The minimal accepted field set is the one above — the `AA_TRA_S_*`
+permission flags and `AA_TRA_C_*`/`AA_TRA_T_*` limit pairs may all be
+omitted, and the device applies its defaults (verified in the created
+record: `FunctionLimit` all `"All"`, `TotalPrint.LimitOn "false"`,
+`AccountStop "Off"`).
+
+The created account reads back through `AppReqGetTrackSetting` as:
+
+```json
+{"TrackID":"999","TrackType":"Private","TrackPasswordExist":"true",
+ "TotalPrint":{"LimitOn":"false","Limit":"0"},"AccountStop":"Off",
+ "FunctionLimit":{"EnablePrint":"All","EnableCopy":"All","EnableScan":"All",
+                  "EnablePrintSend":"All","EnableFaxSend":"All"}}
+```
+
+Note `TrackPasswordExist` is a boolean — the password is never read back,
+so a sync cannot diff passwords, only presence. Re-pushing an account is
+the only way to change its code.
+
+`AccountStop` is the per-account disable switch — the natural target for
+"suspended" in a lifecycle sync, as distinct from deleting the account.
+
+**Deleting is NOT yet captured.** `func=PSL_AA_TRA_PAG` with
+`H_FLAG=Delete`, `AA_TrackID=<id>`, `AA_TRA_H_BOX=Public` and the paging
+fields returns a `waitmove` envelope (`RedirectUrl` + `Interval`) but the
+account survives, including after following the redirect. The delete func
+is not present in `Integrated_main.js` and `a_authentication_track.xml` is
+a data document rather than a form, so it needs another route — most
+likely the bulk Authentication-Information import with replace semantics,
+which is the preferred provisioning path anyway.
+
+### 3.9.3 Per-account counters — **verified working**
+
+The endpoint the Account Track Counter screen actually uses:
+
+```http
+POST /wcd/api/AppReqGetTrackCounterInfo
+Content-Type: application/json
+
+{"TrackCounterListCondition":{
+   "TrackType":"Private",
+   "ObtainCondition":{"Type":"IndexList","IndexRange":{"Start":1,"End":50}},
+   "BackUp":"false"},
+ "Token":"<rotating token>"}
+```
+
+**How it was found, because the method matters more than the result:**
+every SPA screen loads its data from `api/AppReqGetCustomData/_<screenId>`
+(`Integrated_content.js:spa_ajax_contentsData`), and each screen's own JS
+is appended to its `spa_<screenId>.tmpl.html`, *after* the underscore
+template. Reading `spa_003_002_TCR001.tmpl.html` gives the request, the
+response paths, and the counter type vocabulary in one file, with no login
+and no browser. That is where every "not supported" answer above should
+have been checked first — the four dead endpoints were guesses at names,
+and one of them was one word off.
+
+**Windows are account-number ranges, not offsets.** `Start`/`End` are
+account numbers; only accounts that exist within the range come back, and
+a range past the last account returns `ArraySize 0` rather than an error —
+so paging stops on an empty window, not on a short one. 51 accounts in one
+call is accepted and 266 is refused with `GeneralRangeIllegal`; the
+device's own screen asks for 50, which is the number to use.
+
+**Response**, per account:
+
+```json
+{"TrackCounterList":{"ArraySize":"1","TrackCounter":{
+  "TrackType":"Private","TrackID":"1",
+  "TotalCounterList":{"ArraySize":"7","Counter":[
+     {"Type":"Bw","Count":"0"},{"Type":"BwLarge","Count":"0"},
+     {"Type":"Document","Count":"0"},{"Type":"Paper","Count":"0"},
+     {"Type":"DuplexTotal","Count":"0"},{"Type":"PrintPageTotal","Count":"0"},
+     {"Type":"BlackPrintPaper","Count":"0"}]},
+  "CopyCounterList":{...},"PrintCounterList":{...},
+  "ScanFaxCounterList":{...},"OtherTrackCounterList":{...},
+  "TotalCounterData":{"Nin1TotalRate":"0.000","DuplexTotalRate":"0.000"}}}}
+```
+
+Single-element arrays collapse to an object, same trap as `TrackList`.
+
+| List | Types seen on the 950i (mono) | Types the screen JS also handles |
+|---|---|---|
+| `TotalCounterList` | Bw, BwLarge, Document, Paper, DuplexTotal, PrintPageTotal, BlackPrintPaper | Total, TotalLarge, FullColor, BiColor, MonoColor (+`*Large`) |
+| `CopyCounterList` | Bw, BwLarge, BlackPrintPaper | FullColor, BiColor, MonoColor (+`*Large`) |
+| `PrintCounterList` | Bw, BwLarge, BlackPrintPaper | FullColor, BiColor (+`*Large`) |
+| `ScanFaxCounterList` | PrintTotalBw, PrintLargeBw, FaxSend, DocumentReadTotal, DocumentReadLarge, BlackPrintPaper | PrintTotalColor, PrintLargeColor |
+| `OtherTrackCounterList` | Nin12in1, Nin14in1, Nin1Other | — |
+
+Two things about these numbers that decide how they can be used:
+
+- **They are lifetime totals and only ever climb.** Read once, an account
+  reports its whole history. Usage is the difference between two reads —
+  see `app/copiers/account_counters.py`. The only thing that lowers one is
+  the Counter Clear button on this screen (`func` posted by `ID_AA_CLR_CNT`
+  — **not captured, and never to be run against a production counter**).
+- **The colour modes are disjoint, and `*Large` is not.** Bw, FullColor,
+  BiColor and MonoColor each count a page once; `BwLarge` re-counts
+  large-format pages already in `Bw`, and `Paper`/`Document` count sheets
+  and originals rather than pages. Summing everything double-counts.
+
+Counters carry no timestamps, so the read interval is the resolution of
+any usage derived from them: all that can honestly be said is that the
+pages happened between two reads.
+
 ## 4. Not yet captured
 
 These items from §5.1 of the task brief remain open, all blocked by Account
 Track being off (§0) — there is nothing to list, count, or export yet:
 
-- **Add an account** (the write call + token handling).
+- **Add an account** — form contract now captured (§3.9.1); the response
+  shape and minimal-field set are not.
 - **Bulk import** of Authentication Information (the multipart upload and its
   CSV column format) — the intended bulk-provisioning path.
 - **Export** of the same category, to learn the exact columns.
-- **Per-account counter read** — needs a source other than
-  `AppReqGetCounterInfo` (§3.2).
 - **Counter reset** request shape (capture only; never execute on a
   production counter).
 

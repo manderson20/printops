@@ -62,6 +62,8 @@ class LeaderboardEntryOut(BaseModel):
 class CombinedSummaryOut(BaseModel):
     print_pages: int
     copy_pages: int
+    scan_pages: int
+    fax_pages: int
     total_pages: int
     unmapped_copy_activity_count: int
 
@@ -72,12 +74,88 @@ class CombinedLeaderboardEntryOut(BaseModel):
     print_pages: int
     copy_pages: int
     total_pages: int
+    # color/mono/duplex/simplex describe the print side only; the copy
+    # side has its own colour split (copy_*) because a copy arrives as a
+    # counter delta with no per-job duplex flag at all.
     color_pages: int
     mono_pages: int
     duplex_pages: int
     simplex_pages: int
-    # Print-only — walk-up copy usage has no cost model.
+    copy_color_pages: int
+    copy_mono_pages: int
+    scan_pages: int
+    fax_pages: int
+    print_cost: float
+    copy_cost: float
+    # print_cost + copy_cost.
     estimated_cost: float
+
+
+class StaffPrinterUsageOut(BaseModel):
+    """One printer's worth of one person's printing."""
+
+    printer_id: UUID
+    printer_name: str
+    job_count: int
+    pages: int
+    color_pages: int
+    mono_pages: int
+    duplex_pages: int
+    simplex_pages: int
+    sheets: int
+    toner_cost: float
+    paper_cost: float
+    total_cost: float
+
+
+class StaffCopierUsageOut(BaseModel):
+    """One copier's worth of one person's walk-up activity.
+
+    color_pages + mono_pages can be less than `pages`: `measured_color`
+    is false when the device reported a copy total with no colour split,
+    in which case the unsplit remainder is priced at the mono rate and
+    the UI should say so rather than implying the copies were mono."""
+
+    device_id: UUID
+    device_name: str
+    pages: int
+    color_pages: int
+    mono_pages: int
+    scan_pages: int
+    fax_pages: int
+    sheets: int
+    toner_cost: float
+    paper_cost: float
+    total_cost: float
+    measured_color: bool
+    # True when these pages come from a whole-device meter assigned to
+    # this person by an admin (MfpDevice.default_owner_email) rather than
+    # from them identifying themselves at the copier.
+    attributed_by_default_owner: bool
+
+
+class StaffUsageOut(BaseModel):
+    """Everything one person did, print and copy, in the filtered window —
+    the per-person drill-down behind a Combined Leaderboard row."""
+
+    email: str
+    label: str
+    print_pages: int
+    copy_pages: int
+    scan_pages: int
+    fax_pages: int
+    total_pages: int
+    color_pages: int
+    mono_pages: int
+    duplex_pages: int
+    simplex_pages: int
+    job_count: int
+    sheets: int
+    print_cost: float
+    copy_cost: float
+    total_cost: float
+    printers: list[StaffPrinterUsageOut]
+    copiers: list[StaffCopierUsageOut]
 
 
 class PeakTimesOut(BaseModel):

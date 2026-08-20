@@ -1,9 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import { getUserUsage, listJobs, type Job, type UserUsage } from "@/lib/api";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import {
+  getUserUsage,
+  listJobs,
+  type Job,
+  type ReportFilters,
+  type UserUsage,
+} from "@/lib/api";
 import { formatBytes, formatCurrency } from "@/lib/format";
 import { jobStatusInfo } from "@/lib/jobStatus";
 import { useCurrentUser } from "@/lib/useCurrentUser";
@@ -12,6 +18,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
 import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
+import { StaffUsageDetail } from "@/components/StaffUsageDetail";
 
 const JOBS_LIMIT = 200;
 
@@ -29,7 +36,7 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-export default function UserUsageDetailPage() {
+function UserUsageDetail() {
   const router = useRouter();
   const params = useParams<{ email: string }>();
   // decodeURIComponent on an already-decoded string is a safe no-op, so
@@ -40,7 +47,26 @@ export default function UserUsageDetailPage() {
   // (getUserUsage, listJobs), turning "%40" into "%2540" and 404ing.
   const email = decodeURIComponent(params.email);
   const currentUser = useCurrentUser();
+  const search = useSearchParams();
   const [state, setState] = useState<LoadState>({ phase: "loading" });
+
+  // The date range travels in the URL so a link from the Insights
+  // Combined Leaderboard lands on the same window the row was
+  // summarising, and so this page can be bookmarked or shared and still
+  // mean the same thing. Absent, the breakdown below covers all time,
+  // which is what the print-only stats above have always shown.
+  const reportFilters = useMemo<ReportFilters>(
+    () => ({
+      start: search.get("start") ?? undefined,
+      end: search.get("end") ?? undefined,
+      building: search.get("building") ?? undefined,
+    }),
+    [search],
+  );
+  const rangeLabel =
+    reportFilters.start && reportFilters.end
+      ? `${reportFilters.start} to ${reportFilters.end}`
+      : "all time";
 
   useEffect(() => {
     if (currentUser === null) {
@@ -94,6 +120,9 @@ export default function UserUsageDetailPage() {
             )}
           </div>
 
+          <h2 className="-mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            Printing, all time
+          </h2>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <StatCard label="Jobs" value={String(state.usage.job_count)} />
             <StatCard label="Total Pages" value={String(state.usage.total_pages)} />
@@ -102,6 +131,17 @@ export default function UserUsageDetailPage() {
             <StatCard label="Estimated Cost" value={formatCurrency(state.usage.estimated_cost)} />
             <StatCard label="Total Size" value={formatBytes(state.usage.total_bytes)} />
           </div>
+
+          <Card>
+            <CardTitle className="mb-1">Print + Copy</CardTitle>
+            <p className="mb-4 text-xs text-zinc-500">
+              What this person printed and copied over {rangeLabel}, by the
+              machine that did it, priced at each machine&apos;s own cartridge
+              rates. Copies are counted separately from the print jobs listed
+              below — a copy never passes through the print server.
+            </p>
+            <StaffUsageDetail email={email} filters={reportFilters} />
+          </Card>
 
           <Card className="overflow-hidden p-0">
             <div className="p-4">
@@ -167,5 +207,16 @@ export default function UserUsageDetailPage() {
         </>
       )}
     </div>
+  );
+}
+
+/** useSearchParams needs a Suspense boundary above it or the production
+ * build fails outright — same wrapper the Jobs page uses, for the same
+ * reason. */
+export default function UserUsageDetailPage() {
+  return (
+    <Suspense fallback={<Spinner label="Loading user usage…" />}>
+      <UserUsageDetail />
+    </Suspense>
   );
 }

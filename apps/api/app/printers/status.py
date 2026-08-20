@@ -6,15 +6,67 @@ POST /printers/{id}/check-status endpoint (app/routers/printers.py).
 """
 
 import asyncio
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, timedelta
 
 from app.models.printer import Printer
+from app.printers import cups_health
 from app.printers.discovery import refresh_printer_capabilities
 from app.printers.ipp_client import PrinterProbeError, PrinterStateResult, probe_printer_state
 from app.printers.queue_sync import QueueSyncError, sync_queue
 
+logger = logging.getLogger(__name__)
+
 # IPP printer-state values (RFC 8011 §5.4.12).
 PRINTER_STATE_STOPPED = 5
+
+# How long after an automatic queue resync before this printer may have
+# another one. A printer that genuinely comes back after being switched off
+# overnight is well past this and resyncs immediately; a printer flapping
+# every few minutes gets one resync and then waits.
+AUTO_RESYNC_COOLDOWN = timedelta(minutes=30)
+
+# Each consecutive failure doubles the wait, because a resync that just
+# failed is the least likely to succeed if repeated at once — and it is
+# exactly the failing ones that are expensive (a full `lpadmin -m
+# everywhere` against an unresponsive device blocks a cupsd slot for its
+# whole 30-second timeout).
+MAX_AUTO_RESYNC_BACKOFF = timedelta(hours=6)
+
+# Enough doublings to reach the cap from the base cooldown, and no more.
+_MAX_BACKOFF_DOUBLINGS = 16
+
+# Automatic resyncs run one at a time process-wide. The 60s status loop
+# probes every printer concurrently, so without this a network blip that
+# nudges a dozen printers online at once would fire a dozen simultaneous
+# lpadmin storms at the same scheduler.
+_AUTO_RESYNC_LOCK = asyncio.Lock()
+
+
+def _auto_resync_backoff(printer: Printer) -> timedelta:
+    failures = printer.auto_queue_sync_failures or 0
+    if failures <= 0:
+        return AUTO_RESYNC_COOLDOWN
+    # Clamped before the shift, not after: a printer that has been failing
+    # for weeks reaches four figures, and 2**that overflows rather than
+    # merely being large.
+    doublings = min(failures, _MAX_BACKOFF_DOUBLINGS)
+    return min(AUTO_RESYNC_COOLDOWN * (2**doublings), MAX_AUTO_RESYNC_BACKOFF)
+
+
+def auto_resync_due(printer: Printer, now: datetime | None = None) -> bool:
+    """Whether this printer's automatic queue resync is off cooldown.
+
+    Only automatic resyncs are rate-limited. A person clicking "Resync
+    Queue" is answering for the consequences themselves and is never made
+    to wait."""
+    now = now or datetime.now(UTC)
+    last = printer.last_auto_queue_sync_at
+    if last is None:
+        return True
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return now - last >= _auto_resync_backoff(printer)
 
 
 def derive_status(printer_state: int | None, state_reasons: list[str]) -> tuple[str, str | None]:
@@ -72,10 +124,53 @@ async def refresh_printer_status_and_rediscover(printer: Printer) -> None:
     behave identically."""
     was_online = printer.status == "online"
     await refresh_printer_status(printer)
-    if printer.status == "online" and not was_online:
-        await refresh_printer_capabilities(printer)
+    if printer.status != "online" or was_online:
+        return
+    # Capability discovery is one IPP probe and stays unconditional; it is
+    # the queue resync behind it that has to be rationed.
+    await refresh_printer_capabilities(printer)
+    await run_automatic_queue_sync(printer)
+
+
+async def run_automatic_queue_sync(printer: Printer) -> bool:
+    """Resync this printer's CUPS queue on PrintOps' own initiative, unless
+    doing it now would cost more than it's worth. Returns whether a sync
+    was actually attempted.
+
+    Three gates, each learned from one flapping copier that resynced 137
+    times in a day and took the whole scheduler down with it (see
+    app/printers/cups_health.py): a per-printer cooldown that backs off on
+    repeated failure, a check that cupsd has slots to spare, and a
+    process-wide lock so a network blip can't start a dozen at once.
+
+    A skipped resync costs a stale PPD until the next transition. An
+    unskipped one cost the district an afternoon of printing."""
+    if not auto_resync_due(printer):
+        logger.debug(
+            "Skipping automatic queue resync for %s — still within its cooldown "
+            "(%s consecutive failures).",
+            printer.name,
+            printer.auto_queue_sync_failures or 0,
+        )
+        return False
+    if cups_health.is_saturated():
+        # Deliberately not stamped as an attempt: nothing was tried, and a
+        # printer shouldn't serve a cooldown for the scheduler's state.
+        return False
+
+    async with _AUTO_RESYNC_LOCK:
+        printer.last_auto_queue_sync_at = datetime.now(UTC)
         try:
             await asyncio.to_thread(sync_queue, str(printer.id))
             printer.queue_sync_error = None
+            printer.auto_queue_sync_failures = 0
         except QueueSyncError as exc:
             printer.queue_sync_error = str(exc)
+            printer.auto_queue_sync_failures = (printer.auto_queue_sync_failures or 0) + 1
+            logger.warning(
+                "Automatic queue resync failed for %s (%s in a row): %s",
+                printer.name,
+                printer.auto_queue_sync_failures,
+                exc,
+            )
+    return True

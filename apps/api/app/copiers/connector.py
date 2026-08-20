@@ -16,6 +16,7 @@ confidence levels, just applied to whole methods instead of one field).
 """
 
 from abc import ABC
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import ClassVar
@@ -97,10 +98,63 @@ class NormalizedUsageRow:
 
 
 @dataclass
+class DeviceUser:
+    """One login account as it exists on the device. `has_password` rather
+    than the password itself — vendors generally report presence only, and
+    a connector must never invent a value it can't read."""
+
+    identifier: str
+    name: str | None = None
+    has_password: bool = False
+    disabled: bool = False
+
+
+@dataclass
+class DeviceAccountCounters:
+    """One account's counters as the device reports them right now.
+
+    These are lifetime running totals, not usage in a period — the whole
+    point of the type is to stop callers treating them as the latter.
+    Turning them into usage means storing a reading and subtracting the
+    previous one (app/copiers/account_counters.py), the same shape as
+    app/printers/counter_history.py does for SNMP printer meters.
+
+    `lists` is {activity: {counter_type: value}} — "total", "copy",
+    "print", "scan_fax" as the activity, and vendor counter type names
+    (Bw, FullColor, …) beneath, kept verbatim because the vocabulary is
+    model-dependent."""
+
+    account_id: str
+    lists: dict[str, dict[str, int]] = field(default_factory=dict)
+
+
+# Called after each account so a long sync can report progress:
+# (done, total, synced, failed).
+ProgressCallback = Callable[[int, int, int, int], Awaitable[None]]
+
+
+@dataclass
+class ProvisionedAccount:
+    """One account a sync actually created, so the caller can record which
+    person now owns which account number on the device. The device can't be
+    asked this later — it never reveals an account's password — so if this
+    isn't captured at write time it's lost."""
+
+    staff_email: str
+    identity_value: str
+    identity_type: str
+    device_account_id: str
+    device_account_name: str | None = None
+
+
+@dataclass
 class SyncResult:
     synced_count: int = 0
     failed_count: int = 0
     message: str | None = None
+    # Already present from a previous run — not a failure.
+    skipped_count: int = 0
+    accounts: list[ProvisionedAccount] = field(default_factory=list)
 
 
 @dataclass
@@ -150,8 +204,35 @@ class CopierConnector(ABC):
             "— use a CSV import instead."
         )
 
+    async def read_account_counters(self, device: MfpDevice) -> list["DeviceAccountCounters"]:
+        """Current lifetime counters for every account on the device.
+
+        Separate from get_user_accounting because it is a different kind of
+        answer: this is a meter reading, and usage only exists once two
+        readings are subtracted. A connector whose device reports genuine
+        per-period activity (a job log) should implement get_user_accounting
+        instead."""
+        raise CapabilityNotSupported(
+            f"The {self.connector_type} connector can't read per-account counters."
+        )
+
+    async def list_device_users(self, device: MfpDevice) -> list["DeviceUser"]:
+        """The login accounts currently registered ON the device.
+
+        Distinct from PrintOps' own StaffCopierIdentity rows: those say
+        which code belongs to whom, while these are what the machine will
+        actually accept at the panel. An admin needs to see both to trust
+        that a sync did anything."""
+        raise CapabilityNotSupported(
+            f"The {self.connector_type} connector can't list accounts on the device."
+        )
+
     async def sync_users_to_device(
-        self, device: MfpDevice, identities: list[StaffCopierIdentity]
+        self,
+        device: MfpDevice,
+        identities: list[StaffCopierIdentity],
+        already_provisioned: set[str] | None = None,
+        on_progress: "ProgressCallback | None" = None,
     ) -> SyncResult:
         raise CapabilityNotSupported(
             f"The {self.connector_type} connector can't provision users to the device."

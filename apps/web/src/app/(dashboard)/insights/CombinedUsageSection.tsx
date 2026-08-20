@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   downloadCombinedReportCsv,
@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { StaffUsageDetail } from "@/components/StaffUsageDetail";
 
 type LoadState =
   | { phase: "loading" }
@@ -34,6 +35,10 @@ export function CombinedUsageSection({ filters }: { filters: ReportFilters }) {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [exporting, setExporting] = useState(false);
   const [prevFilters, setPrevFilters] = useState(filters);
+  // Which row is open, by staff email. One at a time: each open row fetches
+  // its own breakdown, and a page of them expanded at once is both a wall
+  // of numbers and a burst of requests nobody asked for.
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   // Reset to "loading" the instant filters change, computed during render
   // rather than via an effect + setState — see useCurrentUser.ts for the
@@ -111,6 +116,13 @@ export function CombinedUsageSection({ filters }: { filters: ReportFilters }) {
           <p className="mt-1 text-2xl font-semibold text-black dark:text-zinc-50">
             {state.summary.copy_pages.toLocaleString()}
           </p>
+          {(state.summary.scan_pages > 0 || state.summary.fax_pages > 0) && (
+            <p className="mt-1 text-xs text-zinc-500">
+              plus {state.summary.scan_pages.toLocaleString()} scanned
+              {state.summary.fax_pages > 0 &&
+                `, ${state.summary.fax_pages.toLocaleString()} faxed`}
+            </p>
+          )}
         </Card>
         <Card className="p-4">
           <p className="text-xs font-medium text-zinc-500">Total pages</p>
@@ -146,57 +158,113 @@ export function CombinedUsageSection({ filters }: { filters: ReportFilters }) {
         {state.leaderboard.length === 0 ? (
           <EmptyState>No print or copy activity in this range.</EmptyState>
         ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="text-xs uppercase tracking-wide text-zinc-500">
-              <tr>
-                <th className="py-2 font-medium">Staff</th>
-                <th className="py-2 font-medium">Printed</th>
-                <th className="py-2 font-medium">Copied</th>
-                <th className="py-2 font-medium">Total</th>
-                <th className="py-2 font-medium">Duplex / Simplex</th>
-                <th className="py-2 font-medium">Color / Mono</th>
-                <th className="py-2 font-medium">Est. Cost</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.leaderboard.map((entry) => (
-                <tr
-                  key={entry.key}
-                  className="border-t border-black/[.08] dark:border-white/[.1]"
-                >
-                  <td className="py-2 text-black dark:text-zinc-50">
-                    {entry.label}
-                  </td>
-                  <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                    {entry.print_pages.toLocaleString()}
-                  </td>
-                  <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                    {entry.copy_pages > 0 ? (
-                      entry.copy_pages.toLocaleString()
-                    ) : (
-                      <Badge tone="neutral">0</Badge>
-                    )}
-                  </td>
-                  <td className="py-2 font-medium text-black dark:text-zinc-50">
-                    {entry.total_pages.toLocaleString()}
-                  </td>
-                  <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                    {entry.duplex_pages.toLocaleString()} /{" "}
-                    {entry.simplex_pages.toLocaleString()}
-                  </td>
-                  <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                    {entry.color_pages.toLocaleString()} /{" "}
-                    {entry.mono_pages.toLocaleString()}
-                  </td>
-                  <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                    ${entry.estimated_cost.toFixed(2)}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[44rem] text-left text-sm">
+              <thead className="text-xs uppercase tracking-wide text-zinc-500">
+                <tr>
+                  <th className="py-2 font-medium">Staff</th>
+                  <th className="py-2 font-medium">Printed</th>
+                  <th className="py-2 font-medium">Copied</th>
+                  <th className="py-2 font-medium">Total</th>
+                  <th className="py-2 font-medium">Duplex / Simplex</th>
+                  <th className="py-2 font-medium">Color / Mono</th>
+                  <th className="py-2 font-medium">Print $</th>
+                  <th className="py-2 font-medium">Copy $</th>
+                  <th className="py-2 font-medium">Total $</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {state.leaderboard.map((entry) => {
+                  const open = expanded === entry.key;
+                  return (
+                    <Fragment key={entry.key}>
+                      <tr
+                        className="cursor-pointer border-t border-black/[.08] hover:bg-black/[.02] dark:border-white/[.1] dark:hover:bg-white/[.03]"
+                        onClick={() => setExpanded(open ? null : entry.key)}
+                      >
+                        <td className="py-2 text-black dark:text-zinc-50">
+                          <span className="flex items-center gap-1.5">
+                            <span
+                              aria-hidden
+                              className={`inline-block text-xs text-zinc-400 transition-transform ${
+                                open ? "rotate-90" : ""
+                              }`}
+                            >
+                              ▶
+                            </span>
+                            {entry.label}
+                          </span>
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {entry.print_pages.toLocaleString()}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {entry.copy_pages > 0 ? (
+                            entry.copy_pages.toLocaleString()
+                          ) : (
+                            <Badge tone="neutral">0</Badge>
+                          )}
+                        </td>
+                        <td className="py-2 font-medium text-black dark:text-zinc-50">
+                          {entry.total_pages.toLocaleString()}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {entry.duplex_pages.toLocaleString()} /{" "}
+                          {entry.simplex_pages.toLocaleString()}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          {entry.color_pages.toLocaleString()} /{" "}
+                          {entry.mono_pages.toLocaleString()}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          ${entry.print_cost.toFixed(2)}
+                        </td>
+                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                          ${entry.copy_cost.toFixed(2)}
+                        </td>
+                        <td className="py-2 font-medium text-black dark:text-zinc-50">
+                          ${entry.estimated_cost.toFixed(2)}
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr className="border-t border-black/[.08] dark:border-white/[.1]">
+                          <td colSpan={9} className="bg-black/[.015] p-4 dark:bg-white/[.02]">
+                            <div className="mb-3 flex items-center justify-between gap-3">
+                              <p className="text-xs text-zinc-500">
+                                {entry.key}
+                              </p>
+                              <Link
+                                href={`/usage/${encodeURIComponent(entry.key)}${
+                                  staffLinkQuery(filters) ? `?${staffLinkQuery(filters)}` : ""
+                                }`}
+                                className="text-xs font-medium underline print:hidden"
+                              >
+                                Open full report
+                              </Link>
+                            </div>
+                            <StaffUsageDetail email={entry.key} filters={filters} />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
     </div>
   );
+}
+
+/** Carries the report's own date range onto the per-person Usage page, so
+ * "Open full report" shows the same window the row was summarising rather
+ * than silently resetting to that page's own default. */
+function staffLinkQuery(filters: ReportFilters): string {
+  const query = new URLSearchParams();
+  if (filters.start) query.set("start", filters.start);
+  if (filters.end) query.set("end", filters.end);
+  if (filters.building) query.set("building", filters.building);
+  return query.toString();
 }

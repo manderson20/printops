@@ -10,6 +10,9 @@ from fastapi.responses import JSONResponse
 from jwt import PyJWTError
 from sqlalchemy import delete, select
 
+from app.copiers.account_counters import poll_account_counters
+from app.copiers.device_owner import attribute_device_copies
+from app.copiers.sync_jobs import create_sync_job, run_sync_job
 from app.core.config import get_settings
 from app.core.security import decode_access_token
 from app.db import AsyncSessionLocal
@@ -20,13 +23,13 @@ from app.integrations.mosyle import MosyleError
 from app.integrations.mosyle import run_sync as run_mosyle_sync
 from app.models.google_workspace import GoogleWorkspaceSettings
 from app.models.job import Job
+from app.models.mfp_device import MfpDevice
 from app.models.mosyle import MosyleSettings
 from app.models.printer import Printer
 from app.models.report import PrinterTonerReading
 from app.models.snmp import PrinterCounterReading
 from app.models.syslog import PrinterSyslogEvent
 from app.printers.discovery import refresh_printer_capabilities
-from app.printers.queue_sync import QueueSyncError, sync_queue
 from app.printers.snmp_counters import (
     SnmpProbeError,
     get_or_create_snmp_defaults,
@@ -35,7 +38,7 @@ from app.printers.snmp_counters import (
     resolve_snmp_config,
     sync_toner_levels,
 )
-from app.printers.status import refresh_printer_status_and_rediscover
+from app.printers.status import refresh_printer_status_and_rediscover, run_automatic_queue_sync
 from app.routers import (
     attribution_aliases,
     auth,
@@ -188,11 +191,11 @@ async def _capability_rediscovery_loop() -> None:
                         current.get("media_trays") != previous_trays
                     )
                     if media_changed:
-                        try:
-                            await asyncio.to_thread(sync_queue, str(printer.id))
-                            printer.queue_sync_error = None
-                        except QueueSyncError as exc:
-                            printer.queue_sync_error = str(exc)
+                        # Rate-limited and gated on cupsd having slots to
+                        # spare, same as the status loop's resync — a
+                        # printer whose reported media flaps would
+                        # otherwise resync every cycle forever.
+                        await run_automatic_queue_sync(printer)
 
                 await asyncio.gather(*(_refresh_one(p) for p in printers), return_exceptions=True)
                 await db.commit()
@@ -377,6 +380,131 @@ async def _failed_job_purge_loop() -> None:
         await asyncio.sleep(FAILED_JOB_PURGE_INTERVAL_SECONDS)
 
 
+COPIER_USER_SYNC_INTERVAL_SECONDS = 6 * 60 * 60
+
+
+async def _copier_user_sync_loop() -> None:
+    """Pushes staff accounts to copiers that have auto_sync_users on.
+
+    Six-hourly rather than minutes: the input is the Google Workspace
+    roster, which itself syncs on a slow cycle, and each run takes the
+    device's single admin session — polling hard would fight with an admin
+    trying to use the copier's own web UI.
+
+    Devices are handled one at a time, not gathered: the whole point of the
+    per-device lock in app/copiers/konica_admin.py is that a bizhub allows
+    one admin session, and hitting several copiers at once is fine but
+    hitting one twice is not. Sequential keeps the failure modes simple and
+    the load trivial at this fleet size.
+
+    Every outcome is recorded on the device (last_user_sync_*) so an admin
+    can see what happened without reading logs — including the honest
+    failures: Account Track switched off, a person already logged into the
+    copier, or no admin password stored."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                devices = (
+                    (await db.execute(select(MfpDevice).where(MfpDevice.auto_sync_users.is_(True))))
+                    .scalars()
+                    .all()
+                )
+                for device in devices:
+                    # Goes through the job runner, not the connector
+                    # directly: that is what consults the provisioning
+                    # record and skips people already on the device. Calling
+                    # the connector here would re-add everyone and the
+                    # device would reject every one as a duplicate password
+                    # — which it did, every cycle, until this was fixed.
+                    job = await create_sync_job(db, device, trigger="schedule")
+                    if job is None:
+                        continue  # a run is already in flight for this device
+                    await run_sync_job(job.id)
+                await db.commit()
+        except Exception:
+            logger.exception("Unexpected error in copier user sync loop")
+        await asyncio.sleep(COPIER_USER_SYNC_INTERVAL_SECONDS)
+
+
+COPIER_COUNTER_POLL_INTERVAL_SECONDS = 60 * 60
+
+
+async def _copier_counter_poll_loop() -> None:
+    """Reads per-account counters from copiers that have
+    auto_poll_counters on, and records the usage since the last read.
+
+    Hourly, where the user sync is six-hourly: this one only reads, it is
+    a handful of requests rather than one per person, and the interval is
+    what bounds how precisely a copy can be dated. The counters carry no
+    timestamps at all — all PrintOps can say is "between these two reads"
+    — so the poll interval *is* the resolution of the resulting usage
+    data. An hour is a good deal more useful than six for that.
+
+    Sequentially and for the same reason as the sync loop: one admin
+    session per device.
+
+    A device that has never been polled produces no usage on its first
+    run, only a baseline to subtract from next time. That is expected, and
+    the message recorded on the device says as much rather than implying
+    nobody used the copier."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                devices = (
+                    (
+                        await db.execute(
+                            select(MfpDevice).where(MfpDevice.auto_poll_counters.is_(True))
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for device in devices:
+                    try:
+                        result = await poll_account_counters(db, device)
+                        logger.info("Counter poll for %s: %s", device.name, result.message)
+                    except Exception as exc:  # noqa: BLE001
+                        # One unreachable copier must not stop the rest of
+                        # the fleet being read, and the reason belongs on
+                        # the device where an admin will look for it.
+                        logger.warning("Counter poll failed for %s: %s", device.name, exc)
+                        device.last_counter_poll_at = datetime.now(UTC)
+                        device.last_counter_poll_ok = False
+                        device.last_counter_poll_message = str(exc)
+                        await db.commit()
+
+                # Copiers nobody logs in to, whose whole meter belongs to
+                # one named person (app/copiers/device_owner.py). A
+                # separate pass over a different set of devices — these
+                # typically have auto_poll_counters off, because there are
+                # no per-account counters on them to poll. It runs here
+                # rather than in its own loop because it costs nothing to
+                # run: no device is contacted at all, it only diffs SNMP
+                # readings the counter loop already recorded.
+                owned = (
+                    (
+                        await db.execute(
+                            select(MfpDevice).where(MfpDevice.default_owner_email.is_not(None))
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for device in owned:
+                    try:
+                        result = await attribute_device_copies(db, device)
+                        if result.usage_rows or result.baselined:
+                            logger.info(
+                                "Default-owner attribution for %s: %s", device.name, result.message
+                            )
+                    except Exception:
+                        logger.exception("Default-owner attribution failed for %s", device.name)
+                await db.commit()
+        except Exception:
+            logger.exception("Unexpected error in copier counter poll loop")
+        await asyncio.sleep(COPIER_COUNTER_POLL_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tasks = [
@@ -398,6 +526,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_syslog_event_purge_loop()),
         asyncio.create_task(_held_job_purge_loop()),
         asyncio.create_task(_failed_job_purge_loop()),
+        asyncio.create_task(_copier_user_sync_loop()),
+        asyncio.create_task(_copier_counter_poll_loop()),
     ]
     yield
     for task in tasks:
@@ -462,7 +592,7 @@ async def block_impersonated_mutations(request: Request, call_next):
                 return JSONResponse(
                     status_code=403,
                     content={
-                        "detail": "This is a read-only \"View as\" session — no changes can be "
+                        "detail": 'This is a read-only "View as" session — no changes can be '
                         "made while impersonating another user."
                     },
                 )
@@ -499,6 +629,4 @@ app.include_router(quota_holds.router, prefix="/api/v1/quota-holds", tags=["quot
 app.include_router(
     self_service_print.router, prefix="/api/v1/self-service-print", tags=["self-service-print"]
 )
-app.include_router(
-    zabbix_integration.router, prefix="/api/v1/integrations/zabbix", tags=["zabbix"]
-)
+app.include_router(zabbix_integration.router, prefix="/api/v1/integrations/zabbix", tags=["zabbix"])

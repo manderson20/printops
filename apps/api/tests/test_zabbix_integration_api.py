@@ -78,9 +78,7 @@ def auth_headers(client):
 
 @pytest.fixture
 def zabbix_token(client, auth_headers):
-    response = client.put(
-        "/api/v1/settings/zabbix", headers=auth_headers, json={"enabled": True}
-    )
+    response = client.put("/api/v1/settings/zabbix", headers=auth_headers, json={"enabled": True})
     assert response.status_code == 200
     return response.json()["api_token"]
 
@@ -91,9 +89,7 @@ def zabbix_headers(zabbix_token):
 
 
 def test_enabling_zabbix_generates_a_token(client, auth_headers):
-    response = client.put(
-        "/api/v1/settings/zabbix", headers=auth_headers, json={"enabled": True}
-    )
+    response = client.put("/api/v1/settings/zabbix", headers=auth_headers, json={"enabled": True})
     assert response.status_code == 200
     body = response.json()
     assert body["enabled"] is True

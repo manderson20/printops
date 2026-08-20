@@ -743,12 +743,22 @@ async def test_combined_leaderboard_color_and_duplex_breakdown(
     client, printer_id, backend_headers, admin_headers
 ):
     _make_job(
-        client, printer_id, backend_headers, "jane.smith@district.org", 6,
-        color_mode="color", duplex=True,
+        client,
+        printer_id,
+        backend_headers,
+        "jane.smith@district.org",
+        6,
+        color_mode="color",
+        duplex=True,
     )
     _make_job(
-        client, printer_id, backend_headers, "jane.smith@district.org", 4,
-        color_mode="monochrome", duplex=False,
+        client,
+        printer_id,
+        backend_headers,
+        "jane.smith@district.org",
+        4,
+        color_mode="monochrome",
+        duplex=False,
     )
 
     response = client.get("/api/v1/reports/combined-leaderboard", headers=admin_headers)
@@ -768,7 +778,11 @@ async def test_combined_leaderboard_estimated_cost(
         json={"cost_per_page_mono": 0.05, "cost_per_page_color": 0.0, "cost_per_sheet_paper": 0.0},
     )
     _make_job(
-        client, printer_id, backend_headers, "jane.smith@district.org", 10,
+        client,
+        printer_id,
+        backend_headers,
+        "jane.smith@district.org",
+        10,
         color_mode="monochrome",
     )
 
@@ -786,3 +800,226 @@ async def test_combined_export_csv_includes_totals(
     response = client.get("/api/v1/reports/export-combined.csv", headers=admin_headers)
     assert response.status_code == 200
     assert "jane.smith@district.org,850,220,1070" in response.text
+
+
+# --- Copy cost and the per-person drill-down --------------------------------
+#
+# Copies are priced at the same rates as printing (app/reports/formulas.py:
+# copy_cost) because it is the same machine and the same cartridges. The
+# tests below are mostly about the seams where that stops being obvious:
+# activity that isn't copying, a colour split the device never reported,
+# and who is allowed to look at whose numbers.
+
+
+async def _make_copier_activity(
+    db_session_factory,
+    device_id,
+    staff_email,
+    page_count,
+    activity_type="copy",
+    color_page_count=None,
+    monochrome_page_count=None,
+    source_connector="generic_csv",
+):
+    async with db_session_factory() as session:
+        session.add(
+            CopierUsageRecord(
+                mfp_device_id=uuid.UUID(device_id),
+                vendor="canon",
+                staff_email=staff_email,
+                external_identity_used=staff_email or "unknown",
+                source_connector=source_connector,
+                page_count=page_count,
+                activity_type=activity_type,
+                color_page_count=color_page_count,
+                monochrome_page_count=monochrome_page_count,
+                occurred_at=datetime.now(UTC),
+                raw_payload={},
+            )
+        )
+        await session.commit()
+
+
+async def test_scans_are_reported_beside_copies_not_inside_them(
+    client, admin_headers, mfp_device_id, db_session_factory
+):
+    """A scan puts no toner on paper. Counting it as a copied page both
+    overstates the page count and would charge for it."""
+    await _make_copier_activity(db_session_factory, mfp_device_id, "jane.smith@district.org", 40)
+    await _make_copier_activity(
+        db_session_factory, mfp_device_id, "jane.smith@district.org", 9, activity_type="scan"
+    )
+
+    body = client.get("/api/v1/reports/combined-summary", headers=admin_headers).json()
+    assert body["copy_pages"] == 40
+    assert body["scan_pages"] == 9
+    assert body["total_pages"] == 40
+
+
+async def test_combined_leaderboard_splits_print_and_copy_cost(
+    client, printer_id, backend_headers, admin_headers, mfp_device_id, db_session_factory
+):
+    client.put(
+        "/api/v1/settings/report-formulas",
+        headers=admin_headers,
+        json={"cost_per_page_mono": 0.05, "cost_per_page_color": 0.20, "cost_per_sheet_paper": 0.0},
+    )
+    _make_job(
+        client, printer_id, backend_headers, "jane.smith@district.org", 10, color_mode="monochrome"
+    )
+    await _make_copier_activity(
+        db_session_factory,
+        mfp_device_id,
+        "jane.smith@district.org",
+        30,
+        color_page_count=10,
+        monochrome_page_count=20,
+    )
+
+    entry = client.get("/api/v1/reports/combined-leaderboard", headers=admin_headers).json()[0]
+    assert entry["print_cost"] == round(10 * 0.05, 2)
+    # Both rates apply to the same copy row — it is a counter delta over
+    # many copies, not one job with a single colour mode.
+    assert entry["copy_cost"] == round(10 * 0.20 + 20 * 0.05, 2)
+    assert entry["estimated_cost"] == round(entry["print_cost"] + entry["copy_cost"], 2)
+    assert entry["copy_color_pages"] == 10
+    assert entry["copy_mono_pages"] == 20
+
+
+async def test_copies_with_no_colour_split_are_priced_at_the_mono_rate(
+    client, admin_headers, mfp_device_id, db_session_factory
+):
+    """A device-level meter reports a copy total and no colour breakdown.
+    Pricing the unsplit remainder at the cheaper rate is the same
+    conservative rule an unreported colour_mode already gets."""
+    client.put(
+        "/api/v1/settings/report-formulas",
+        headers=admin_headers,
+        json={"cost_per_page_mono": 0.05, "cost_per_page_color": 0.20, "cost_per_sheet_paper": 0.0},
+    )
+    await _make_copier_activity(db_session_factory, mfp_device_id, "jane.smith@district.org", 100)
+
+    entry = client.get("/api/v1/reports/combined-leaderboard", headers=admin_headers).json()[0]
+    assert entry["copy_cost"] == round(100 * 0.05, 2)
+    assert entry["copy_color_pages"] == 0
+    assert entry["copy_mono_pages"] == 0
+    # ...and the pages are still all there, which is the point: the gap is
+    # in what the device said, not in the count.
+    assert entry["copy_pages"] == 100
+
+
+async def test_staff_usage_breaks_one_person_down_by_machine(
+    client, printer_id, backend_headers, admin_headers, mfp_device_id, db_session_factory
+):
+    client.put(
+        "/api/v1/settings/report-formulas",
+        headers=admin_headers,
+        json={
+            "cost_per_page_mono": 0.05,
+            "cost_per_page_color": 0.20,
+            "cost_per_sheet_paper": 0.01,
+        },
+    )
+    _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "jane.smith@district.org",
+        10,
+        color_mode="monochrome",
+        duplex=True,
+    )
+    _make_job(client, printer_id, backend_headers, "someone.else@district.org", 500)
+    await _make_copier_activity(
+        db_session_factory,
+        mfp_device_id,
+        "jane.smith@district.org",
+        30,
+        color_page_count=10,
+        monochrome_page_count=20,
+    )
+    await _make_copier_activity(
+        db_session_factory, mfp_device_id, "jane.smith@district.org", 9, activity_type="scan"
+    )
+
+    response = client.get(
+        "/api/v1/reports/staff-usage",
+        params={"email": "jane.smith@district.org"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert body["print_pages"] == 10
+    assert body["copy_pages"] == 30
+    assert body["scan_pages"] == 9
+    assert body["total_pages"] == 40
+    assert body["duplex_pages"] == 10
+    assert body["job_count"] == 1
+
+    assert len(body["printers"]) == 1
+    assert body["printers"][0]["pages"] == 10
+    assert body["printers"][0]["duplex_pages"] == 10
+    assert body["printers"][0]["sheets"] == 5  # 10 duplex pages -> 5 sheets
+
+    assert len(body["copiers"]) == 1
+    copier = body["copiers"][0]
+    assert copier["pages"] == 30
+    assert copier["scan_pages"] == 9
+    assert copier["color_pages"] == 10
+    assert copier["measured_color"] is True
+    assert copier["attributed_by_default_owner"] is False
+
+    assert body["total_cost"] == round(body["print_cost"] + body["copy_cost"], 2)
+
+
+async def test_staff_usage_flags_pages_credited_by_a_default_owner_rule(
+    client, admin_headers, mfp_device_id, db_session_factory
+):
+    """These pages come from an admin naming the device's owner, not from
+    anyone identifying themselves at the glass. A per-person report must
+    not present that assertion as measurement of who was standing there."""
+    await _make_copier_activity(
+        db_session_factory,
+        mfp_device_id,
+        "jane.smith@district.org",
+        45,
+        source_connector="device_default_owner",
+    )
+
+    body = client.get(
+        "/api/v1/reports/staff-usage",
+        params={"email": "jane.smith@district.org"},
+        headers=admin_headers,
+    ).json()
+    assert body["copiers"][0]["attributed_by_default_owner"] is True
+
+
+async def test_staff_usage_refuses_a_viewer_asking_about_someone_else(
+    client, printer_id, backend_headers, viewer_headers
+):
+    """The endpoint overrides submitted_by with a caller-supplied address,
+    which is exactly the field _report_filters uses to confine a viewer to
+    their own history — so it has to re-check permission itself."""
+    _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 100)
+
+    response = client.get(
+        "/api/v1/reports/staff-usage",
+        params={"email": "jane.smith@district.org"},
+        headers=viewer_headers,
+    )
+    assert response.status_code == 403
+
+
+async def test_staff_usage_lets_a_viewer_see_their_own(
+    client, printer_id, backend_headers, viewer_headers
+):
+    _make_job(client, printer_id, backend_headers, "viewer@example.org", 12)
+
+    response = client.get(
+        "/api/v1/reports/staff-usage",
+        params={"email": "viewer@example.org"},
+        headers=viewer_headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["print_pages"] == 12

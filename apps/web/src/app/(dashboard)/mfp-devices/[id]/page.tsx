@@ -5,19 +5,34 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   ApiError,
+  attributeMfpDeviceCopies,
   checkMfpDeviceCapabilities,
   checkMfpDeviceMeter,
   deleteMfpDevice,
   getMfpDevice,
   listConnectorTypes,
   listGoogleWorkspaceOrgUnits,
+  listGoogleWorkspaceUsers,
+  getLatestMfpSyncJob,
+  listMfpDeviceAccounts,
   listMfpDeviceUsage,
+  listMfpProvisionedAccounts,
+  previewMfpDeviceProvisioning,
+  pollMfpDeviceCounters,
+  syncMfpDeviceUsers,
   testMfpDeviceConnection,
   updateMfpDevice,
   type ConnectorTypeOption,
   type CopierUsageRecord,
+  type CounterPollResult,
+  type DefaultOwnerAttributionResult,
   type DeviceCapabilities,
   type MfpDevice,
+  type DeviceUser,
+  type ProvisionedAccount,
+  type ProvisioningPreview,
+  type GoogleWorkspaceUserEntry,
+  type SyncJob,
 } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
 import { useCurrentUser } from "@/lib/useCurrentUser";
@@ -91,6 +106,25 @@ export default function MfpDeviceDetailPage() {
   const [provisionOus, setProvisionOus] = useState<string[]>([]);
   const [adminUsername, setAdminUsername] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
+  const [autoSyncUsers, setAutoSyncUsers] = useState(false);
+  const [preview, setPreview] = useState<ProvisioningPreview | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [deviceAccounts, setDeviceAccounts] = useState<DeviceUser[] | null>(null);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [job, setJob] = useState<SyncJob | null>(null);
+  const [autoPollCounters, setAutoPollCounters] = useState(false);
+  const [pollingCounters, setPollingCounters] = useState(false);
+  const [pollResult, setPollResult] = useState<CounterPollResult | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
+  const [owners, setOwners] = useState<ProvisionedAccount[] | null>(null);
+  // Whole-device attribution: one named person owns every copy this
+  // machine makes, for a desk copier nobody logs in to.
+  const [defaultOwnerEmail, setDefaultOwnerEmail] = useState("");
+  const [attributing, setAttributing] = useState(false);
+  const [attribution, setAttribution] = useState<DefaultOwnerAttributionResult | null>(null);
+  const [staffOptions, setStaffOptions] = useState<GoogleWorkspaceUserEntry[]>([]);
 
   useEffect(() => {
     getMfpDevice(params.id)
@@ -104,6 +138,9 @@ export default function MfpDeviceDetailPage() {
         setCapabilities(device.capabilities);
         setProvisionOus(device.provision_org_unit_paths ?? []);
         setAdminUsername(device.admin_username ?? "");
+        setAutoSyncUsers(device.auto_sync_users);
+        setAutoPollCounters(device.auto_poll_counters);
+        setDefaultOwnerEmail(device.default_owner_email ?? "");
       })
       .catch((error: unknown) =>
         setState({
@@ -117,6 +154,22 @@ export default function MfpDeviceDetailPage() {
     listConnectorTypes()
       .then(setConnectorTypes)
       .catch(() => setConnectorTypes([]));
+    // Load the preview up front. Requiring a click before the Sync button
+    // becomes usable made it look broken.
+    previewMfpDeviceProvisioning(params.id)
+      .then(setPreview)
+      .catch(() => setPreview(null));
+    getLatestMfpSyncJob(params.id)
+      .then(setJob)
+      .catch(() => setJob(null));
+    listMfpProvisionedAccounts(params.id)
+      .then(setOwners)
+      .catch(() => setOwners(null));
+    // Roster for the owner picker. Best-effort: the field stays a plain
+    // email input if Workspace isn't synced, rather than blocking on it.
+    listGoogleWorkspaceUsers()
+      .then(setStaffOptions)
+      .catch(() => setStaffOptions([]));
   }, [params.id]);
 
   async function handleSave() {
@@ -130,6 +183,10 @@ export default function MfpDeviceDetailPage() {
         // would read as "provision nobody".
         provision_org_unit_paths: provisionOus.length > 0 ? provisionOus : null,
         admin_username: adminUsername || null,
+        auto_sync_users: autoSyncUsers,
+        auto_poll_counters: autoPollCounters,
+        // Empty string clears it; the API maps that to null.
+        default_owner_email: defaultOwnerEmail.trim(),
         // Only sent when retyped; omitting it leaves the stored password
         // alone, same as the SNMP community field elsewhere.
         ...(adminPassword ? { admin_password: adminPassword } : {}),
@@ -140,6 +197,112 @@ export default function MfpDeviceDetailPage() {
       setActionError(err instanceof ApiError ? err.message : "Failed to save changes");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Poll while a sync is in flight. A sync is minutes long, so without
+  // this the page can only show a spinner and an admin cannot tell a slow
+  // run from a stuck one.
+  useEffect(() => {
+    if (!job || (job.status !== "running" && job.status !== "pending")) return;
+    const timer = setInterval(() => {
+      getLatestMfpSyncJob(params.id)
+        .then((latest) => {
+          setJob(latest);
+          if (latest && latest.status !== "running" && latest.status !== "pending") {
+            listMfpProvisionedAccounts(params.id).then(setOwners).catch(() => {});
+            getMfpDevice(params.id)
+              .then((d) => setState({ phase: "ok", device: d }))
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [job, params.id]);
+
+  async function handleLoadDeviceAccounts() {
+    setLoadingAccounts(true);
+    setAccountsError(null);
+    try {
+      setDeviceAccounts(await listMfpDeviceAccounts(params.id));
+    } catch (err) {
+      setDeviceAccounts(null);
+      setAccountsError(
+        err instanceof ApiError ? err.message : "Could not read the copier's accounts",
+      );
+    } finally {
+      setLoadingAccounts(false);
+    }
+  }
+
+  async function handlePreviewUsers() {
+    setPreviewing(true);
+    setActionError(null);
+    try {
+      setPreview(await previewMfpDeviceProvisioning(params.id));
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Could not work out who would sync");
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
+  async function handleSyncUsers(rewrite = false) {
+    const question = rewrite
+      ? `Rewrite all staff accounts on ${state.phase === "ok" ? state.device.name : "this copier"}?\n\n` +
+        "Every in-scope person is re-seated into a known account slot and their code is " +
+        "re-set, so PrintOps knows exactly whose account is whose. Existing codes on the " +
+        "copier will change."
+      : `Add ${preview?.count ?? "these"} staff accounts to ${state.phase === "ok" ? state.device.name : "this copier"}?\n\n` +
+        "Anyone already set up is skipped. Nothing is deleted.";
+    if (!confirm(question)) return;
+    setSyncing(true);
+    setActionError(null);
+    try {
+      setJob(await syncMfpDeviceUsers(params.id, { rewrite }));
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Could not start the sync");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function handlePollCounters() {
+    setPollingCounters(true);
+    setPollError(null);
+    try {
+      setPollResult(await pollMfpDeviceCounters(params.id));
+      // The counters just produced usage rows, and the device row now
+      // carries when it last worked — both are on this page.
+      listMfpDeviceUsage(params.id, 20).then(setUsage).catch(() => {});
+      getMfpDevice(params.id)
+        .then((d) => setState({ phase: "ok", device: d }))
+        .catch(() => {});
+    } catch (err) {
+      setPollError(err instanceof ApiError ? err.message : "Failed to read the copier's counters");
+    } finally {
+      setPollingCounters(false);
+    }
+  }
+
+  async function handleAttributeCopies() {
+    setAttributing(true);
+    setActionError(null);
+    try {
+      setAttribution(await attributeMfpDeviceCopies(params.id));
+      // The run may have written usage rows and moved the watermark, both
+      // of which are shown on this page.
+      listMfpDeviceUsage(params.id, 20).then(setUsage).catch(() => {});
+      getMfpDevice(params.id)
+        .then((d) => setState({ phase: "ok", device: d }))
+        .catch(() => {});
+    } catch (err) {
+      setActionError(
+        err instanceof ApiError ? err.message : "Failed to attribute this copier's copies",
+      );
+    } finally {
+      setAttributing(false);
     }
   }
 
@@ -304,6 +467,8 @@ export default function MfpDeviceDetailPage() {
               disabled={!isAdmin}
               onChange={(e) => setAdminUsername(e.target.value)}
               placeholder="(leave blank if none)"
+              autoComplete="off"
+              name="printops-device-admin-username"
             />
             <span className="text-xs text-zinc-500">
               Konica bizhub and Lexmark XM3350 admin logins ask for a password only — leave this
@@ -311,11 +476,20 @@ export default function MfpDeviceDetailPage() {
             </span>
           </Field>
           <Field label="Device Admin Password">
+            {/* A bare password input invites the browser to autofill a
+                saved password and then save it over a working device
+                credential — which is exactly what happened once. Konica's
+                own admin form sets autocomplete="off" here for the same
+                reason. */}
             <Input
               type="password"
               value={adminPassword}
               disabled={!isAdmin}
               onChange={(e) => setAdminPassword(e.target.value)}
+              autoComplete="new-password"
+              name="printops-device-admin-password"
+              data-lpignore="true"
+              data-1p-ignore="true"
               placeholder={
                 state.device.has_admin_password ? "•••••••• (saved)" : "(none saved)"
               }
@@ -327,12 +501,417 @@ export default function MfpDeviceDetailPage() {
           </Field>
         </div>
 
+        <label className="mt-4 flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <input
+            type="checkbox"
+            className="mt-1"
+            disabled={!isAdmin}
+            checked={autoSyncUsers}
+            onChange={(e) => setAutoSyncUsers(e.target.checked)}
+          />
+          <span>
+            Keep this copier&apos;s accounts up to date automatically
+            <br />
+            <span className="text-xs text-zinc-500">
+              Checks every six hours and adds any in-scope staff who don&apos;t have an account
+              yet. Off by default — turn it on once a manual sync has done what you expect.
+              Nothing is ever deleted from the copier automatically.
+            </span>
+          </span>
+        </label>
+
         {isAdmin && (
           <Button onClick={handleSave} disabled={saving} className="mt-4">
             {saving ? "Saving…" : "Save"}
           </Button>
         )}
       </Card>
+
+      {isAdmin && (
+        <Card>
+          <div className="mb-1 flex items-center justify-between">
+            <CardTitle>Staff Accounts On This Copier</CardTitle>
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={handlePreviewUsers} disabled={previewing}>
+                {previewing ? "Checking…" : "Preview"}
+              </Button>
+              <Button
+                onClick={() => handleSyncUsers(false)}
+                disabled={syncing || job?.status === "running" || job?.status === "pending"}
+              >
+                {job?.status === "running" || job?.status === "pending"
+                  ? "Syncing…"
+                  : "Sync Users to Copier"}
+              </Button>
+            </div>
+          </div>
+          <p className="mb-3 text-xs text-zinc-500">
+            Adds each in-scope staff member as an account on the copier, with their 5-digit
+            Employee ID as the code they type at the panel. Accounts already on the copier are
+            left alone, and nothing is ever deleted. Preview first — it shows exactly who would
+            be added without touching the copier.
+          </p>
+
+          {preview && (
+            <div className="mb-3 rounded border border-black/[.08] p-3 text-sm dark:border-white/[.12]">
+              <div>
+                <strong>{preview.count}</strong> staff in scope
+                {preview.org_unit_paths.length > 0 && (
+                  <>
+                    {" "}
+                    from <code className="text-[11px]">{preview.org_unit_paths.join(", ")}</code>
+                  </>
+                )}
+                {preview.excluded_org_unit_paths.length > 0 && (
+                  <>
+                    , excluding{" "}
+                    <code className="text-[11px]">
+                      {preview.excluded_org_unit_paths.join(", ")}
+                    </code>
+                  </>
+                )}
+                .
+              </div>
+              {preview.sample_emails.length > 0 && (
+                <div className="mt-1 text-xs text-zinc-500">
+                  For example: {preview.sample_emails.slice(0, 5).join(", ")}
+                  {preview.count > 5 && ` and ${preview.count - 5} more`}
+                </div>
+              )}
+              {preview.skipped_no_org_unit > 0 && (
+                <div className="mt-2 text-xs text-amber-700 dark:text-amber-500">
+                  {preview.skipped_no_org_unit} staff copier{" "}
+                  {preview.skipped_no_org_unit === 1 ? "identity is" : "identities are"} not in the
+                  synced Google Workspace directory, so we can&apos;t tell which organizational
+                  unit they belong to. They are left out. This usually means the Workspace sync
+                  needs to run.
+                </div>
+              )}
+            </div>
+          )}
+
+          {job && (
+            <div className="mb-3 rounded border border-black/[.08] p-3 dark:border-white/[.12]">
+              {(job.status === "running" || job.status === "pending") && job.total > 0 ? (
+                <>
+                  <div className="mb-1 flex items-center justify-between text-sm">
+                    <span>Adding accounts to the copier…</span>
+                    <span className="font-mono text-xs">
+                      {job.completed + job.failed} of {job.total}
+                    </span>
+                  </div>
+                  <div
+                    className="h-2 w-full overflow-hidden rounded bg-black/[.08] dark:bg-white/[.15]"
+                    role="progressbar"
+                    aria-valuenow={job.completed + job.failed}
+                    aria-valuemin={0}
+                    aria-valuemax={job.total}
+                  >
+                    <div
+                      className="h-full bg-emerald-600 transition-all"
+                      style={{
+                        width: `${Math.round(((job.completed + job.failed) / job.total) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    This takes a few minutes — the copier accepts one account at a time. You can
+                    leave this page; it keeps running.
+                  </p>
+                </>
+              ) : job.status === "pending" || job.status === "running" ? (
+                <p className="text-sm">Starting…</p>
+              ) : (
+                <p className="text-sm">
+                  <strong>
+                    {job.status === "succeeded" ? "Sync finished" : "Sync finished with problems"}
+                  </strong>
+                  {" — "}
+                  {job.completed} added
+                  {job.failed > 0 && `, ${job.failed} failed`}
+                  {job.skipped > 0 && `, ${job.skipped} already set up`}.
+                  {job.message && (
+                    <span className="mt-1 block text-xs text-zinc-500">{job.message}</span>
+                  )}
+                </p>
+              )}
+            </div>
+          )}
+
+          {owners && owners.length > 0 && (
+            <div className="mb-3">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                  Who is who on this copier
+                </span>
+                <Button
+                  variant="secondary"
+                  onClick={() => handleSyncUsers(true)}
+                  disabled={syncing || job?.status === "running" || job?.status === "pending"}
+                >
+                  Rewrite All
+                </Button>
+              </div>
+              <p className="mb-1 text-xs text-zinc-500">
+                {owners.length} accounts PrintOps has set up here. The copier itself can&apos;t
+                tell you this — it never reveals an account&apos;s code — so this is the record of
+                which slot belongs to whom.
+              </p>
+              <ul className="max-h-56 overflow-y-auto text-xs">
+                {owners.map((o) => (
+                  <li key={o.device_account_id} className="py-0.5">
+                    <span className="font-mono">#{o.device_account_id}</span>{" "}
+                    <span className="font-mono text-zinc-500">
+                      {o.device_account_name ?? "—"}
+                    </span>{" "}
+                    — {o.staff_email}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="mb-3 border-t border-black/[.06] pt-3 dark:border-white/[.1]">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                Accounts currently on the copier
+              </span>
+              <Button
+                variant="secondary"
+                onClick={handleLoadDeviceAccounts}
+                disabled={loadingAccounts}
+              >
+                {loadingAccounts ? "Reading…" : deviceAccounts ? "Refresh" : "Show"}
+              </Button>
+            </div>
+            {accountsError && <ErrorState>{accountsError}</ErrorState>}
+            {deviceAccounts !== null &&
+              (deviceAccounts.length === 0 ? (
+                <p className="text-xs text-zinc-500">
+                  The copier has no accounts registered yet.
+                </p>
+              ) : (
+                <>
+                  <p className="mb-1 text-xs text-zinc-500">
+                    {deviceAccounts.length} registered on the device. Read live from the copier,
+                    not from PrintOps.
+                  </p>
+                  <ul className="max-h-48 overflow-y-auto text-xs">
+                    {deviceAccounts.map((account) => (
+                      <li key={account.identifier} className="py-0.5 font-mono">
+                        #{account.identifier}
+                        {account.name ? ` — ${account.name}` : ""}
+                        {!account.has_password && " (no code set)"}
+                        {account.disabled && " (disabled)"}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ))}
+          </div>
+
+          {device.last_user_sync_at && (
+            <p className="text-xs text-zinc-500">
+              Last sync {formatRelativeTime(device.last_user_sync_at)}
+              {device.last_user_sync_ok === false && " — had problems"}
+              {device.last_user_sync_message && `: ${device.last_user_sync_message}`}
+            </p>
+          )}
+        </Card>
+      )}
+
+      {isAdmin && (
+        <Card>
+          <div className="mb-1 flex items-center justify-between">
+            <CardTitle>Copy Counts From This Copier</CardTitle>
+            <Button onClick={handlePollCounters} disabled={pollingCounters}>
+              {pollingCounters ? "Reading…" : "Read Counts Now"}
+            </Button>
+          </div>
+          <p className="mb-3 text-xs text-zinc-500">
+            The copier counts pages per account as a running total that never resets, so it can
+            only say how many pages an account has made <em>ever</em>. PrintOps records each
+            reading and reports the difference from the one before it — which is why the first
+            read produces no usage at all, and every one after it covers exactly the time since
+            the last read.
+          </p>
+
+          {pollError && <ErrorState>{pollError}</ErrorState>}
+
+          {pollResult && (
+            <div className="mb-3 rounded border border-black/[.08] p-3 text-sm dark:border-white/[.12]">
+              {pollResult.baselines > 0 && pollResult.usage_rows === 0 ? (
+                <>
+                  <strong>First reading taken</strong> — {pollResult.baselines} accounts. There
+                  is nothing to compare against yet, so no usage was recorded. The next read is
+                  the one that produces numbers.
+                </>
+              ) : pollResult.baseline_usage_rows > 0 ? (
+                <>
+                  <strong>{pollResult.usage_rows}</strong>{" "}
+                  {pollResult.usage_rows === 1 ? "entry" : "entries"} recorded, of which{" "}
+                  {pollResult.baseline_usage_rows} came from a first reading — pages made
+                  between PrintOps setting the account up and this read.
+                </>
+              ) : (
+                <>
+                  <strong>{pollResult.usage_rows}</strong>{" "}
+                  {pollResult.usage_rows === 1 ? "entry" : "entries"} recorded from{" "}
+                  {pollResult.changed} {pollResult.changed === 1 ? "account" : "accounts"}, out of{" "}
+                  {pollResult.accounts_read} read.
+                </>
+              )}
+              {pollResult.unmapped > 0 && (
+                <div className="mt-1 text-xs text-amber-700 dark:text-amber-500">
+                  {pollResult.unmapped} of them{" "}
+                  {pollResult.unmapped === 1 ? "is an account" : "are accounts"} PrintOps
+                  didn&apos;t set up, so the pages aren&apos;t matched to anyone. They&apos;re
+                  kept, and show up under Unmapped Activity.
+                </div>
+              )}
+              {pollResult.resets > 0 && (
+                <div className="mt-1 text-xs text-amber-700 dark:text-amber-500">
+                  {pollResult.resets}{" "}
+                  {pollResult.resets === 1 ? "account's counter was" : "accounts' counters were"}{" "}
+                  cleared on the copier since the last read. The pages counted since that clear
+                  were recorded.
+                </div>
+              )}
+            </div>
+          )}
+
+          <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={autoPollCounters}
+              onChange={(e) => setAutoPollCounters(e.target.checked)}
+            />
+            <span>
+              Read the counts automatically
+              <br />
+              <span className="text-xs text-zinc-500">
+                Every hour. This only reads — it never changes anything on the copier. The
+                interval is also how precisely a copy can be dated, since the counters carry no
+                timestamps: all PrintOps can say is that the pages happened between two reads.
+              </span>
+            </span>
+          </label>
+
+          <Button onClick={handleSave} disabled={saving} className="mt-4">
+            {saving ? "Saving…" : "Save"}
+          </Button>
+
+          {device.last_counter_poll_at && (
+            <p className="mt-3 text-xs text-zinc-500">
+              Last read {formatRelativeTime(device.last_counter_poll_at)}
+              {device.last_counter_poll_ok === false && " — failed"}
+              {device.last_counter_poll_message && `: ${device.last_counter_poll_message}`}
+            </p>
+          )}
+        </Card>
+      )}
+
+      {isAdmin && (
+        <Card>
+          <CardTitle className="mb-1">Whole-Device Copy Owner</CardTitle>
+          <p className="mb-4 text-xs text-zinc-500">
+            For a desk copier with one regular user and no per-user accounting —
+            nobody logs in, so there is no code to match a person to. Naming an
+            owner credits them with every copy the machine&apos;s own meter
+            records from that moment on.
+          </p>
+
+          <Field label="Owner">
+            <Input
+              list="staff-owner-options"
+              value={defaultOwnerEmail}
+              placeholder="nobody — copies on this device belong to no one"
+              onChange={(e) => setDefaultOwnerEmail(e.target.value)}
+            />
+          </Field>
+          <datalist id="staff-owner-options">
+            {staffOptions.map((person) => (
+              <option key={person.email} value={person.email}>
+                {person.name ?? person.email}
+              </option>
+            ))}
+          </datalist>
+
+          <p className="mt-2 text-xs text-zinc-500">
+            Counting starts when you save, never from the meter&apos;s lifetime
+            total — nobody is handed the copies made before they were named.
+            Changing the owner restarts it for the same reason.
+          </p>
+
+          {/* The conditions the feature actually depends on, stated up
+              front rather than discovered as a "nothing happened" later. */}
+          {(autoPollCounters || device.auto_poll_counters) && (
+            <p className="mt-3 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+              This copier reads per-account counters, which already say who
+              made each copy. A whole-device owner would count those same
+              copies a second time, so it won&apos;t be applied while
+              per-account reading is on — turn that off first if this machine
+              really does belong to one person.
+            </p>
+          )}
+          {!device.printer_id && (
+            <p className="mt-3 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+              This copier isn&apos;t linked to a printer, so PrintOps has no
+              meter to read. Link it on the printer&apos;s page first.
+            </p>
+          )}
+          {device.printer_id &&
+            device.page_count_confidence !== null &&
+            device.page_count_confidence !== "verified" &&
+            device.page_count_confidence !== "best_effort" && (
+              <p className="mt-3 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                This device&apos;s meter reports one combined page total rather
+                than a separate copy counter, so its copies can&apos;t be
+                measured — only estimated, which the Untracked Copy Activity
+                report already does org-wide.
+              </p>
+            )}
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={handleAttributeCopies}
+              disabled={attributing || !device.default_owner_email}
+            >
+              {attributing ? "Attributing…" : "Attribute copies now"}
+            </Button>
+          </div>
+
+          {attribution && (
+            <p
+              className={`mt-3 text-xs ${
+                attribution.skipped_reason
+                  ? "text-amber-700 dark:text-amber-500"
+                  : "text-zinc-500"
+              }`}
+            >
+              {attribution.message}
+            </p>
+          )}
+
+          {device.default_owner_email && device.default_owner_attributed_through && (
+            <p className="mt-1 text-xs text-zinc-500">
+              Copies counted through{" "}
+              {formatRelativeTime(device.default_owner_attributed_through)}.
+            </p>
+          )}
+          {device.default_owner_email && !device.default_owner_attributed_through && (
+            <p className="mt-1 text-xs text-zinc-500">
+              Nothing counted yet — the first run records where the meter stands
+              now, and counts from there.
+            </p>
+          )}
+        </Card>
+      )}
 
       <Card>
         <div className="mb-1 flex items-center justify-between">

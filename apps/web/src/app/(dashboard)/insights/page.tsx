@@ -13,6 +13,7 @@ import {
   getReportPeakTimes,
   getReportSummary,
   getReportTimeline,
+  getTrackedCopySummary,
   getUntrackedCopySummary,
   listGoogleWorkspaceUsers,
   listPrinters,
@@ -26,6 +27,7 @@ import {
   type ReportSnapshot,
   type ReportSummary,
   type TimelineBucket,
+  type TrackedCopySummary,
   type UntrackedCopySummary,
 } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
@@ -168,6 +170,7 @@ type ReportData = {
   peakTimes: PeakTimes;
   funFacts: string[];
   untrackedCopies: UntrackedCopySummary;
+  trackedCopies: TrackedCopySummary;
 };
 
 type LoadState =
@@ -354,6 +357,7 @@ export default function InsightsPage() {
       getReportPeakTimes(filters),
       getReportFunFacts(periodLabel, filters),
       getUntrackedCopySummary(filters),
+      getTrackedCopySummary(filters),
     ])
       .then(
         ([
@@ -365,6 +369,7 @@ export default function InsightsPage() {
           peakTimes,
           funFacts,
           untrackedCopies,
+          trackedCopies,
         ]) =>
           setState({
             phase: "ok",
@@ -377,6 +382,7 @@ export default function InsightsPage() {
               peakTimes,
               funFacts,
               untrackedCopies,
+              trackedCopies,
             },
           }),
       )
@@ -922,6 +928,102 @@ export default function InsightsPage() {
               when configured (see the printer&rsquo;s Toner Cartridges panel),
               falling back to the flat rates below otherwise.
             </p>
+          </Card>
+
+          <Card>
+            <CardTitle className="mb-3">Tracked Copy Activity</CardTitle>
+            {state.data.trackedCopies.devices_reporting > 0 ? (
+              <>
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                  <StatCard
+                    label="Attributed copies"
+                    value={state.data.trackedCopies.copy_pages.toLocaleString()}
+                  />
+                  <StatCard
+                    label="People copying"
+                    value={state.data.trackedCopies.people.toLocaleString()}
+                  />
+                  <StatCard
+                    label="Scans"
+                    value={state.data.trackedCopies.scan_pages.toLocaleString()}
+                  />
+                  <StatCard
+                    label="Not matched to anyone"
+                    value={state.data.trackedCopies.unattributed_pages.toLocaleString()}
+                  />
+                </div>
+
+                {state.data.trackedCopies.devices.length > 0 && (
+                  <table className="mt-4 w-full text-left text-sm">
+                    <thead className="text-xs uppercase tracking-wide text-zinc-500">
+                      <tr>
+                        <th className="py-2 font-medium">Copier</th>
+                        <th className="py-2 font-medium">Copies</th>
+                        <th className="py-2 font-medium">Scans</th>
+                        <th className="py-2 font-medium">People</th>
+                        <th className="py-2 font-medium">Unmatched</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {state.data.trackedCopies.devices.map((entry) => (
+                        <tr
+                          key={entry.device_id}
+                          className="border-t border-black/[.08] dark:border-white/[.1]"
+                        >
+                          <td className="py-2 text-black dark:text-zinc-50">
+                            {entry.device_name}
+                          </td>
+                          <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                            {entry.copy_pages.toLocaleString()}
+                          </td>
+                          <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                            {entry.scan_pages.toLocaleString()}
+                          </td>
+                          <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                            {entry.people.toLocaleString()}
+                          </td>
+                          <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                            {entry.unattributed_pages > 0 ? (
+                              <Link
+                                href="/copier-unmapped"
+                                className="text-accent hover:underline"
+                              >
+                                {entry.unattributed_pages.toLocaleString()}
+                              </Link>
+                            ) : (
+                              "0"
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+
+                <p className="mt-3 text-xs text-zinc-500">
+                  Walk-up activity read back from each copier&rsquo;s own
+                  per-account counters and matched to the person PrintOps set
+                  that account up for. Counters carry no timestamps, so a page
+                  is dated to the window between two reads rather than to a
+                  moment. {state.data.trackedCopies.devices_reporting} of{" "}
+                  {state.data.untrackedCopies.printers.length +
+                    state.data.trackedCopies.devices_reporting}{" "}
+                  copiers report this — the rest have per-user accounting
+                  switched off, and their activity shows as untracked below.
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-zinc-500">
+                No copier is reporting per-account counters yet. Turn on
+                Account Track on a copier, sync staff accounts to it, and
+                enable &ldquo;Read the counts automatically&rdquo; on its page
+                under{" "}
+                <Link href="/mfp-devices" className="text-accent hover:underline">
+                  Copiers
+                </Link>
+                .
+              </p>
+            )}
           </Card>
 
           <Card>

@@ -153,9 +153,7 @@ async def test_list_printers_excludes_restricted_printer_for_non_matching_ou(
 async def test_list_printers_includes_restricted_printer_for_nested_ou_match(
     client, auth_headers, viewer_headers, db_session_factory
 ):
-    await _seed_workspace_user(
-        db_session_factory, "viewer@example.org", "/Employees/Teachers/Math"
-    )
+    await _seed_workspace_user(db_session_factory, "viewer@example.org", "/Employees/Teachers/Math")
     await _seed_workspace_user(db_session_factory, "teacher@example.org", "/Employees/Teachers")
 
     printer_id = _create_printer(client, auth_headers)

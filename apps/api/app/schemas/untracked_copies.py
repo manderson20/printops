@@ -24,3 +24,27 @@ class UntrackedCopySummaryOut(BaseModel):
     estimated_untracked: int
     tracking_since: datetime | None
     printers: list[UntrackedCopyPrinterEntryOut]
+
+
+class TrackedCopyDeviceEntryOut(BaseModel):
+    device_id: str
+    device_name: str
+    building: str | None
+    copy_pages: int
+    scan_pages: int
+    fax_pages: int
+    people: int
+    unattributed_pages: int
+
+
+class TrackedCopySummaryOut(BaseModel):
+    """The named counterpart to UntrackedCopySummaryOut. Shown beside it so
+    the pair reads as coverage rather than as a total on its own."""
+
+    copy_pages: int
+    scan_pages: int
+    fax_pages: int
+    people: int
+    unattributed_pages: int
+    devices_reporting: int
+    devices: list[TrackedCopyDeviceEntryOut]

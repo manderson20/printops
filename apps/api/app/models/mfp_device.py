@@ -136,6 +136,54 @@ class MfpDevice(Base, TimestampMixin):
     # elementary staff.
     provision_org_unit_paths: Mapped[list[str] | None] = mapped_column(JSON, default=None)
 
+    # Whether the background loop pushes staff accounts to this device on a
+    # schedule. Off by default and per device, deliberately: writing login
+    # accounts to a shared machine is not something to start doing to a
+    # whole fleet because a global setting was flipped. An admin turns it on
+    # per copier once they've seen a manual sync do the right thing.
+    auto_sync_users: Mapped[bool] = mapped_column(default=False, server_default="false")
+    last_user_sync_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    last_user_sync_ok: Mapped[bool | None] = mapped_column(default=None)
+    last_user_sync_message: Mapped[str | None] = mapped_column(default=None)
+
+    # Whether the background loop reads per-account counters off this
+    # device. Separate from auto_sync_users because it is the opposite kind
+    # of operation — this one only reads — and an admin will usually want
+    # it on well before they are ready to let PrintOps write accounts.
+    auto_poll_counters: Mapped[bool] = mapped_column(default=False, server_default="false")
+    last_counter_poll_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    last_counter_poll_ok: Mapped[bool | None] = mapped_column(default=None)
+    last_counter_poll_message: Mapped[str | None] = mapped_column(default=None)
+
+    # "Everything copied on this device belongs to this person."
+    #
+    # For a desk copier with exactly one regular user and no per-user
+    # accounting at all — no Account Track, no PIN, nobody logging in.
+    # Such a device is invisible to every other attribution path in
+    # PrintOps: it has no per-account counters to poll, and the Untracked
+    # Copy Activity report deliberately skips any printer with a linked
+    # MfpDevice (app/reports/untracked_copies.py), so its copies land
+    # nowhere. This names an owner for them.
+    #
+    # Attribution reads the *device's own* copy meter through the linked
+    # Printer's SNMP counter history rather than anything per-user, so it
+    # only means anything on a device whose meter reports copies
+    # separately — Printer.page_count_confidence of "verified" or
+    # "best_effort" (see app/copiers/device_owner.py).
+    default_owner_email: Mapped[str | None] = mapped_column(default=None)
+    # Watermark: copies metered up to here have already been written as
+    # usage for the owner. The counter is a lifetime total, so without
+    # this every attribution run would re-attribute the device's entire
+    # history. Stamped when an owner is first set, so the owner is never
+    # handed the pages made before anyone named them.
+    default_owner_attributed_through: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
     last_test_connection_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )

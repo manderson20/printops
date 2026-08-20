@@ -1,7 +1,9 @@
 from app.models.attribution_alias import AttributionAlias
 from app.models.base import Base
 from app.models.classguard import ClassGuardSettings
+from app.models.copier_account_counter import CopierAccountCounterReading
 from app.models.copier_import import CopierImportBatch, CopierImportTemplate
+from app.models.copier_provisioning import CopierProvisionedAccount, CopierSyncJob
 from app.models.copier_usage import CopierUsageRecord
 from app.models.device_override import DeviceUserOverride
 from app.models.google_sso import GoogleSsoSettings
@@ -32,6 +34,9 @@ __all__ = [
     "ClassGuardSettings",
     "CopierImportBatch",
     "CopierImportTemplate",
+    "CopierAccountCounterReading",
+    "CopierProvisionedAccount",
+    "CopierSyncJob",
     "CopierUsageRecord",
     "DeviceUserOverride",
     "GoogleSsoSettings",

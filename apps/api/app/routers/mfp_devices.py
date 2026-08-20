@@ -5,24 +5,52 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.copiers.account_counters import poll_account_counters
 from app.copiers.connector import CapabilityNotSupported, ConnectionTestResult, refresh_device_meter
+from app.copiers.device_admin import DeviceCredentialsMissing
+from app.copiers.device_owner import attribute_device_copies
+from app.copiers.konica_admin import KonicaAdminBusy, KonicaAdminError
+from app.copiers.provisioning import build_provisioning_plan
 from app.copiers.registry import CONNECTOR_REGISTRY, get_connector
+from app.copiers.sync_jobs import start_sync_job
 from app.core.crypto import encrypt
 from app.db import get_db
 from app.deps import require_role
+from app.models.copier_provisioning import CopierProvisionedAccount, CopierSyncJob
 from app.models.copier_usage import CopierUsageRecord
 from app.models.mfp_device import MfpDevice
 from app.models.printer import Printer
 from app.schemas.copier_usage import CopierUsageRecordOut
 from app.schemas.mfp_device import (
     ConnectorTypeOut,
+    CounterPollOut,
+    DefaultOwnerAttributionOut,
+    DeviceUserOut,
     MfpDeviceCreate,
     MfpDeviceOut,
     MfpDeviceUpdate,
+    ProvisionedAccountOut,
+    ProvisioningPreviewOut,
+    SyncJobOut,
     available_connector_types,
 )
 
 router = APIRouter(dependencies=[Depends(require_role("admin"))])
+
+
+def _job_out(job) -> "SyncJobOut":
+    return SyncJobOut(
+        id=job.id,
+        status=job.status,
+        trigger=job.trigger,
+        total=job.total,
+        completed=job.completed,
+        failed=job.failed,
+        skipped=job.skipped,
+        message=job.message,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+    )
 
 
 def _device_out(device: MfpDevice) -> MfpDeviceOut:
@@ -70,6 +98,16 @@ def _device_out(device: MfpDevice) -> MfpDeviceOut:
         admin_username=device.admin_username,
         has_admin_password=device.has_admin_password,
         provision_org_unit_paths=device.provision_org_unit_paths,
+        auto_sync_users=device.auto_sync_users,
+        last_user_sync_at=device.last_user_sync_at,
+        last_user_sync_ok=device.last_user_sync_ok,
+        last_user_sync_message=device.last_user_sync_message,
+        auto_poll_counters=device.auto_poll_counters,
+        last_counter_poll_at=device.last_counter_poll_at,
+        last_counter_poll_ok=device.last_counter_poll_ok,
+        last_counter_poll_message=device.last_counter_poll_message,
+        default_owner_email=device.default_owner_email,
+        default_owner_attributed_through=device.default_owner_attributed_through,
         page_count_total=device.page_count_total,
         page_count_copy=device.page_count_copy,
         page_count_print=device.page_count_print,
@@ -168,9 +206,21 @@ async def update_mfp_device(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Unknown connector_type: {updates['connector_type']!r}",
             )
-    for field in ("snmp_version", "snmp_vendor_profile"):
+    for field in ("snmp_version", "snmp_vendor_profile", "default_owner_email"):
         if field in updates:
             updates[field] = updates[field] or None
+
+    # Naming a different owner restarts the meter watermark, so the new
+    # owner is credited only with copies made from here on. Without this
+    # they would inherit every page metered since the *previous* owner was
+    # named — someone else's copying, under their name, in a report that
+    # feeds cost. Clearing the owner resets it too, so re-naming the same
+    # person later doesn't silently hand them the unattributed gap.
+    if "default_owner_email" in updates and updates["default_owner_email"] != (
+        device.default_owner_email
+    ):
+        device.default_owner_attributed_through = None
+
     for field, value in updates.items():
         setattr(device, field, value)
 
@@ -292,3 +342,192 @@ async def list_mfp_device_usage(
         .limit(limit)
     )
     return result.scalars().all()
+
+
+@router.get("/{device_id}/provisioning-preview", response_model=ProvisioningPreviewOut)
+async def preview_device_provisioning(device_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Who a "Sync Users" would put on this copier, without touching it.
+
+    Same code path the sync itself uses (app/copiers/provisioning.py), so
+    the preview can't disagree with what then happens."""
+    device = await _get_device_or_404(device_id, db)
+    plan = await build_provisioning_plan(db, device)
+    return ProvisioningPreviewOut(
+        count=plan.count,
+        org_unit_paths=plan.org_unit_paths,
+        excluded_org_unit_paths=plan.excluded_org_unit_paths,
+        skipped_no_org_unit=plan.skipped_no_org_unit,
+        sample_emails=[i.staff_email for i in plan.identities[:10]],
+    )
+
+
+@router.post(
+    "/{device_id}/sync-users",
+    response_model=SyncJobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def sync_device_users(
+    device_id: UUID, rewrite: bool = False, db: AsyncSession = Depends(get_db)
+):
+    """Queue a sync and return immediately.
+
+    Not blocking: a few hundred accounts is one device round trip each
+    against a single-session copier, i.e. minutes. Poll the returned job
+    for progress.
+
+    rewrite=true re-seats every in-scope person into a deterministic
+    account slot, overwriting what's there. It exists to repair a device
+    whose accounts were created before PrintOps recorded who owned which —
+    inferring that mapping from creation order would be a guess, whereas
+    rewriting makes it a fact. It changes codes on the device, so it is
+    never the default.
+    """
+    device = await _get_device_or_404(device_id, db)
+    job = await start_sync_job(db, device, trigger="rewrite" if rewrite else "manual")
+    return _job_out(job)
+
+
+@router.post("/{device_id}/attribute-copies", response_model=DefaultOwnerAttributionOut)
+async def attribute_device_copies_now(device_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Credit the device's owner with the copies metered since last time.
+
+    Contacts nothing — it diffs SNMP counter readings the poller has
+    already recorded (app/copiers/device_owner.py), so it is safe to press
+    repeatedly and returns instantly. Runs hourly by itself; this is here
+    so an admin can see it work rather than wait to find out whether it
+    did."""
+    device = await _get_device_or_404(device_id, db)
+    result = await attribute_device_copies(db, device)
+    await db.commit()
+    await db.refresh(device)
+    return DefaultOwnerAttributionOut(
+        attributed_pages=result.attributed_pages,
+        usage_rows=result.usage_rows,
+        baselined=result.baselined,
+        meter_reset=result.meter_reset,
+        skipped_reason=result.skipped_reason,
+        message=result.message,
+        attributed_through=device.default_owner_attributed_through,
+    )
+
+
+@router.post("/{device_id}/poll-counters", response_model=CounterPollOut)
+async def poll_device_counters(device_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Read per-account counters now and record whatever usage happened
+    since the last read.
+
+    Blocking, unlike sync-users: the whole fleet's counters come back 50
+    accounts per request, so a few hundred accounts is a handful of round
+    trips rather than one per person.
+
+    The first poll of a device produces no usage at all — it stores the
+    baseline the next poll subtracts from. That is not a failure and the
+    result says so."""
+    device = await _get_device_or_404(device_id, db)
+    try:
+        result = await poll_account_counters(db, device)
+    except (CapabilityNotSupported, DeviceCredentialsMissing) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except KonicaAdminBusy as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except KonicaAdminError as exc:
+        await _record_counter_poll_failure(db, device, str(exc))
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return CounterPollOut(
+        accounts_read=result.accounts_read,
+        baselines=result.baselines,
+        baseline_usage_rows=result.baseline_usage_rows,
+        changed=result.changed,
+        unchanged=result.unchanged,
+        usage_rows=result.usage_rows,
+        resets=result.resets,
+        unmapped=result.unmapped,
+        message=result.message,
+    )
+
+
+async def _record_counter_poll_failure(db: AsyncSession, device: MfpDevice, message: str) -> None:
+    """A failed poll is recorded on the device like a failed sync is, so
+    "when did this last work" is answerable without reading logs."""
+    device.last_counter_poll_at = datetime.now(UTC)
+    device.last_counter_poll_ok = False
+    device.last_counter_poll_message = message
+    await db.commit()
+
+
+@router.get("/{device_id}/sync-jobs/latest", response_model=SyncJobOut | None)
+async def latest_sync_job(device_id: UUID, db: AsyncSession = Depends(get_db)):
+    """The most recent sync for this copier, running or finished — what the
+    progress display polls."""
+    await _get_device_or_404(device_id, db)
+    job = (
+        (
+            await db.execute(
+                select(CopierSyncJob)
+                .where(CopierSyncJob.mfp_device_id == device_id)
+                .order_by(CopierSyncJob.created_at.desc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    return _job_out(job) if job else None
+
+
+@router.get("/{device_id}/provisioned-accounts", response_model=list[ProvisionedAccountOut])
+async def list_provisioned_accounts(device_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Who PrintOps put on this copier, and in which account slot — the
+    mapping the device itself cannot provide."""
+    await _get_device_or_404(device_id, db)
+    rows = (
+        (
+            await db.execute(
+                select(CopierProvisionedAccount)
+                .where(
+                    CopierProvisionedAccount.mfp_device_id == device_id,
+                    CopierProvisionedAccount.removed_at.is_(None),
+                )
+                .order_by(CopierProvisionedAccount.device_account_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        ProvisionedAccountOut(
+            device_account_id=r.device_account_id,
+            device_account_name=r.device_account_name,
+            staff_email=r.staff_email,
+            identity_value=r.identity_value,
+            provisioned_at=r.provisioned_at,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/{device_id}/device-accounts", response_model=list[DeviceUserOut])
+async def list_device_accounts(device_id: UUID, db: AsyncSession = Depends(get_db)):
+    """The accounts that actually exist ON the copier right now.
+
+    Read live from the device rather than from anything PrintOps stored,
+    because the point is to confirm what the machine will accept — a cached
+    answer would defeat it."""
+    device = await _get_device_or_404(device_id, db)
+    connector = get_connector(device.connector_type)
+    try:
+        users = await connector.list_device_users(device)
+    except CapabilityNotSupported as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except DeviceCredentialsMissing as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except KonicaAdminBusy as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except KonicaAdminError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return [
+        DeviceUserOut(
+            identifier=u.identifier, name=u.name, has_password=u.has_password, disabled=u.disabled
+        )
+        for u in users
+    ]

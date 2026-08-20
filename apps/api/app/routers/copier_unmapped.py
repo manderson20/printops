@@ -4,7 +4,6 @@ StaffCopierIdentity at import time. Mirrors app/routers/device_overrides.py's
 "unknown identity -> admin assigns -> backfill already-logged rows"
 pattern exactly, just for copier usage instead of print jobs."""
 
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession

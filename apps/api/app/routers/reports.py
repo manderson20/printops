@@ -1,6 +1,6 @@
 import csv
 import io
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -13,10 +13,13 @@ from app.deps import get_current_user, require_role
 from app.models.report import ReportFormulaSettings, ReportSnapshot
 from app.models.user import User
 from app.reports.aggregation import (
+    CopyCostRawRow,
     CostRawRow,
     ReportFilters,
     get_combined_summary,
     get_combined_user_leaderboard,
+    get_copier_activity_by_device,
+    get_copy_cost_raw_rows,
     get_cost_raw_rows,
     get_hourly_timeline,
     get_peak_times,
@@ -34,9 +37,12 @@ from app.reports.formulas import (
     FormulaValues,
     JobCost,
     compute_environmental_impact,
+    compute_printer_rate,
+    copy_cost,
     job_cost,
 )
 from app.reports.fun_facts import generate_fun_facts
+from app.reports.tracked_copies import get_tracked_copy_summary
 from app.reports.untracked_copies import get_untracked_copy_summary
 from app.schemas.auth import UserOut
 from app.schemas.report import (
@@ -49,10 +55,18 @@ from app.schemas.report import (
     PeakTimesOut,
     SnapshotCreate,
     SnapshotOut,
+    StaffCopierUsageOut,
+    StaffPrinterUsageOut,
+    StaffUsageOut,
     SummaryOut,
     TimelineBucketOut,
 )
-from app.schemas.untracked_copies import UntrackedCopyPrinterEntryOut, UntrackedCopySummaryOut
+from app.schemas.untracked_copies import (
+    TrackedCopyDeviceEntryOut,
+    TrackedCopySummaryOut,
+    UntrackedCopyPrinterEntryOut,
+    UntrackedCopySummaryOut,
+)
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -227,6 +241,105 @@ async def _compute_cost_accumulators(
     return by_printer, by_user, by_device, overall
 
 
+@dataclass
+class _CopyCostAccumulator:
+    """The copy-side counterpart of _CostAccumulator.
+
+    Not the same class, because the two are not the same shape: a print
+    row has one colour mode and contributes to exactly one of mono/colour,
+    while a copy row is a counter delta carrying both at once, plus a
+    remainder the device never split. That remainder is tracked in its own
+    field rather than folded into mono — it is priced at the mono rate,
+    but calling it mono would state something the device never said, and
+    the UI needs to be able to tell the difference to label it."""
+
+    label: str
+    page_count: int = 0
+    color_pages: int = 0
+    mono_pages: int = 0
+    unsplit_pages: int = 0
+    sheets: int = 0
+    toner_cost: float = 0.0
+    paper_cost: float = 0.0
+
+    @property
+    def total_cost(self) -> float:
+        return self.toner_cost + self.paper_cost
+
+    @property
+    def measured_color(self) -> bool:
+        """False when nothing in this bucket was broken out by colour, so
+        every page in it is being priced at the mono rate by default."""
+        return self.unsplit_pages == 0 or bool(self.color_pages or self.mono_pages)
+
+
+def _accumulate_copy(entry: _CopyCostAccumulator, row: CopyCostRawRow, cost: JobCost) -> None:
+    color = row.color_page_count or 0
+    mono = row.monochrome_page_count or 0
+    entry.page_count += row.page_count
+    entry.color_pages += color
+    entry.mono_pages += mono
+    entry.unsplit_pages += max(row.page_count - color - mono, 0)
+    entry.sheets += cost.sheets
+    entry.toner_cost += cost.toner_cost
+    entry.paper_cost += cost.paper_cost
+
+
+async def _compute_copy_cost_accumulators(
+    db: AsyncSession,
+    filters: ReportFilters,
+    cost_per_sheet_paper: float,
+    fallback: FormulaValues,
+) -> tuple[dict[str, _CopyCostAccumulator], dict[str, _CopyCostAccumulator], _CopyCostAccumulator]:
+    """Returns (by_user, by_device, overall) for walk-up copying, priced at
+    the same per-printer cartridge rates printing uses.
+
+    The rate comes from the copier's *linked printer*, since that is where
+    cartridges are recorded — a copier with no linked printer, or one
+    whose cartridges nobody has entered, falls back to the flat admin-set
+    rates exactly as an unconfigured printer does (compute_printer_rate).
+    Unmapped rows (no staff_email) still count toward by_device and
+    overall: the pages are real and the device really made them, it is
+    only the person that is unknown."""
+    rows = await get_copy_cost_raw_rows(db, filters)
+    printer_ids = {r.printer_id for r in rows if r.printer_id is not None}
+    rates = await load_printer_rates(db, printer_ids, fallback)
+    flat_rate = compute_printer_rate([], fallback)
+
+    by_user: dict[str, _CopyCostAccumulator] = {}
+    by_device: dict[str, _CopyCostAccumulator] = {}
+    overall = _CopyCostAccumulator(label="Overall")
+
+    for row in rows:
+        rate = rates.get(row.printer_id, flat_rate) if row.printer_id else flat_rate
+        cost = copy_cost(
+            row.page_count,
+            row.color_page_count,
+            row.monochrome_page_count,
+            row.duplex,
+            rate,
+            cost_per_sheet_paper,
+        )
+        if row.staff_email:
+            _accumulate_copy(
+                by_user.setdefault(row.staff_email, _CopyCostAccumulator(label=row.staff_email)),
+                row,
+                cost,
+            )
+        _accumulate_copy(
+            by_device.setdefault(str(row.device_id), _CopyCostAccumulator(label=row.device_name)),
+            row,
+            cost,
+        )
+        _accumulate_copy(overall, row, cost)
+
+    display_names = await resolve_display_names(db, set(by_user.keys()))
+    for email, entry in by_user.items():
+        entry.label = display_names.get(email, email)
+
+    return by_user, by_device, overall
+
+
 def _build_summary_out(summary, environmental, cost_overall: _CostAccumulator) -> SummaryOut:
     return SummaryOut(
         total_jobs=summary.total_jobs,
@@ -359,12 +472,179 @@ async def report_combined_leaderboard(
     _, cost_by_user, _, _overall = await _compute_cost_accumulators(
         db, filters, formula_settings.cost_per_sheet_paper, fallback
     )
+    copy_cost_by_user, _, _copy_overall = await _compute_copy_cost_accumulators(
+        db, filters, formula_settings.cost_per_sheet_paper, fallback
+    )
     for entry in entries:
-        acc = cost_by_user.get(entry.key)
-        if acc is not None:
-            entry.estimated_cost = round(acc.total_cost, 2)
+        print_acc = cost_by_user.get(entry.key)
+        copy_acc = copy_cost_by_user.get(entry.key)
+        entry.print_cost = round(print_acc.total_cost, 2) if print_acc else 0.0
+        entry.copy_cost = round(copy_acc.total_cost, 2) if copy_acc else 0.0
+        entry.estimated_cost = round(entry.print_cost + entry.copy_cost, 2)
 
     return [CombinedLeaderboardEntryOut(**vars(e)) for e in entries]
+
+
+def _may_report_on(current_user: UserOut, filters: ReportFilters, email: str) -> bool:
+    """Whether this user may see `email`'s usage, judged from the scope
+    _report_filters already computed rather than by re-deriving it — one
+    place decides what a role can see, and this only reads that decision.
+
+    admin: anyone. viewer: only the identity that was forced onto
+    submitted_by, i.e. themselves. ou_viewer: only an address inside the
+    roster their granted OUs resolved to. Compared case-insensitively
+    because these are email addresses, which are not case-sensitive in
+    the half that matters here, and the same person's address arrives
+    differently cased from different rosters."""
+    if current_user.role == "admin":
+        return True
+    target = email.lower()
+    if filters.submitted_by_in is not None:
+        return target in {e.lower() for e in filters.submitted_by_in}
+    return filters.submitted_by is not None and filters.submitted_by.lower() == target
+
+
+@router.get("/staff-usage", response_model=StaffUsageOut)
+async def report_staff_usage(
+    email: str = Query(..., description="staff_email / submitted_by to report on"),
+    filters: ReportFilters = Depends(_report_filters),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+):
+    """Everything one person printed and copied in the window, broken down
+    by the machine that did it — the drill-down behind a Combined
+    Leaderboard row.
+
+    Scoped by overriding ReportFilters.submitted_by rather than by
+    filtering the results of the fleet-wide queries: that one field is
+    already the join key on both sides (Job.submitted_by and, via
+    _apply_copier_filters, CopierUsageRecord.staff_email), so the same
+    filters produce a consistently-scoped answer from print and copy
+    without either side needing a special case.
+
+    That override is exactly why this endpoint has to re-check permission
+    itself. Every other report inherits its scoping from _report_filters,
+    which force-sets submitted_by for a viewer and submitted_by_in for an
+    ou_viewer — overwriting submitted_by with a caller-supplied address
+    would hand any logged-in user anyone else's usage and cost. So the
+    requested address is checked against the scope _report_filters
+    computed *before* it is applied, and a non-admin asking about someone
+    they can't see gets a 403."""
+    if not _may_report_on(current_user, filters, email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this person's usage",
+        )
+    # Scoped to exactly one person now, so the OU-wide list is redundant —
+    # and leaving it set would widen the copy side back out, since
+    # _apply_copier_filters only understands submitted_by.
+    filters = replace(filters, submitted_by=email, submitted_by_in=None)
+
+    formula_settings = await _get_or_create_formula_settings(db)
+    fallback = _formula_values(formula_settings)
+    cost_per_sheet = formula_settings.cost_per_sheet_paper
+
+    # --- print side, grouped per printer for this one person
+    rows = await get_cost_raw_rows(db, filters)
+    rates = await load_printer_rates(db, {r.printer_id for r in rows}, fallback)
+    printers: dict[UUID, StaffPrinterUsageOut] = {}
+    for row in rows:
+        cost = job_cost(
+            row.page_count, row.color_mode, row.duplex, rates[row.printer_id], cost_per_sheet
+        )
+        entry = printers.setdefault(
+            row.printer_id,
+            StaffPrinterUsageOut(
+                printer_id=row.printer_id,
+                printer_name=row.printer_name,
+                job_count=0,
+                pages=0,
+                color_pages=0,
+                mono_pages=0,
+                duplex_pages=0,
+                simplex_pages=0,
+                sheets=0,
+                toner_cost=0.0,
+                paper_cost=0.0,
+                total_cost=0.0,
+            ),
+        )
+        entry.job_count += 1
+        entry.pages += row.page_count
+        if row.color_mode == "color":
+            entry.color_pages += row.page_count
+        elif row.color_mode == "monochrome":
+            entry.mono_pages += row.page_count
+        if row.duplex is True:
+            entry.duplex_pages += row.page_count
+        elif row.duplex is False:
+            entry.simplex_pages += row.page_count
+        entry.sheets += cost.sheets
+        entry.toner_cost += cost.toner_cost
+        entry.paper_cost += cost.paper_cost
+        entry.total_cost += cost.total_cost
+
+    for entry in printers.values():
+        entry.toner_cost = round(entry.toner_cost, 2)
+        entry.paper_cost = round(entry.paper_cost, 2)
+        entry.total_cost = round(entry.total_cost, 2)
+
+    # --- copy side, per device, plus the scan/fax that belongs beside it
+    _by_user, copy_by_device, copy_overall = await _compute_copy_cost_accumulators(
+        db, filters, cost_per_sheet, fallback
+    )
+    activity = {str(a.device_id): a for a in await get_copier_activity_by_device(db, filters)}
+
+    copiers: list[StaffCopierUsageOut] = []
+    # Devices are keyed off the activity query, not the cost one, so a
+    # copier where this person only scanned still appears — zero cost is a
+    # fact about the device, not a reason to hide that they used it.
+    for device_key, act in activity.items():
+        acc = copy_by_device.get(device_key)
+        copiers.append(
+            StaffCopierUsageOut(
+                device_id=act.device_id,
+                device_name=act.device_name,
+                pages=act.copy_pages,
+                color_pages=acc.color_pages if acc else 0,
+                mono_pages=acc.mono_pages if acc else 0,
+                scan_pages=act.scan_pages,
+                fax_pages=act.fax_pages,
+                sheets=acc.sheets if acc else 0,
+                toner_cost=round(acc.toner_cost, 2) if acc else 0.0,
+                paper_cost=round(acc.paper_cost, 2) if acc else 0.0,
+                total_cost=round(acc.total_cost, 2) if acc else 0.0,
+                measured_color=acc.measured_color if acc else True,
+                attributed_by_default_owner=act.from_default_owner,
+            )
+        )
+    copiers.sort(key=lambda c: c.pages, reverse=True)
+
+    print_summary = await get_summary(db, filters)
+    print_total_cost = round(sum(p.total_cost for p in printers.values()), 2)
+    copy_total_cost = round(copy_overall.total_cost, 2)
+    display_names = await resolve_display_names(db, {email})
+
+    return StaffUsageOut(
+        email=email,
+        label=display_names.get(email, email),
+        print_pages=print_summary.total_pages,
+        copy_pages=copy_overall.page_count,
+        scan_pages=sum(c.scan_pages for c in copiers),
+        fax_pages=sum(c.fax_pages for c in copiers),
+        total_pages=print_summary.total_pages + copy_overall.page_count,
+        color_pages=print_summary.color_pages,
+        mono_pages=print_summary.mono_pages,
+        duplex_pages=print_summary.duplex_pages,
+        simplex_pages=print_summary.simplex_pages,
+        job_count=print_summary.total_jobs,
+        sheets=sum(p.sheets for p in printers.values()) + copy_overall.sheets,
+        print_cost=print_total_cost,
+        copy_cost=copy_total_cost,
+        total_cost=round(print_total_cost + copy_total_cost, 2),
+        printers=sorted(printers.values(), key=lambda p: p.total_cost, reverse=True),
+        copiers=copiers,
+    )
 
 
 @router.get("/cost-breakdown", response_model=list[CostEntryOut])
@@ -413,6 +693,38 @@ async def report_peak_times(
 ):
     peak = await get_peak_times(db, filters)
     return PeakTimesOut(by_day_of_week=peak.by_day_of_week, by_hour=peak.by_hour)
+
+
+@router.get("/tracked-copies", response_model=TrackedCopySummaryOut)
+async def report_tracked_copies(
+    filters: ReportFilters = Depends(_report_filters), db: AsyncSession = Depends(get_db)
+):
+    """Walk-up copier activity PrintOps can attribute to a named person,
+    read back from per-account counters — the counterpart to
+    /untracked-copies, and meant to be read alongside it rather than on its
+    own (see app/reports/tracked_copies.py's module docstring)."""
+    summary = await get_tracked_copy_summary(db, filters)
+    return TrackedCopySummaryOut(
+        copy_pages=summary.copy_pages,
+        scan_pages=summary.scan_pages,
+        fax_pages=summary.fax_pages,
+        people=summary.people,
+        unattributed_pages=summary.unattributed_pages,
+        devices_reporting=summary.devices_reporting,
+        devices=[
+            TrackedCopyDeviceEntryOut(
+                device_id=str(d.device_id),
+                device_name=d.device_name,
+                building=d.building,
+                copy_pages=d.copy_pages,
+                scan_pages=d.scan_pages,
+                fax_pages=d.fax_pages,
+                people=d.people,
+                unattributed_pages=d.unattributed_pages,
+            )
+            for d in summary.devices
+        ],
+    )
 
 
 @router.get("/untracked-copies", response_model=UntrackedCopySummaryOut)

@@ -465,6 +465,16 @@ export type MfpDevice = {
   admin_username: string | null;
   has_admin_password: boolean;
   provision_org_unit_paths: string[] | null;
+  auto_sync_users: boolean;
+  last_user_sync_at: string | null;
+  last_user_sync_ok: boolean | null;
+  last_user_sync_message: string | null;
+  auto_poll_counters: boolean;
+  last_counter_poll_at: string | null;
+  last_counter_poll_ok: boolean | null;
+  last_counter_poll_message: string | null;
+  default_owner_email: string | null;
+  default_owner_attributed_through: string | null;
   page_count_total: number | null;
   page_count_copy: number | null;
   page_count_print: number | null;
@@ -507,12 +517,137 @@ export type MfpDeviceCreateInput = {
   admin_username?: string | null;
   admin_password?: string | null;
   provision_org_unit_paths?: string[] | null;
+  auto_sync_users?: boolean;
+  auto_poll_counters?: boolean;
+  /** Empty string clears the owner. */
+  default_owner_email?: string | null;
   notes?: string | null;
 };
 
 export type MfpDeviceUpdateInput = Partial<MfpDeviceCreateInput> & {
   capabilities?: Partial<DeviceCapabilities>;
 };
+
+export type ProvisioningPreview = {
+  count: number;
+  org_unit_paths: string[];
+  excluded_org_unit_paths: string[];
+  skipped_no_org_unit: number;
+  sample_emails: string[];
+};
+
+export type SyncJob = {
+  id: string;
+  status: "pending" | "running" | "succeeded" | "failed";
+  trigger: string;
+  total: number;
+  completed: number;
+  failed: number;
+  skipped: number;
+  message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export type ProvisionedAccount = {
+  device_account_id: string;
+  device_account_name: string | null;
+  staff_email: string;
+  identity_value: string;
+  provisioned_at: string;
+};
+
+export async function getLatestMfpSyncJob(id: string): Promise<SyncJob | null> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/sync-jobs/latest`);
+  return response.json();
+}
+
+export async function listMfpProvisionedAccounts(
+  id: string,
+): Promise<ProvisionedAccount[]> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/provisioned-accounts`);
+  return response.json();
+}
+
+export async function previewMfpDeviceProvisioning(
+  id: string,
+): Promise<ProvisioningPreview> {
+  const response = await authorizedFetch(
+    `/api/v1/mfp-devices/${id}/provisioning-preview`,
+  );
+  return response.json();
+}
+
+export async function syncMfpDeviceUsers(
+  id: string,
+  options: { rewrite?: boolean } = {},
+): Promise<SyncJob> {
+  const query = options.rewrite ? "?rewrite=true" : "";
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/sync-users${query}`, {
+    method: "POST",
+  });
+  return response.json();
+}
+
+export type CounterPollResult = {
+  accounts_read: number;
+  baselines: number;
+  baseline_usage_rows: number;
+  changed: number;
+  unchanged: number;
+  usage_rows: number;
+  resets: number;
+  unmapped: number;
+  message: string;
+};
+
+/** Reads the copier's per-account counters and records whatever usage has
+ * happened since the last read. The first run of a device only stores the
+ * baseline — see CounterPollResult.baselines. */
+export async function pollMfpDeviceCounters(id: string): Promise<CounterPollResult> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/poll-counters`, {
+    method: "POST",
+  });
+  return response.json();
+}
+
+export type DefaultOwnerAttributionResult = {
+  attributed_pages: number;
+  usage_rows: number;
+  /** No usage on purpose: an owner was just named, so counting starts now,
+   * or the printer's meter was replaced. */
+  baselined: boolean;
+  meter_reset: boolean;
+  /** Why it could not run at all. Written to be shown as-is. */
+  skipped_reason: string | null;
+  message: string;
+  attributed_through: string | null;
+};
+
+/** Credits the device's owner with the copies metered since last time.
+ * Contacts nothing — it diffs SNMP readings the poller already recorded —
+ * so it returns instantly and is safe to press repeatedly. */
+export async function attributeMfpDeviceCopies(
+  id: string,
+): Promise<DefaultOwnerAttributionResult> {
+  const response = await authorizedFetch(
+    `/api/v1/mfp-devices/${id}/attribute-copies`,
+    { method: "POST" },
+  );
+  return response.json();
+}
+
+export type DeviceUser = {
+  identifier: string;
+  name: string | null;
+  has_password: boolean;
+  disabled: boolean;
+};
+
+export async function listMfpDeviceAccounts(id: string): Promise<DeviceUser[]> {
+  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/device-accounts`);
+  return response.json();
+}
 
 export async function listConnectorTypes(): Promise<ConnectorTypeOption[]> {
   const response = await authorizedFetch("/api/v1/mfp-devices/connector-types");
@@ -1793,6 +1928,39 @@ export type UntrackedCopySummary = {
   printers: UntrackedCopyPrinterEntry[];
 };
 
+export type TrackedCopyDeviceEntry = {
+  device_id: string;
+  device_name: string;
+  building: string | null;
+  copy_pages: number;
+  scan_pages: number;
+  fax_pages: number;
+  people: number;
+  unattributed_pages: number;
+};
+
+export type TrackedCopySummary = {
+  copy_pages: number;
+  scan_pages: number;
+  fax_pages: number;
+  people: number;
+  unattributed_pages: number;
+  devices_reporting: number;
+  devices: TrackedCopyDeviceEntry[];
+};
+
+/** Walk-up copier activity attributed to a named person — the counterpart
+ * to getUntrackedCopySummary, meant to be read alongside it. */
+export async function getTrackedCopySummary(
+  filters?: ReportFilters,
+): Promise<TrackedCopySummary> {
+  const qs = buildReportQuery(filters);
+  const response = await authorizedFetch(
+    `/api/v1/reports/tracked-copies${qs ? `?${qs}` : ""}`,
+  );
+  return response.json();
+}
+
 export async function getUntrackedCopySummary(
   filters?: ReportFilters,
 ): Promise<UntrackedCopySummary> {
@@ -1853,6 +2021,10 @@ export async function downloadReportCsv(
 export type CombinedSummary = {
   print_pages: number;
   copy_pages: number;
+  // Reported beside copying, never inside it -- a scan produces no printed
+  // page, so total_pages deliberately excludes both.
+  scan_pages: number;
+  fax_pages: number;
   total_pages: number;
   unmapped_copy_activity_count: number;
 };
@@ -1873,11 +2045,20 @@ export type CombinedLeaderboardEntry = {
   print_pages: number;
   copy_pages: number;
   total_pages: number;
+  // color/mono/duplex/simplex describe the print side only. A copy arrives
+  // as a counter delta with no per-job duplex flag at all, so the copy side
+  // gets its own colour split instead of sharing these.
   color_pages: number;
   mono_pages: number;
   duplex_pages: number;
   simplex_pages: number;
-  // Print-only -- walk-up copy usage has no cost model.
+  copy_color_pages: number;
+  copy_mono_pages: number;
+  scan_pages: number;
+  fax_pages: number;
+  print_cost: number;
+  copy_cost: number;
+  // print_cost + copy_cost.
   estimated_cost: number;
 };
 
@@ -1889,6 +2070,72 @@ export async function getCombinedUserLeaderboard(
   const response = await authorizedFetch(
     `/api/v1/reports/combined-leaderboard${qs ? `?${qs}` : ""}`,
   );
+  return response.json();
+}
+
+export type StaffPrinterUsage = {
+  printer_id: string;
+  printer_name: string;
+  job_count: number;
+  pages: number;
+  color_pages: number;
+  mono_pages: number;
+  duplex_pages: number;
+  simplex_pages: number;
+  sheets: number;
+  toner_cost: number;
+  paper_cost: number;
+  total_cost: number;
+};
+
+export type StaffCopierUsage = {
+  device_id: string;
+  device_name: string;
+  pages: number;
+  color_pages: number;
+  mono_pages: number;
+  scan_pages: number;
+  fax_pages: number;
+  sheets: number;
+  toner_cost: number;
+  paper_cost: number;
+  total_cost: number;
+  // False when the device reported a copy total with no colour breakdown,
+  // so the unsplit remainder is being priced at the mono rate. The UI has
+  // to say so rather than implying the copies were mono.
+  measured_color: boolean;
+  // These pages were credited by an admin naming the device's owner, not
+  // by anyone identifying themselves at the copier.
+  attributed_by_default_owner: boolean;
+};
+
+export type StaffUsage = {
+  email: string;
+  label: string;
+  print_pages: number;
+  copy_pages: number;
+  scan_pages: number;
+  fax_pages: number;
+  total_pages: number;
+  color_pages: number;
+  mono_pages: number;
+  duplex_pages: number;
+  simplex_pages: number;
+  job_count: number;
+  sheets: number;
+  print_cost: number;
+  copy_cost: number;
+  total_cost: number;
+  printers: StaffPrinterUsage[];
+  copiers: StaffCopierUsage[];
+};
+
+export async function getStaffUsage(
+  email: string,
+  filters?: ReportFilters,
+): Promise<StaffUsage> {
+  const qs = buildReportQuery(filters, { email });
+  const response = await authorizedFetch(`/api/v1/reports/staff-usage?${qs}`);
   return response.json();
 }
 
