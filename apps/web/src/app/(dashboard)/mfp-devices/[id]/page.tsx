@@ -844,8 +844,17 @@ export default function MfpDeviceDetailPage() {
             Changing the owner restarts it for the same reason.
           </p>
 
-          {/* The two conditions the feature actually depends on, stated up
+          {/* The conditions the feature actually depends on, stated up
               front rather than discovered as a "nothing happened" later. */}
+          {(autoPollCounters || device.auto_poll_counters) && (
+            <p className="mt-3 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+              This copier reads per-account counters, which already say who
+              made each copy. A whole-device owner would count those same
+              copies a second time, so it won&apos;t be applied while
+              per-account reading is on — turn that off first if this machine
+              really does belong to one person.
+            </p>
+          )}
           {!device.printer_id && (
             <p className="mt-3 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
               This copier isn&apos;t linked to a printer, so PrintOps has no

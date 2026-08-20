@@ -29,6 +29,14 @@ someone to rediscover:
   built that way, under a column that elsewhere means measurement, would
   misrepresent it. Such a device is refused with a reason instead.
 
+- **Never on a copier that already tracks per-account.** The two count the
+  same physical copies from different ends — Account Track attributes them
+  to the people who actually made them, this attributes the whole meter to
+  one person — so a device doing both would report every copy twice, and
+  inflate that one person's cost with everyone else's copying. Per-account
+  data is strictly better where it exists (it names real people), so this
+  stands down rather than competing with it.
+
 - **No colour split.** SNMP's copy meter is a single count; it does not
   say how many of those pages were colour. The rows are written with
   colour and mono both null, which prices them at the mono rate — the
@@ -45,6 +53,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.copier_account_counter import CopierAccountCounterReading
 from app.models.copier_usage import CopierUsageRecord
 from app.models.mfp_device import MfpDevice
 from app.models.printer import Printer
@@ -94,6 +103,21 @@ class DefaultOwnerResult:
         if not self.attributed_pages:
             return "no new copies since the last read"
         return f"{self.attributed_pages} copies attributed"
+
+
+async def _has_account_readings(db: AsyncSession, device: MfpDevice) -> bool:
+    """Whether this copier has ever reported per-account counters, which is
+    the durable evidence that app/copiers/account_counters.py is already
+    attributing its copies — truer than the auto_poll_counters flag alone,
+    which an admin can switch off without the readings (or the usage rows
+    taken from them) going away."""
+    return (
+        await db.execute(
+            select(CopierAccountCounterReading.id)
+            .where(CopierAccountCounterReading.mfp_device_id == device.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none() is not None
 
 
 async def _latest_reading(
@@ -189,6 +213,23 @@ async def attribute_device_copies(db: AsyncSession, device: MfpDevice) -> Defaul
     """
     if not device.default_owner_email:
         return DefaultOwnerResult(skipped_reason="no default owner set for this device")
+
+    # Per-account tracking wins wherever it exists. Both settings are
+    # accepted independently by the API and shown as separate cards in the
+    # UI, so this configuration is reachable by an admin who turns on
+    # counter polling and later names an owner (or the reverse) — and it
+    # would silently double every copy on the device in the page and cost
+    # reports. Checked against readings as well as the auto-poll flag,
+    # since counters can also be polled by hand from the device page.
+    if device.auto_poll_counters or await _has_account_readings(db, device):
+        return DefaultOwnerResult(
+            skipped_reason=(
+                "this copier reports per-account counters, which already say who made "
+                "each copy — a whole-device owner would count the same copies a second "
+                "time, so it is not applied here"
+            )
+        )
+
     if device.printer_id is None:
         return DefaultOwnerResult(
             skipped_reason="this copier isn't linked to a printer, so PrintOps has no meter to read"

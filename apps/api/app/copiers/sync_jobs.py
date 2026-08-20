@@ -101,10 +101,19 @@ async def run_sync_job(job_id: UUID, rewrite: bool = False) -> None:
         else:
             now = datetime.now(UTC)
             if rewrite:
-                # The rewrite authoritatively re-seats everyone, so the old
-                # records no longer describe the device. Closed rather than
-                # deleted — historic usage stays attributable to whoever
-                # held the account at the time.
+                # A rewrite re-seats people into account slots, so the old
+                # record for a slot no longer describes the device. Closed
+                # rather than deleted — historic usage stays attributable to
+                # whoever held the account at the time.
+                #
+                # Only the slots actually rewritten, though. A rewrite can
+                # partially fail (result.failed_count), and a slot that
+                # failed still holds its previous occupant's code on the
+                # copier. Closing its mapping too would leave a live account
+                # with nobody attached, so every page it goes on to produce
+                # would arrive as unmapped activity — losing the attribution
+                # for a person whose account was never actually touched.
+                rewritten_slots = {account.device_account_id for account in result.accounts}
                 for stale in (
                     (
                         await db.execute(
@@ -117,7 +126,8 @@ async def run_sync_job(job_id: UUID, rewrite: bool = False) -> None:
                     .scalars()
                     .all()
                 ):
-                    stale.removed_at = now
+                    if stale.device_account_id in rewritten_slots:
+                        stale.removed_at = now
             for account in result.accounts:
                 db.add(
                     CopierProvisionedAccount(

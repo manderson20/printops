@@ -107,7 +107,12 @@ async def test_identity_not_in_the_directory_is_skipped_and_counted(db):
 
 @pytest.mark.asyncio
 async def test_duplicate_codes_are_not_pushed(db):
-    """A code held by two people can't be attributed either way."""
+    """A code held by two people can't be attributed either way, so neither
+    holder gets it — not merely "only the first one does".
+
+    Pushing one of them is the worse outcome, not a partial fix: both
+    people can still log in with the code, while every page it produces is
+    credited to whichever of them happened to sort first."""
     await _seed(db, PEOPLE)
     db.add(GoogleWorkspaceUser(email="twin@d.org", org_unit_path="/Employees", synced_at=_now()))
     db.add(
@@ -119,7 +124,12 @@ async def test_duplicate_codes_are_not_pushed(db):
 
     plan = await build_provisioning_plan(db, MfpDevice(name="C", connector_type="konica_bizhub"))
     values = [i.identity_value for i in plan.identities]
-    assert values.count("10001") == 1
+    assert values.count("10001") == 0
+    emails = [i.staff_email for i in plan.identities]
+    assert "twin@d.org" not in emails
+    assert "teacher@d.org" not in emails
+    # Everyone whose code is their own is unaffected.
+    assert "hs@d.org" in emails
 
 
 class _FakeSession:
@@ -391,3 +401,101 @@ async def test_progress_is_reported_per_account(monkeypatch):
         on_progress=on_progress,
     )
     assert seen == [(1, 3, 1, 0), (2, 3, 2, 0), (3, 3, 3, 0)]
+
+
+# --- A rewrite that partially fails --------------------------------------
+#
+# A rewrite re-seats people into account slots. When some slots fail, the
+# copier still holds the previous occupant's code in them — so what the
+# provisioning records say about those slots must not change.
+
+
+@pytest.mark.asyncio
+async def test_a_partially_failed_rewrite_keeps_the_untouched_slots_mapped(db, monkeypatch):
+    """Closing the mapping for a slot the rewrite never managed to change
+    would leave a live account on the copier with nobody attached, and
+    every page it goes on to produce would arrive as unmapped activity —
+    losing attribution for a person whose account was never touched."""
+    from sqlalchemy import select
+
+    from app.copiers.connector import ProvisionedAccount, SyncResult
+    from app.models.copier_provisioning import CopierProvisionedAccount, CopierSyncJob
+
+    device = MfpDevice(name="Veronica", connector_type="konica_bizhub")
+    db.add(device)
+    await db.commit()
+    await db.refresh(device)
+
+    # Two people already hold slots on the device.
+    for email, slot in (("alice@d.org", "0001"), ("bob@d.org", "0002")):
+        db.add(
+            CopierProvisionedAccount(
+                mfp_device_id=device.id,
+                staff_email=email,
+                identity_value=email.split("@")[0],
+                identity_type="staff_id",
+                device_account_id=slot,
+                provisioned_at=_now(),
+            )
+        )
+    job = CopierSyncJob(mfp_device_id=device.id, status="queued", trigger="rewrite")
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    # The rewrite re-seats slot 0001 and fails on 0002.
+    class _Connector:
+        async def sync_users_to_device(self, device, identities, **kwargs):
+            return SyncResult(
+                synced_count=1,
+                failed_count=1,
+                message="1 of 2 accounts written",
+                accounts=[
+                    ProvisionedAccount(
+                        staff_email="carol@d.org",
+                        identity_value="10009",
+                        identity_type="staff_id",
+                        device_account_id="0001",
+                    )
+                ],
+            )
+
+    monkeypatch.setattr("app.copiers.sync_jobs.get_connector", lambda _t: _Connector())
+    monkeypatch.setattr("app.copiers.sync_jobs.AsyncSessionLocal", _session_factory_returning(db))
+
+    from app.copiers.sync_jobs import run_sync_job
+
+    await run_sync_job(job.id, rewrite=True)
+
+    rows = (
+        (
+            await db.execute(
+                select(CopierProvisionedAccount).where(
+                    CopierProvisionedAccount.mfp_device_id == device.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    live = {r.device_account_id: r for r in rows if r.removed_at is None}
+
+    # Slot 0001 was really rewritten: Alice's mapping closes, Carol's opens.
+    assert live["0001"].staff_email == "carol@d.org"
+    # Slot 0002 failed, so the copier still holds Bob's code — and so do we.
+    assert live["0002"].staff_email == "bob@d.org"
+
+
+def _session_factory_returning(session):
+    """run_sync_job opens its own session because it outlives the request
+    that queued it. Hand it the test's session instead, without letting it
+    be closed out from under the assertions that follow."""
+
+    class _Ctx:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *exc):
+            return False
+
+    return lambda: _Ctx()

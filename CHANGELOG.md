@@ -27,7 +27,9 @@ copying costs, per person, beside their printing".
   owner, and every copy its own meter records from that moment on is
   credited to them. Counting starts when you save — never from the meter's
   lifetime total — so nobody is handed the copies made before they were
-  named, and changing the owner restarts it for the same reason.
+  named, and changing the owner restarts it for the same reason. A copier
+  that already reads per-account counters is left alone — the two would
+  count the same copies twice — and the device page says so.
 - **Changed: scans and faxes are no longer counted as copied pages.** They
   were previously summed in with copies. A scan puts no toner on paper, and
   once these numbers carry a cost, charging for one would be wrong. They
@@ -54,6 +56,17 @@ copying costs, per person, beside their printing".
   therefore how much of the picture the accounting actually covers. Copies
   against an account PrintOps didn't create are counted in their own
   number rather than hidden or rolled into the tracked total.
+- **Fixed: a copier code held by two people was still being pushed to one
+  of them.** The intent was always that a shared code goes to nobody, since
+  its pages can't be attributed either way — but only the second holder was
+  being left out, so both people could still log in with it while every
+  page went on one person's report. Now neither holder gets it.
+- **Fixed: a partly-failed account rewrite could orphan people's copies.**
+  When a rewrite couldn't write every account, PrintOps forgot who owned
+  *all* of them — including the accounts it never managed to change, which
+  still held their original code on the copier. Those people's copies then
+  arrived as unmatched activity. Only the accounts actually rewritten are
+  reassigned now.
 - Fixed: background printer queue resyncs could starve the CUPS scheduler,
   stalling print clients when one flapping printer resynced repeatedly.
 - Fixed: browser autofill could overwrite a copier's stored admin

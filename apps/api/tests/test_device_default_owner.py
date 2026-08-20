@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.copiers.device_owner import attribute_device_copies
 from app.models.base import Base
+from app.models.copier_account_counter import CopierAccountCounterReading
 from app.models.copier_usage import CopierUsageRecord
 from app.models.mfp_device import MfpDevice
 from app.models.printer import Printer
@@ -242,3 +243,48 @@ async def test_purged_history_baselines_off_the_oldest_surviving_reading(db, dev
     await db.commit()
 
     assert result.attributed_pages == 30
+
+
+async def test_a_copier_that_tracks_per_account_is_never_also_attributed_wholesale(
+    db, device, printer
+):
+    """The two count the same physical copies from different ends. A device
+    doing both would report every copy twice and charge one person for
+    everyone else's copying — so the whole-device rule stands down where
+    Account Track already names who made what."""
+    device.auto_poll_counters = True
+    await db.commit()
+    await _reading(db, printer, 356, NOW)
+    await attribute_device_copies(db, device)
+    await db.commit()
+
+    await _reading(db, printer, 401, NOW + timedelta(hours=1))
+    result = await attribute_device_copies(db, device)
+    await db.commit()
+
+    assert result.attributed_pages == 0
+    assert await _usage(db) == []
+    assert "count the same copies a second time" in result.skipped_reason
+
+
+async def test_past_per_account_readings_also_stand_the_rule_down(db, device, printer):
+    """auto_poll_counters can be switched off without the readings — or the
+    usage rows already taken from them — going away, so the readings are
+    the truer signal."""
+    device.auto_poll_counters = False
+    db.add(
+        CopierAccountCounterReading(
+            mfp_device_id=device.id,
+            device_account_id="0001",
+            counters={"copy": {"Bw": 12}},
+            first_seen_at=NOW,
+            last_seen_at=NOW,
+        )
+    )
+    await db.commit()
+    await _reading(db, printer, 356, NOW)
+
+    result = await attribute_device_copies(db, device)
+
+    assert result.attributed_pages == 0
+    assert result.skipped_reason is not None

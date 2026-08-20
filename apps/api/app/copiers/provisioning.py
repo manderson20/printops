@@ -9,6 +9,7 @@ by the same code that the sync then uses — not a second implementation
 that can drift.
 """
 
+from collections import Counter
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -69,9 +70,8 @@ async def build_provisioning_plan(
     )
     org_unit_by_email = {email.lower(): path for email, path in ou_result.all()}
 
-    selected: list[StaffCopierIdentity] = []
+    in_scope: list[StaffCopierIdentity] = []
     skipped = 0
-    seen_values: set[str] = set()
     for identity in identities:
         org_unit = org_unit_by_email.get((identity.staff_email or "").lower())
         if org_unit is None:
@@ -79,13 +79,17 @@ async def build_provisioning_plan(
             continue
         if not org_unit_included(org_unit, includes, excludes):
             continue
-        # A code held by two people can't be attributed either way, so it
-        # is not pushed at all — see the duplicate-code case in
-        # docs/copier-capture-konica.md's sibling notes.
-        if identity.identity_value in seen_values:
-            continue
-        seen_values.add(identity.identity_value)
-        selected.append(identity)
+        in_scope.append(identity)
+
+    # A code held by two people can't be attributed either way, so no
+    # holder of it is pushed. This has to be decided after the whole
+    # in-scope set is known, not while walking it: skipping duplicates as
+    # they appear would still push the first holder, leaving both able to
+    # log in with the code while every page it produces is credited to
+    # whoever sorted first — the precise failure the rule exists to
+    # prevent, and one that would quietly corrupt per-person cost reports.
+    holders = Counter(identity.identity_value for identity in in_scope)
+    selected = [identity for identity in in_scope if holders[identity.identity_value] == 1]
 
     return ProvisioningPlan(
         identities=selected,
