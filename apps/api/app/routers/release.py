@@ -90,9 +90,7 @@ def _releasable_here(printer: Printer):
     hold_reason values — a job held for being over a page quota
     (app/routers/quota_holds.py) must never appear here, since the whole
     point of that hold is that only an admin can release it."""
-    conditions = [
-        (Job.hold_reason == "pin_release") & (Job.printer_id == printer.id)
-    ]
+    conditions = [(Job.hold_reason == "pin_release") & (Job.printer_id == printer.id)]
     if printer.follow_me_enabled:
         conditions.append(Job.hold_reason == "follow_me")
     return or_(*conditions)

@@ -15,6 +15,7 @@ from app.models.base import Base
 def _decode(token: str) -> dict:
     return jwt.decode(token, "test-secret", algorithms=["HS256"])
 
+
 GOOGLE_CLAIMS = {
     "sub": "google-sub-123",
     "email": "someone@example.org",
@@ -261,9 +262,7 @@ def test_refresh_dev_login_reissues_a_working_token(client, auth_headers):
 
 
 def test_refresh_uses_configured_idle_timeout(client, auth_headers):
-    client.put(
-        "/api/v1/settings/session", headers=auth_headers, json={"idle_timeout_minutes": 5}
-    )
+    client.put("/api/v1/settings/session", headers=auth_headers, json={"idle_timeout_minutes": 5})
     response = client.post("/auth/refresh", headers=auth_headers)
     new_token = response.json()["access_token"]
     claims = _decode(new_token)
@@ -294,12 +293,8 @@ def test_refresh_exempt_sso_user_gets_long_lived_token(
     )
     assert marked.json()["exempt_from_timeout"] is True
 
-    client.put(
-        "/api/v1/settings/session", headers=auth_headers, json={"idle_timeout_minutes": 5}
-    )
-    response = client.post(
-        "/auth/refresh", headers={"Authorization": f"Bearer {user_token}"}
-    )
+    client.put("/api/v1/settings/session", headers=auth_headers, json={"idle_timeout_minutes": 5})
+    response = client.post("/auth/refresh", headers={"Authorization": f"Bearer {user_token}"})
     assert response.status_code == 200
     claims = _decode(response.json()["access_token"])
 
@@ -330,13 +325,9 @@ def test_refresh_revoking_exemption_takes_effect_next_refresh(
     client.patch(
         f"/api/v1/users/{user_id}", headers=auth_headers, json={"exempt_from_timeout": True}
     )
-    client.put(
-        "/api/v1/settings/session", headers=auth_headers, json={"idle_timeout_minutes": 5}
-    )
+    client.put("/api/v1/settings/session", headers=auth_headers, json={"idle_timeout_minutes": 5})
 
-    first_refresh = client.post(
-        "/auth/refresh", headers={"Authorization": f"Bearer {user_token}"}
-    )
+    first_refresh = client.post("/auth/refresh", headers={"Authorization": f"Bearer {user_token}"})
     refreshed_token = first_refresh.json()["access_token"]
 
     client.patch(

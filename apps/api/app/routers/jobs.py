@@ -36,9 +36,7 @@ router = APIRouter(dependencies=[Depends(verify_backend_token)])
 user_router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
-@user_router.get(
-    "", response_model=list[JobListOut], dependencies=[Depends(require_role("admin"))]
-)
+@user_router.get("", response_model=list[JobListOut], dependencies=[Depends(require_role("admin"))])
 async def list_jobs(
     printer_id: UUID | None = None,
     submitted_by: str | None = None,

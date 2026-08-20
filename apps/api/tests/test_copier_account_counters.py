@@ -189,9 +189,7 @@ async def test_a_provisioned_account_that_has_done_nothing_yet_records_nothing(
 
 
 @pytest.mark.asyncio
-async def test_the_baseline_window_starts_when_the_account_was_provisioned(
-    db, device, monkeypatch
-):
+async def test_the_baseline_window_starts_when_the_account_was_provisioned(db, device, monkeypatch):
     """Not at the first poll — the pages were made across the whole span
     between the account existing and PrintOps first looking at it."""
     provisioned = datetime(2026, 8, 17, 8, 37, tzinfo=UTC)

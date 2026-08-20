@@ -30,9 +30,7 @@ def validate_base_url(value: str | None) -> str | None:
     if not parts.netloc:
         raise ValueError("must include a host, e.g. https://example.org")
     if parts.query or parts.fragment:
-        raise ValueError(
-            "must not include a ?query string or #fragment — a base host/path only"
-        )
+        raise ValueError("must not include a ?query string or #fragment — a base host/path only")
     return stripped.rstrip("/")
 
 
@@ -45,7 +43,5 @@ def validate_safe_identifier(value: str | None) -> str | None:
     if value is None or value == "":
         return value
     if not all(c.isalnum() or c in "_-" for c in value):
-        raise ValueError(
-            "must contain only letters, digits, underscores, and hyphens"
-        )
+        raise ValueError("must contain only letters, digits, underscores, and hyphens")
     return value

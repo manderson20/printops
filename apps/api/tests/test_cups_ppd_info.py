@@ -39,9 +39,7 @@ def test_no_starred_choice_returns_none(monkeypatch):
 
 
 def test_nonzero_exit_returns_none(monkeypatch):
-    monkeypatch.setattr(
-        subprocess, "run", lambda argv, **kwargs: FakeCompletedProcess(1, "")
-    )
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: FakeCompletedProcess(1, ""))
     assert get_cups_queue_default_page_size("abc123") is None
 
 

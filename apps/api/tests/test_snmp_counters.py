@@ -220,9 +220,7 @@ class TestGuessModelFromDescription:
         assert _guess_model_from_description("Yellow Cartridge HP W2112X") == "W2112X"
 
     def test_canon_cartridge_number_format(self):
-        assert (
-            _guess_model_from_description("Canon Cartridge 054 Black Toner") == "Canon 054"
-        )
+        assert _guess_model_from_description("Canon Cartridge 054 Black Toner") == "Canon 054"
         # Not every Canon firmware appends "Toner" at the end.
         assert _guess_model_from_description("Canon Cartridge 041 Black") == "Canon 041"
 
@@ -256,7 +254,7 @@ SUPPLIES_LEVEL_OUTPUT = (
     ".1.3.6.1.2.1.43.11.1.1.9.2 = INTEGER: -2\n"  # unknown
 )
 SUPPLIES_MAX_CAPACITY_OUTPUT = (
-    ".1.3.6.1.2.1.43.11.1.1.8.1 = INTEGER: 100\n" ".1.3.6.1.2.1.43.11.1.1.8.2 = INTEGER: 100\n"
+    ".1.3.6.1.2.1.43.11.1.1.8.1 = INTEGER: 100\n.1.3.6.1.2.1.43.11.1.1.8.2 = INTEGER: 100\n"
 )
 
 

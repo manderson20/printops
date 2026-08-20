@@ -164,7 +164,5 @@ async def get_untracked_copy_summary(
         if entry.measured_copies or entry.estimated_untracked:
             summary.printers.append(entry)
 
-    summary.printers.sort(
-        key=lambda e: e.measured_copies + e.estimated_untracked, reverse=True
-    )
+    summary.printers.sort(key=lambda e: e.measured_copies + e.estimated_untracked, reverse=True)
     return summary

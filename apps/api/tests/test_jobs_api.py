@@ -134,9 +134,7 @@ def test_update_job_learns_file_size_when_not_known_at_creation(
     assert updated.json()["file_size_bytes"] == 54321
 
 
-def test_update_job_omitting_file_size_keeps_existing_value(
-    client, printer_id, backend_headers
-):
+def test_update_job_omitting_file_size_keeps_existing_value(client, printer_id, backend_headers):
     create = client.post(
         "/api/v1/jobs",
         json={"printer_id": printer_id, "file_size_bytes": 999},
@@ -249,9 +247,7 @@ async def test_list_jobs_resolves_device_name_from_mosyle(
     populated server-side by the attribution pipeline via source_host/
     ClassGuard) -- seeded directly here to test the reporting/resolution
     layer (resolve_device_names) in isolation from that pipeline."""
-    create = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
-    )
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     job_id = create.json()["id"]
 
     async with db_session_factory() as session:
@@ -275,9 +271,7 @@ async def test_list_jobs_resolves_device_name_from_mosyle(
 async def test_list_jobs_falls_back_to_raw_mac_when_unresolved(
     client, printer_id, backend_headers, auth_headers, db_session_factory
 ):
-    create = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
-    )
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     job_id = create.json()["id"]
 
     async with db_session_factory() as session:
@@ -290,9 +284,7 @@ async def test_list_jobs_falls_back_to_raw_mac_when_unresolved(
     assert body[0]["device_name"] == "AA:BB:CC:DD:EE:FF"
 
 
-def test_list_jobs_device_name_none_when_no_mac(
-    client, printer_id, backend_headers, auth_headers
-):
+def test_list_jobs_device_name_none_when_no_mac(client, printer_id, backend_headers, auth_headers):
     client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
 
     response = client.get("/api/v1/jobs", headers=auth_headers)
@@ -346,9 +338,7 @@ async def test_list_jobs_submitted_by_name_none_when_no_submitted_by(
     the normal API always ends up with *some* submitted_by string — the
     genuinely-null case tested here (e.g. a very old row from before
     Job.submitted_by existed) only happens via direct DB manipulation."""
-    create = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
-    )
+    create = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     job_id = create.json()["id"]
 
     async with db_session_factory() as session:
@@ -505,9 +495,7 @@ async def quota_roster(db_session_factory):
     the quota-mode tests below name have to exist."""
     async with db_session_factory() as session:
         for email in ("matt@example.org", "someone.else@example.org"):
-            session.add(
-                GoogleWorkspaceUser(email=email, name=email, synced_at=datetime.now(UTC))
-            )
+            session.add(GoogleWorkspaceUser(email=email, name=email, synced_at=datetime.now(UTC)))
         await session.commit()
 
 
@@ -880,8 +868,6 @@ async def test_create_job_rejects_archived_printer(
         printer.archived_at = datetime.now(UTC)
         await session.commit()
 
-    response = client.post(
-        "/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers
-    )
+    response = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     assert response.status_code == 409
     assert "archived" in response.json()["detail"].lower()

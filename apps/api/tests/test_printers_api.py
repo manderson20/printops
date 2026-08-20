@@ -361,9 +361,7 @@ def test_cups_queue_defaults_success(client, auth_headers, mock_failed_probe, mo
     )
     printer_id = create.json()["id"]
 
-    monkeypatch.setattr(
-        printers_router, "get_cups_queue_default_page_size", lambda pid: "Letter"
-    )
+    monkeypatch.setattr(printers_router, "get_cups_queue_default_page_size", lambda pid: "Letter")
 
     response = client.get(
         f"/api/v1/printers/{printer_id}/cups-queue-defaults", headers=auth_headers
@@ -1407,9 +1405,7 @@ def test_toner_cartridge_warning_threshold_defaults_and_is_settable(
     custom_response = client.put(
         f"/api/v1/printers/{printer_id}/toner-cartridges",
         headers=auth_headers,
-        json=[
-            {"color": "black", "cost": 60, "yield_pages": 3000, "warning_threshold_percent": 25}
-        ],
+        json=[{"color": "black", "cost": 60, "yield_pages": 3000, "warning_threshold_percent": 25}],
     )
     assert custom_response.json()[0]["warning_threshold_percent"] == 25
 
@@ -1441,9 +1437,7 @@ def test_toner_cartridge_model_is_per_color(client, auth_headers, mock_failed_pr
     assert by_color["cyan"]["model"] == "TN-227C"
 
 
-def test_fleet_toner_cartridges_lists_across_printers(
-    client, auth_headers, mock_failed_probe
-):
+def test_fleet_toner_cartridges_lists_across_printers(client, auth_headers, mock_failed_probe):
     p1 = client.post(
         "/api/v1/printers",
         headers=auth_headers,
@@ -1482,9 +1476,7 @@ def test_fleet_toner_cartridges_lists_across_printers(
     assert "id" in by_printer["Fleet Printer A"]
 
 
-def test_fleet_toner_cartridges_excludes_archived_printers(
-    client, auth_headers, mock_failed_probe
-):
+def test_fleet_toner_cartridges_excludes_archived_printers(client, auth_headers, mock_failed_probe):
     printer_id = client.post(
         "/api/v1/printers",
         headers=auth_headers,
@@ -1532,9 +1524,7 @@ def test_bulk_update_toner_cartridges_applies_across_printers(
     response = client.patch(
         "/api/v1/printers/toner-cartridges/bulk",
         headers=auth_headers,
-        json=[
-            {"id": cid, "cost": 42.5, "yield_pages": 5000, "model": "Shared 054"} for cid in ids
-        ],
+        json=[{"id": cid, "cost": 42.5, "yield_pages": 5000, "model": "Shared 054"} for cid in ids],
     )
     assert response.status_code == 200
     assert all(row["cost"] == 42.5 and row["yield_pages"] == 5000 for row in response.json())
@@ -1713,9 +1703,7 @@ def test_release_bypass_rejects_virtual_printer(client, auth_headers):
     assert response.status_code == 400
 
 
-def test_create_virtual_queue_does_not_call_capability_discovery(
-    client, auth_headers, monkeypatch
-):
+def test_create_virtual_queue_does_not_call_capability_discovery(client, auth_headers, monkeypatch):
     called = False
 
     async def fake_refresh(printer):

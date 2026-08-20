@@ -451,9 +451,7 @@ async def test_bare_username_alias_resolves_without_any_mac_lookup(db_session_fa
     alias (app/routers/attribution_aliases.py)."""
     async with db_session_factory() as db:
         db.add(
-            AttributionAlias(
-                alias="matt", resolved_email="manderson@example.com", source="manual"
-            )
+            AttributionAlias(alias="matt", resolved_email="manderson@example.com", source="manual")
         )
         await db.commit()
         user, method, mac = await resolve_user(db, "matt", None)
@@ -507,9 +505,7 @@ async def test_device_override_still_wins_over_username_alias(db_session_factory
             )
         )
         db.add(
-            AttributionAlias(
-                alias="matt", resolved_email="manderson@example.com", source="manual"
-            )
+            AttributionAlias(alias="matt", resolved_email="manderson@example.com", source="manual")
         )
         await db.commit()
         user, method, mac = await resolve_user(db, "matt", "10.0.0.5")

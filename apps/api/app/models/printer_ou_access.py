@@ -23,9 +23,7 @@ class PrinterAllowedOu(Base, TimestampMixin):
     prefix-matching already used for OU-Viewer report scoping)."""
 
     __tablename__ = "printer_allowed_ous"
-    __table_args__ = (
-        UniqueConstraint("printer_id", "ou_path", name="uq_printer_allowed_ou_path"),
-    )
+    __table_args__ = (UniqueConstraint("printer_id", "ou_path", name="uq_printer_allowed_ou_path"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     printer_id: Mapped[uuid.UUID] = mapped_column(
