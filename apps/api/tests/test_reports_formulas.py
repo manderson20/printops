@@ -5,6 +5,7 @@ from app.reports.formulas import (
     FormulaValues,
     compute_environmental_impact,
     compute_printer_rate,
+    copy_cost,
     job_cost,
 )
 
@@ -142,3 +143,93 @@ def test_job_cost_duplex_halves_sheets():
     )
     assert result.sheets == 5
     assert result.paper_cost == 5.0
+
+
+# --- copy_cost -------------------------------------------------------------
+#
+# A copy row is a counter delta covering many copies, not one job, so it
+# carries a colour *split* rather than a single colour mode — both rates
+# apply to the same row.
+
+
+def test_copy_cost_prices_the_colour_split_at_both_rates():
+    rate = compute_printer_rate(
+        [
+            FakeCartridge("black", cost=20.0, yield_pages=1000),  # $0.02
+            FakeCartridge("cyan", cost=40.0, yield_pages=2000),  # $0.02
+            FakeCartridge("magenta", cost=40.0, yield_pages=2000),
+            FakeCartridge("yellow", cost=40.0, yield_pages=2000),
+        ],
+        _formulas(),
+    )  # colour = $0.08/page
+    result = copy_cost(
+        page_count=30,
+        color_page_count=10,
+        monochrome_page_count=20,
+        duplex=None,
+        rate=rate,
+        cost_per_sheet_paper=0.0,
+    )
+    assert round(result.toner_cost, 4) == round(10 * 0.08 + 20 * 0.02, 4)
+
+
+def test_copy_cost_prices_an_unsplit_total_at_the_mono_rate():
+    """An SNMP copy meter reports a total and no colour breakdown at all
+    (app/copiers/device_owner.py). Charging the colour rate for pages the
+    device never called colour would invent the more expensive answer."""
+    rate = compute_printer_rate([FakeCartridge("black", cost=20.0, yield_pages=1000)], _formulas())
+    result = copy_cost(
+        page_count=100,
+        color_page_count=None,
+        monochrome_page_count=None,
+        duplex=None,
+        rate=rate,
+        cost_per_sheet_paper=0.0,
+    )
+    assert round(result.toner_cost, 4) == round(100 * 0.02, 4)
+
+
+def test_copy_cost_prices_the_remainder_of_a_partial_split_at_the_mono_rate():
+    rate = compute_printer_rate([FakeCartridge("black", cost=20.0, yield_pages=1000)], _formulas())
+    result = copy_cost(
+        page_count=100,
+        color_page_count=10,
+        monochrome_page_count=None,
+        duplex=None,
+        rate=rate,
+        cost_per_sheet_paper=0.0,
+    )
+    # 10 colour at the fallback colour rate, the other 90 at mono.
+    assert round(result.toner_cost, 4) == round(10 * 0.10 + 90 * 0.02, 4)
+
+
+def test_copy_cost_never_lets_a_split_exceed_the_reported_total():
+    """A device that reports a breakdown adding up to more than its own
+    total must not produce a negative remainder that discounts the row."""
+    rate = compute_printer_rate([], _formulas(cost_per_page_mono=1.0, cost_per_page_color=1.0))
+    result = copy_cost(
+        page_count=10,
+        color_page_count=8,
+        monochrome_page_count=8,
+        duplex=None,
+        rate=rate,
+        cost_per_sheet_paper=0.0,
+    )
+    assert result.toner_cost == 16.0
+
+
+def test_copy_cost_treats_unknown_duplex_as_simplex_for_paper():
+    """Konica's per-account CopyCounterList has no duplex counter, so
+    duplex is null on every counter-derived row. Over-stating the cheaper
+    half of the cost beats inventing a duplex rate."""
+    rate = compute_printer_rate([], _formulas(cost_per_page_mono=0.0))
+    result = copy_cost(
+        page_count=10,
+        color_page_count=None,
+        monochrome_page_count=10,
+        duplex=None,
+        rate=rate,
+        cost_per_sheet_paper=1.0,
+    )
+    assert result.sheets == 10
+    assert result.paper_cost == 10.0

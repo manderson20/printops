@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.copiers.account_counters import poll_account_counters
 from app.copiers.connector import CapabilityNotSupported, ConnectionTestResult, refresh_device_meter
 from app.copiers.device_admin import DeviceCredentialsMissing
+from app.copiers.device_owner import attribute_device_copies
 from app.copiers.konica_admin import KonicaAdminBusy, KonicaAdminError
 from app.copiers.provisioning import build_provisioning_plan
 from app.copiers.registry import CONNECTOR_REGISTRY, get_connector
@@ -23,6 +24,7 @@ from app.schemas.copier_usage import CopierUsageRecordOut
 from app.schemas.mfp_device import (
     ConnectorTypeOut,
     CounterPollOut,
+    DefaultOwnerAttributionOut,
     DeviceUserOut,
     MfpDeviceCreate,
     MfpDeviceOut,
@@ -104,6 +106,8 @@ def _device_out(device: MfpDevice) -> MfpDeviceOut:
         last_counter_poll_at=device.last_counter_poll_at,
         last_counter_poll_ok=device.last_counter_poll_ok,
         last_counter_poll_message=device.last_counter_poll_message,
+        default_owner_email=device.default_owner_email,
+        default_owner_attributed_through=device.default_owner_attributed_through,
         page_count_total=device.page_count_total,
         page_count_copy=device.page_count_copy,
         page_count_print=device.page_count_print,
@@ -202,9 +206,21 @@ async def update_mfp_device(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Unknown connector_type: {updates['connector_type']!r}",
             )
-    for field in ("snmp_version", "snmp_vendor_profile"):
+    for field in ("snmp_version", "snmp_vendor_profile", "default_owner_email"):
         if field in updates:
             updates[field] = updates[field] or None
+
+    # Naming a different owner restarts the meter watermark, so the new
+    # owner is credited only with copies made from here on. Without this
+    # they would inherit every page metered since the *previous* owner was
+    # named — someone else's copying, under their name, in a report that
+    # feeds cost. Clearing the owner resets it too, so re-naming the same
+    # person later doesn't silently hand them the unattributed gap.
+    if "default_owner_email" in updates and updates["default_owner_email"] != (
+        device.default_owner_email
+    ):
+        device.default_owner_attributed_through = None
+
     for field, value in updates.items():
         setattr(device, field, value)
 
@@ -369,6 +385,30 @@ async def sync_device_users(
     device = await _get_device_or_404(device_id, db)
     job = await start_sync_job(db, device, trigger="rewrite" if rewrite else "manual")
     return _job_out(job)
+
+
+@router.post("/{device_id}/attribute-copies", response_model=DefaultOwnerAttributionOut)
+async def attribute_device_copies_now(device_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Credit the device's owner with the copies metered since last time.
+
+    Contacts nothing — it diffs SNMP counter readings the poller has
+    already recorded (app/copiers/device_owner.py), so it is safe to press
+    repeatedly and returns instantly. Runs hourly by itself; this is here
+    so an admin can see it work rather than wait to find out whether it
+    did."""
+    device = await _get_device_or_404(device_id, db)
+    result = await attribute_device_copies(db, device)
+    await db.commit()
+    await db.refresh(device)
+    return DefaultOwnerAttributionOut(
+        attributed_pages=result.attributed_pages,
+        usage_rows=result.usage_rows,
+        baselined=result.baselined,
+        meter_reset=result.meter_reset,
+        skipped_reason=result.skipped_reason,
+        message=result.message,
+        attributed_through=device.default_owner_attributed_through,
+    )
 
 
 @router.post("/{device_id}/poll-counters", response_model=CounterPollOut)

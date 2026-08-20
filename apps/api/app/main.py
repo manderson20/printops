@@ -11,6 +11,7 @@ from jwt import PyJWTError
 from sqlalchemy import delete, select
 
 from app.copiers.account_counters import poll_account_counters
+from app.copiers.device_owner import attribute_device_copies
 from app.copiers.sync_jobs import create_sync_job, run_sync_job
 from app.core.config import get_settings
 from app.core.security import decode_access_token
@@ -471,6 +472,34 @@ async def _copier_counter_poll_loop() -> None:
                         device.last_counter_poll_ok = False
                         device.last_counter_poll_message = str(exc)
                         await db.commit()
+
+                # Copiers nobody logs in to, whose whole meter belongs to
+                # one named person (app/copiers/device_owner.py). A
+                # separate pass over a different set of devices — these
+                # typically have auto_poll_counters off, because there are
+                # no per-account counters on them to poll. It runs here
+                # rather than in its own loop because it costs nothing to
+                # run: no device is contacted at all, it only diffs SNMP
+                # readings the counter loop already recorded.
+                owned = (
+                    (
+                        await db.execute(
+                            select(MfpDevice).where(MfpDevice.default_owner_email.is_not(None))
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for device in owned:
+                    try:
+                        result = await attribute_device_copies(db, device)
+                        if result.usage_rows or result.baselined:
+                            logger.info(
+                                "Default-owner attribution for %s: %s", device.name, result.message
+                            )
+                    except Exception:
+                        logger.exception("Default-owner attribution failed for %s", device.name)
+                await db.commit()
         except Exception:
             logger.exception("Unexpected error in copier counter poll loop")
         await asyncio.sleep(COPIER_COUNTER_POLL_INTERVAL_SECONDS)

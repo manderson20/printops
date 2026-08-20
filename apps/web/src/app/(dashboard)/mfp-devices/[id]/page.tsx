@@ -5,12 +5,14 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   ApiError,
+  attributeMfpDeviceCopies,
   checkMfpDeviceCapabilities,
   checkMfpDeviceMeter,
   deleteMfpDevice,
   getMfpDevice,
   listConnectorTypes,
   listGoogleWorkspaceOrgUnits,
+  listGoogleWorkspaceUsers,
   getLatestMfpSyncJob,
   listMfpDeviceAccounts,
   listMfpDeviceUsage,
@@ -23,11 +25,13 @@ import {
   type ConnectorTypeOption,
   type CopierUsageRecord,
   type CounterPollResult,
+  type DefaultOwnerAttributionResult,
   type DeviceCapabilities,
   type MfpDevice,
   type DeviceUser,
   type ProvisionedAccount,
   type ProvisioningPreview,
+  type GoogleWorkspaceUserEntry,
   type SyncJob,
 } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
@@ -115,6 +119,12 @@ export default function MfpDeviceDetailPage() {
   const [pollResult, setPollResult] = useState<CounterPollResult | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
   const [owners, setOwners] = useState<ProvisionedAccount[] | null>(null);
+  // Whole-device attribution: one named person owns every copy this
+  // machine makes, for a desk copier nobody logs in to.
+  const [defaultOwnerEmail, setDefaultOwnerEmail] = useState("");
+  const [attributing, setAttributing] = useState(false);
+  const [attribution, setAttribution] = useState<DefaultOwnerAttributionResult | null>(null);
+  const [staffOptions, setStaffOptions] = useState<GoogleWorkspaceUserEntry[]>([]);
 
   useEffect(() => {
     getMfpDevice(params.id)
@@ -130,6 +140,7 @@ export default function MfpDeviceDetailPage() {
         setAdminUsername(device.admin_username ?? "");
         setAutoSyncUsers(device.auto_sync_users);
         setAutoPollCounters(device.auto_poll_counters);
+        setDefaultOwnerEmail(device.default_owner_email ?? "");
       })
       .catch((error: unknown) =>
         setState({
@@ -154,6 +165,11 @@ export default function MfpDeviceDetailPage() {
     listMfpProvisionedAccounts(params.id)
       .then(setOwners)
       .catch(() => setOwners(null));
+    // Roster for the owner picker. Best-effort: the field stays a plain
+    // email input if Workspace isn't synced, rather than blocking on it.
+    listGoogleWorkspaceUsers()
+      .then(setStaffOptions)
+      .catch(() => setStaffOptions([]));
   }, [params.id]);
 
   async function handleSave() {
@@ -169,6 +185,8 @@ export default function MfpDeviceDetailPage() {
         admin_username: adminUsername || null,
         auto_sync_users: autoSyncUsers,
         auto_poll_counters: autoPollCounters,
+        // Empty string clears it; the API maps that to null.
+        default_owner_email: defaultOwnerEmail.trim(),
         // Only sent when retyped; omitting it leaves the stored password
         // alone, same as the SNMP community field elsewhere.
         ...(adminPassword ? { admin_password: adminPassword } : {}),
@@ -265,6 +283,26 @@ export default function MfpDeviceDetailPage() {
       setPollError(err instanceof ApiError ? err.message : "Failed to read the copier's counters");
     } finally {
       setPollingCounters(false);
+    }
+  }
+
+  async function handleAttributeCopies() {
+    setAttributing(true);
+    setActionError(null);
+    try {
+      setAttribution(await attributeMfpDeviceCopies(params.id));
+      // The run may have written usage rows and moved the watermark, both
+      // of which are shown on this page.
+      listMfpDeviceUsage(params.id, 20).then(setUsage).catch(() => {});
+      getMfpDevice(params.id)
+        .then((d) => setState({ phase: "ok", device: d }))
+        .catch(() => {});
+    } catch (err) {
+      setActionError(
+        err instanceof ApiError ? err.message : "Failed to attribute this copier's copies",
+      );
+    } finally {
+      setAttributing(false);
     }
   }
 
@@ -756,16 +794,111 @@ export default function MfpDeviceDetailPage() {
                 Every hour. This only reads — it never changes anything on the copier. The
                 interval is also how precisely a copy can be dated, since the counters carry no
                 timestamps: all PrintOps can say is that the pages happened between two reads.
-                Remember to Save.
               </span>
             </span>
           </label>
+
+          <Button onClick={handleSave} disabled={saving} className="mt-4">
+            {saving ? "Saving…" : "Save"}
+          </Button>
 
           {device.last_counter_poll_at && (
             <p className="mt-3 text-xs text-zinc-500">
               Last read {formatRelativeTime(device.last_counter_poll_at)}
               {device.last_counter_poll_ok === false && " — failed"}
               {device.last_counter_poll_message && `: ${device.last_counter_poll_message}`}
+            </p>
+          )}
+        </Card>
+      )}
+
+      {isAdmin && (
+        <Card>
+          <CardTitle className="mb-1">Whole-Device Copy Owner</CardTitle>
+          <p className="mb-4 text-xs text-zinc-500">
+            For a desk copier with one regular user and no per-user accounting —
+            nobody logs in, so there is no code to match a person to. Naming an
+            owner credits them with every copy the machine&apos;s own meter
+            records from that moment on.
+          </p>
+
+          <Field label="Owner">
+            <Input
+              list="staff-owner-options"
+              value={defaultOwnerEmail}
+              placeholder="nobody — copies on this device belong to no one"
+              onChange={(e) => setDefaultOwnerEmail(e.target.value)}
+            />
+          </Field>
+          <datalist id="staff-owner-options">
+            {staffOptions.map((person) => (
+              <option key={person.email} value={person.email}>
+                {person.name ?? person.email}
+              </option>
+            ))}
+          </datalist>
+
+          <p className="mt-2 text-xs text-zinc-500">
+            Counting starts when you save, never from the meter&apos;s lifetime
+            total — nobody is handed the copies made before they were named.
+            Changing the owner restarts it for the same reason.
+          </p>
+
+          {/* The two conditions the feature actually depends on, stated up
+              front rather than discovered as a "nothing happened" later. */}
+          {!device.printer_id && (
+            <p className="mt-3 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+              This copier isn&apos;t linked to a printer, so PrintOps has no
+              meter to read. Link it on the printer&apos;s page first.
+            </p>
+          )}
+          {device.printer_id &&
+            device.page_count_confidence !== null &&
+            device.page_count_confidence !== "verified" &&
+            device.page_count_confidence !== "best_effort" && (
+              <p className="mt-3 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                This device&apos;s meter reports one combined page total rather
+                than a separate copy counter, so its copies can&apos;t be
+                measured — only estimated, which the Untracked Copy Activity
+                report already does org-wide.
+              </p>
+            )}
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={handleAttributeCopies}
+              disabled={attributing || !device.default_owner_email}
+            >
+              {attributing ? "Attributing…" : "Attribute copies now"}
+            </Button>
+          </div>
+
+          {attribution && (
+            <p
+              className={`mt-3 text-xs ${
+                attribution.skipped_reason
+                  ? "text-amber-700 dark:text-amber-500"
+                  : "text-zinc-500"
+              }`}
+            >
+              {attribution.message}
+            </p>
+          )}
+
+          {device.default_owner_email && device.default_owner_attributed_through && (
+            <p className="mt-1 text-xs text-zinc-500">
+              Copies counted through{" "}
+              {formatRelativeTime(device.default_owner_attributed_through)}.
+            </p>
+          )}
+          {device.default_owner_email && !device.default_owner_attributed_through && (
+            <p className="mt-1 text-xs text-zinc-500">
+              Nothing counted yet — the first run records where the meter stands
+              now, and counts from there.
             </p>
           )}
         </Card>

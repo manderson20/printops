@@ -24,6 +24,7 @@ from app.integrations.google_workspace import org_unit_matches
 from app.models.copier_usage import CopierUsageRecord
 from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceUser
 from app.models.job import Job
+from app.models.mfp_device import MfpDevice
 from app.models.mosyle import MosyleDevice
 from app.models.printer import Printer
 
@@ -517,29 +518,116 @@ def _apply_copier_filters(stmt: Select, filters: ReportFilters) -> Select:
 class CopyTotals:
     copy_record_count: int = 0
     copy_pages: int = 0
+    # Of those copy pages, the ones the device broke out by colour. Both
+    # can be 0 on a real row with pages: a device-level meter reports a
+    # copy total and no colour split at all (app/copiers/device_owner.py),
+    # so copy_pages is the total and these two are what is *known* about
+    # it, never a second way of computing the same number.
+    copy_color_pages: int = 0
+    copy_mono_pages: int = 0
+    # Walk-up activity that is not copying. Kept out of copy_pages rather
+    # than pooled with it: a scan puts no toner on paper and costs
+    # nothing to price, so folding it into "copied pages" both overstates
+    # the page count and would charge for it.
+    scan_pages: int = 0
+    fax_pages: int = 0
 
 
 async def get_copier_usage_totals(
     db: AsyncSession, filters: ReportFilters
 ) -> dict[str, CopyTotals]:
-    """staff_email -> aggregated copy totals — the copier-side mirror of
+    """staff_email -> aggregated walk-up totals — the copier-side mirror of
     get_user_leaderboard, over CopierUsageRecord instead of Job. Excludes
     unmapped rows (staff_email is null) entirely; see
     get_unmapped_copier_activity_count for surfacing those separately
-    rather than silently dropping them from the report."""
+    rather than silently dropping them from the report.
+
+    Split by activity_type, so copy_pages means copies. Everything here
+    used to be summed together under that name, which counted a scan as a
+    copied page — harmless while the only connector was a CSV import, and
+    wrong once these numbers carry a cost."""
+    pages = func.coalesce(CopierUsageRecord.page_count, 0)
+    is_copy = CopierUsageRecord.activity_type == "copy"
     stmt = _apply_copier_filters(
         select(
             CopierUsageRecord.staff_email,
-            func.count(CopierUsageRecord.id),
-            func.sum(func.coalesce(CopierUsageRecord.page_count, 0)),
+            func.count(CopierUsageRecord.id).filter(is_copy),
+            func.sum(pages).filter(is_copy),
+            func.sum(func.coalesce(CopierUsageRecord.color_page_count, 0)).filter(is_copy),
+            func.sum(func.coalesce(CopierUsageRecord.monochrome_page_count, 0)).filter(is_copy),
+            func.sum(pages).filter(CopierUsageRecord.activity_type == "scan"),
+            func.sum(pages).filter(CopierUsageRecord.activity_type == "fax"),
         ).where(CopierUsageRecord.staff_email.is_not(None)),
         filters,
     ).group_by(CopierUsageRecord.staff_email)
     rows = (await db.execute(stmt)).all()
     return {
-        email: CopyTotals(copy_record_count=count, copy_pages=pages or 0)
-        for email, count, pages in rows
+        email: CopyTotals(
+            copy_record_count=count or 0,
+            copy_pages=copy_pages or 0,
+            copy_color_pages=color or 0,
+            copy_mono_pages=mono or 0,
+            scan_pages=scan or 0,
+            fax_pages=fax or 0,
+        )
+        for email, count, copy_pages, color, mono, scan, fax in rows
     }
+
+
+@dataclass
+class CopyCostRawRow:
+    """One copier usage row's worth of the fields needed to price it.
+
+    printer_id comes from the copier's linked Printer — that is where the
+    cartridges live, and pricing a copy off the same cartridges as a print
+    on the same machine is the whole point (app/reports/formulas.py:
+    copy_cost). It is nullable because an MfpDevice is not required to be
+    linked to one, in which case the flat admin-set rates apply."""
+
+    device_id: UUID
+    device_name: str
+    printer_id: UUID | None
+    staff_email: str | None
+    page_count: int
+    color_page_count: int | None
+    monochrome_page_count: int | None
+    duplex: bool | None
+
+
+async def get_copy_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[CopyCostRawRow]:
+    """Copy rows to be priced, joined to the device that made them.
+
+    Copies only — scans and faxes consume no toner or paper and are
+    reported separately (see CopyTotals). Same division of labour as
+    get_cost_raw_rows: this module queries, app/reports/formulas.py
+    prices, and the router layer supplies the admin-configured rates."""
+    stmt = _apply_copier_filters(
+        select(
+            CopierUsageRecord.mfp_device_id,
+            MfpDevice.name,
+            MfpDevice.printer_id,
+            CopierUsageRecord.staff_email,
+            CopierUsageRecord.page_count,
+            CopierUsageRecord.color_page_count,
+            CopierUsageRecord.monochrome_page_count,
+            CopierUsageRecord.duplex,
+        ).where(CopierUsageRecord.activity_type == "copy"),
+        filters,
+    ).join(MfpDevice, MfpDevice.id == CopierUsageRecord.mfp_device_id)
+    rows = (await db.execute(stmt)).all()
+    return [
+        CopyCostRawRow(
+            device_id=r.mfp_device_id,
+            device_name=r.name,
+            printer_id=r.printer_id,
+            staff_email=r.staff_email,
+            page_count=r.page_count or 0,
+            color_page_count=r.color_page_count,
+            monochrome_page_count=r.monochrome_page_count,
+            duplex=r.duplex,
+        )
+        for r in rows
+    ]
 
 
 async def get_unmapped_copier_activity_count(db: AsyncSession, filters: ReportFilters) -> int:
@@ -555,9 +643,69 @@ async def get_unmapped_copier_activity_count(db: AsyncSession, filters: ReportFi
 
 
 @dataclass
+class CopierActivityByDevice:
+    """One copier's walk-up activity in the filtered window, split by what
+    the person actually did there."""
+
+    device_id: UUID
+    device_name: str
+    copy_pages: int = 0
+    scan_pages: int = 0
+    fax_pages: int = 0
+    # True when any row here was attributed by an admin naming the device's
+    # owner rather than by someone identifying themselves at the glass
+    # (app/copiers/device_owner.py). Surfaced so a per-person report never
+    # presents an admin's standing assertion as if it were measurement of
+    # who was standing there.
+    from_default_owner: bool = False
+
+
+async def get_copier_activity_by_device(
+    db: AsyncSession, filters: ReportFilters
+) -> list[CopierActivityByDevice]:
+    """Per-device walk-up activity for the filtered window — scoped to one
+    person by setting ReportFilters.submitted_by, which _apply_copier_filters
+    maps onto staff_email."""
+    pages = func.coalesce(CopierUsageRecord.page_count, 0)
+    stmt = (
+        _apply_copier_filters(
+            select(
+                CopierUsageRecord.mfp_device_id,
+                MfpDevice.name,
+                func.sum(pages).filter(CopierUsageRecord.activity_type == "copy"),
+                func.sum(pages).filter(CopierUsageRecord.activity_type == "scan"),
+                func.sum(pages).filter(CopierUsageRecord.activity_type == "fax"),
+                func.count(CopierUsageRecord.id).filter(
+                    CopierUsageRecord.source_connector == "device_default_owner"
+                ),
+            ),
+            filters,
+        )
+        .join(MfpDevice, MfpDevice.id == CopierUsageRecord.mfp_device_id)
+        .group_by(CopierUsageRecord.mfp_device_id, MfpDevice.name)
+    )
+    return [
+        CopierActivityByDevice(
+            device_id=r[0],
+            device_name=r[1],
+            copy_pages=r[2] or 0,
+            scan_pages=r[3] or 0,
+            fax_pages=r[4] or 0,
+            from_default_owner=bool(r[5]),
+        )
+        for r in (await db.execute(stmt)).all()
+    ]
+
+
+@dataclass
 class CombinedSummary:
     print_pages: int = 0
     copy_pages: int = 0
+    # Scanning and faxing are reported beside copying, not inside it —
+    # they produce no printed page, so total_pages would be measuring two
+    # different things at once if they were added in. See CopyTotals.
+    scan_pages: int = 0
+    fax_pages: int = 0
     total_pages: int = 0
     unmapped_copy_activity_count: int = 0
 
@@ -570,6 +718,8 @@ async def get_combined_summary(db: AsyncSession, filters: ReportFilters) -> Comb
     return CombinedSummary(
         print_pages=print_summary.total_pages,
         copy_pages=copy_pages,
+        scan_pages=sum(t.scan_pages for t in copy_totals.values()),
+        fax_pages=sum(t.fax_pages for t in copy_totals.values()),
         total_pages=print_summary.total_pages + copy_pages,
         unmapped_copy_activity_count=unmapped_count,
     )
@@ -582,16 +732,30 @@ class CombinedLeaderboardEntry:
     print_pages: int = 0
     copy_pages: int = 0
     total_pages: int = 0
+    # Print-side breakdown. A copy has no single colour_mode or duplex
+    # flag of its own — it arrives as a counter delta covering many
+    # copies — so these stay print-only and the copy side gets its own
+    # colour split below rather than being merged into a column that
+    # would then mean two different things.
     color_pages: int = 0
     mono_pages: int = 0
     duplex_pages: int = 0
     simplex_pages: int = 0
-    # Print-only — walk-up copy usage has no cost model (see
-    # get_copier_usage_totals). Left at 0.0 here; the combined-leaderboard
-    # router endpoint fills this in from the same cost accumulator
-    # report_cost_breakdown uses (app/routers/reports.py), since that
-    # depends on admin-configured formula settings this module doesn't
-    # have access to.
+    # Copy-side breakdown. These need not add up to copy_pages: a device
+    # meter that reports a copy total with no colour split leaves both at
+    # zero (app/copiers/device_owner.py), which is a gap in what the
+    # device says, not pages going missing.
+    copy_color_pages: int = 0
+    copy_mono_pages: int = 0
+    scan_pages: int = 0
+    fax_pages: int = 0
+    # Filled in by the combined-leaderboard router endpoint rather than
+    # here, since pricing depends on admin-configured formula settings
+    # this module deliberately has no access to (app/routers/reports.py).
+    # Split three ways because "why is my number that big" is almost
+    # always answered by which half it came from.
+    print_cost: float = 0.0
+    copy_cost: float = 0.0
     estimated_cost: float = 0.0
 
 
@@ -689,6 +853,10 @@ async def get_combined_user_leaderboard(
     for email, copy_entry in copy_totals.items():
         entry = merged.setdefault(email, CombinedLeaderboardEntry(key=email, label=email))
         entry.copy_pages = copy_entry.copy_pages
+        entry.copy_color_pages = copy_entry.copy_color_pages
+        entry.copy_mono_pages = copy_entry.copy_mono_pages
+        entry.scan_pages = copy_entry.scan_pages
+        entry.fax_pages = copy_entry.fax_pages
         entry.total_pages += copy_entry.copy_pages
 
     display_names = await resolve_display_names(db, set(merged.keys()))

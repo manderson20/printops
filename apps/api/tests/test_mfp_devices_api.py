@@ -262,3 +262,96 @@ def test_provision_org_unit_paths_round_trip(client, auth_headers):
         json={"provision_org_unit_paths": None},
     )
     assert cleared.json()["provision_org_unit_paths"] is None
+
+
+# --- Default copy owner -----------------------------------------------------
+
+
+def _device(client, auth_headers, **overrides):
+    payload = {"name": "IT Color Copier", "connector_type": "canon_department_id"}
+    payload.update(overrides)
+    return client.post("/api/v1/mfp-devices", headers=auth_headers, json=payload).json()
+
+
+def test_naming_a_default_owner_starts_them_at_zero(client, auth_headers):
+    """The watermark stays null until an attribution run stamps it, which
+    is what makes the first run a baseline rather than a bill for the
+    device's whole lifetime."""
+    device_id = _device(client, auth_headers)["id"]
+
+    updated = client.patch(
+        f"/api/v1/mfp-devices/{device_id}",
+        headers=auth_headers,
+        json={"default_owner_email": "manderson@brookfieldr3.org"},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["default_owner_email"] == "manderson@brookfieldr3.org"
+    assert updated.json()["default_owner_attributed_through"] is None
+
+
+def test_changing_the_owner_does_not_hand_the_new_one_the_old_one_s_pages(
+    client, auth_headers, db_session_factory
+):
+    import uuid as _uuid
+    from datetime import UTC, datetime
+
+    from app.models.mfp_device import MfpDevice
+
+    device_id = _device(client, auth_headers)["id"]
+    client.patch(
+        f"/api/v1/mfp-devices/{device_id}",
+        headers=auth_headers,
+        json={"default_owner_email": "first.owner@district.org"},
+    )
+
+    async def _stamp():
+        async with db_session_factory() as session:
+            device = await session.get(MfpDevice, _uuid.UUID(device_id))
+            device.default_owner_attributed_through = datetime.now(UTC)
+            await session.commit()
+
+    import asyncio
+
+    asyncio.get_event_loop().run_until_complete(_stamp())
+
+    updated = client.patch(
+        f"/api/v1/mfp-devices/{device_id}",
+        headers=auth_headers,
+        json={"default_owner_email": "second.owner@district.org"},
+    )
+    # Reset — the new owner is credited only from here on, not with every
+    # page metered since the previous owner was named.
+    assert updated.json()["default_owner_attributed_through"] is None
+
+
+def test_clearing_the_owner_empties_the_field_rather_than_storing_a_blank(client, auth_headers):
+    device_id = _device(client, auth_headers)["id"]
+    client.patch(
+        f"/api/v1/mfp-devices/{device_id}",
+        headers=auth_headers,
+        json={"default_owner_email": "manderson@brookfieldr3.org"},
+    )
+
+    cleared = client.patch(
+        f"/api/v1/mfp-devices/{device_id}",
+        headers=auth_headers,
+        json={"default_owner_email": ""},
+    )
+    assert cleared.json()["default_owner_email"] is None
+
+
+def test_attribute_copies_on_an_unlinked_copier_explains_itself(client, auth_headers):
+    device_id = _device(client, auth_headers)["id"]
+    client.patch(
+        f"/api/v1/mfp-devices/{device_id}",
+        headers=auth_headers,
+        json={"default_owner_email": "manderson@brookfieldr3.org"},
+    )
+
+    response = client.post(
+        f"/api/v1/mfp-devices/{device_id}/attribute-copies", headers=auth_headers
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["usage_rows"] == 0
+    assert "isn't linked to a printer" in body["skipped_reason"]

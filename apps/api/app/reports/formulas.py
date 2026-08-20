@@ -152,3 +152,57 @@ def job_cost(
         paper_cost=paper_cost,
         total_cost=toner_cost + paper_cost,
     )
+
+
+def copy_cost(
+    page_count: int,
+    color_page_count: int | None,
+    monochrome_page_count: int | None,
+    duplex: bool | None,
+    rate: PrinterTonerRate,
+    cost_per_sheet_paper: float,
+) -> JobCost:
+    """Real cost for one copier usage row, at the same rates as printing.
+
+    Deliberately the same PrinterTonerRate a print job is priced with —
+    it is the same machine consuming the same cartridges, so a page
+    costing one amount when it comes off the print server and a different
+    amount when someone stands at the glass would be an artefact of how
+    PrintOps learned about it, not a real difference in cost.
+
+    Where this differs from job_cost is what the device tells us. A copy
+    row carries a colour/mono *split* rather than one colour_mode, since
+    it is a counter delta covering many copies rather than a single job —
+    so both rates apply to the same row. And pages the split doesn't
+    account for (the device reported a total but no breakdown, which is
+    every row from app/copiers/device_owner.py) are priced at the mono
+    rate, the same conservative rule job_cost applies to a job whose
+    colour mode nobody reported.
+
+    Paper is the weak half and worth being explicit about: a Konica's
+    per-account CopyCounterList has no duplex or sheet counter of its own
+    (docs/copier-capture-konica.md §3.9.3 — DuplexTotal exists only as an
+    account-wide figure pooling copies with prints), so `duplex` is null
+    on counter-derived rows and physical_sheets_used treats them as
+    simplex. That over-states paper on a device where people duplex, and
+    over-stating the cheaper half of the cost is the right direction to
+    be wrong in when the alternative is inventing a duplex rate.
+    """
+    color_pages = color_page_count or 0
+    mono_pages = monochrome_page_count or 0
+    # Never let a partial split exceed the total the device reported —
+    # the remainder is what's unaccounted for, not a negative.
+    unpriced_pages = max(page_count - color_pages - mono_pages, 0)
+
+    toner_cost = (
+        color_pages * rate.color_cost_per_page
+        + (mono_pages + unpriced_pages) * rate.mono_cost_per_page
+    )
+    sheets = physical_sheets_used(page_count, duplex)
+    paper_cost = sheets * cost_per_sheet_paper
+    return JobCost(
+        toner_cost=toner_cost,
+        sheets=sheets,
+        paper_cost=paper_cost,
+        total_cost=toner_cost + paper_cost,
+    )

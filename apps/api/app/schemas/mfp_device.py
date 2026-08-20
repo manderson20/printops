@@ -88,6 +88,7 @@ class MfpDeviceCreate(BaseModel):
     provision_org_unit_paths: list[str] | None = None
     auto_sync_users: bool = False
     auto_poll_counters: bool = False
+    default_owner_email: str | None = None
 
     notes: str | None = None
 
@@ -123,6 +124,9 @@ class MfpDeviceUpdate(BaseModel):
     provision_org_unit_paths: list[str] | None = None
     auto_sync_users: bool | None = None
     auto_poll_counters: bool | None = None
+    # Empty string clears the owner, same convention snmp_version and
+    # snmp_vendor_profile already use on this payload.
+    default_owner_email: str | None = None
 
     # Manual capability overrides — connector-run checks
     # (check-capabilities) also write these fields, but an admin can set
@@ -171,6 +175,8 @@ class MfpDeviceOut(BaseModel):
     last_counter_poll_at: datetime | None
     last_counter_poll_ok: bool | None
     last_counter_poll_message: str | None
+    default_owner_email: str | None
+    default_owner_attributed_through: datetime | None
 
     page_count_total: int | None
     page_count_copy: int | None
@@ -244,6 +250,23 @@ class DeviceUserOut(BaseModel):
     name: str | None
     has_password: bool
     disabled: bool
+
+
+class DefaultOwnerAttributionOut(BaseModel):
+    """What one default-owner attribution run did.
+
+    `baselined` says the run deliberately produced no usage: an owner was
+    just named (so counting starts now) or the printer's meter was
+    replaced. `skipped_reason` says it could not run at all, and is
+    written to be shown to an admin as-is."""
+
+    attributed_pages: int
+    usage_rows: int
+    baselined: bool
+    meter_reset: bool
+    skipped_reason: str | None
+    message: str
+    attributed_through: datetime | None
 
 
 class CounterPollOut(BaseModel):

@@ -5,6 +5,60 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.59.0] - 2026-08-20
+
+Copy accounting goes from "the copiers are configured" to "you can see what
+copying costs, per person, beside their printing".
+
+- **New: copies now cost money in reports.** A copy is priced at the same
+  cartridge rates as a print on the same machine, since it is the same
+  machine and the same toner. The Combined Leaderboard splits **Print $**,
+  **Copy $** and **Total $** rather than showing a print-only figure
+  labelled as the total.
+- **New: click a person to see what their number is made of.** A row on the
+  Combined Leaderboard expands into a full breakdown — every printer they
+  used (jobs, colour/mono, duplex/simplex, sheets, toner, paper, cost) and
+  every copier (copies, colour/mono, scans, faxes, cost). "Open full
+  report" opens the same breakdown on their Usage page, carrying the date
+  range with it so a shared link means the same thing.
+- **New: a copier nobody logs in to can belong to one person.** A desk
+  copier with one regular user has no login and no code to match anyone to,
+  so its copies have until now landed nowhere at all. You can now name its
+  owner, and every copy its own meter records from that moment on is
+  credited to them. Counting starts when you save — never from the meter's
+  lifetime total — so nobody is handed the copies made before they were
+  named, and changing the owner restarts it for the same reason.
+- **Changed: scans and faxes are no longer counted as copied pages.** They
+  were previously summed in with copies. A scan puts no toner on paper, and
+  once these numbers carry a cost, charging for one would be wrong. They
+  are now reported beside copying instead of inside it, so copy totals may
+  read slightly lower than before.
+- **Two honest limits, stated in the interface rather than left to be
+  discovered.** Copiers don't report duplex per copy, so copy paper is
+  counted one sheet per page — an over-estimate wherever people duplex. And
+  a whole-device meter reports a copy total with no colour breakdown, so
+  those pages are priced at the mono rate, which under-states a colour
+  copier. Both are shown on the breakdown that relies on them.
+- **New: staff accounts can be provisioned onto Konica copiers**, by button
+  or on a schedule, with progress shown while it runs and a record of who
+  owns which account number afterwards.
+- **New: per-account copy counts are read straight off the copier.** The
+  device only reports lifetime running totals, so usage is the difference
+  between two reads — which also means the hourly read interval is how
+  precisely a copy can be dated. A first read of a copier records only a
+  starting point and reports no usage, which is said plainly rather than
+  looking like nobody used it. A counter cleared on the device is detected
+  and the pages since the clear are kept rather than lost.
+- **New: Tracked Copy Activity**, the counterpart to Untracked Copy
+  Activity — what the copiers can put a name to, what they can't, and
+  therefore how much of the picture the accounting actually covers. Copies
+  against an account PrintOps didn't create are counted in their own
+  number rather than hidden or rolled into the tracked total.
+- Fixed: background printer queue resyncs could starve the CUPS scheduler,
+  stalling print clients when one flapping printer resynced repeatedly.
+- Fixed: browser autofill could overwrite a copier's stored admin
+  credentials, and the device account list is now paged.
+
 ## [0.58.0] - 2026-08-17
 
 - **Fixed: copy tracking was registering students as staff.** When
