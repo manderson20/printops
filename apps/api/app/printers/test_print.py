@@ -196,12 +196,20 @@ def _resolve_timezone(timezone: str | None) -> tzinfo:
         return UTC
 
 
+def _clock(moment: datetime) -> str:
+    """12-hour with no leading zero. %-I is glibc-only, so the hour is
+    built from the value rather than the format string."""
+    hour = moment.hour % 12 or 12
+    return f"{hour}:{moment:%M %p}"
+
+
 def _stamp(moment: datetime | None, tz: tzinfo) -> str:
     if moment is None:
         return "never"
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
-    return moment.astimezone(tz).strftime("%Y-%m-%d %H:%M %Z")
+    local = moment.astimezone(tz)
+    return f"{local:%b} {local.day}, {local.year}  {_clock(local)} {local:%Z}"
 
 
 def _count(value: int | None) -> str:
@@ -228,9 +236,9 @@ def _pt(points: float) -> int:
 
 def _section(draw: ImageDraw.ImageDraw, y: int, title: str) -> int:
     draw.text((MARGIN, y), title.upper(), font=_font(21, bold=True), fill=ACCENT)
-    y += 30
+    y += 28
     draw.line([(MARGIN, y), (PAGE_W - MARGIN, y)], fill=RULE, width=2)
-    return y + 18
+    return y + 16
 
 
 def _rows(draw: ImageDraw.ImageDraw, y: int, pairs: list[tuple[str, str]], cols: int = 2) -> int:
@@ -240,15 +248,21 @@ def _rows(draw: ImageDraw.ImageDraw, y: int, pairs: list[tuple[str, str]], cols:
     for index, (label, value) in enumerate(pairs):
         col, row = index % cols, index // cols
         x = MARGIN + col * col_w
-        row_y = y + row * 30
+        row_y = y + row * 28
         draw.text((x, row_y), label, font=label_font, fill=MUTED)
         draw.text((x + 132, row_y), value, font=value_font, fill=INK)
     rows = (len(pairs) + cols - 1) // cols
-    return y + rows * 30
+    return y + rows * 28
 
 
 def _wrapped(
-    draw: ImageDraw.ImageDraw, y: int, label: str, value: str, *, mono: bool = False
+    draw: ImageDraw.ImageDraw,
+    y: int,
+    label: str,
+    value: str,
+    *,
+    mono: bool = False,
+    max_lines: int = 1,
 ) -> int:
     """A label with a value that may need more than one line — the media
     and format lists routinely do."""
@@ -265,9 +279,12 @@ def _wrapped(
             lines.append(line)
             line = word
     lines.append(line)
-    for offset, text in enumerate(lines[:3]):
-        draw.text((x, y + offset * 26), text, font=value_font, fill=INK)
-    return y + max(1, len(lines[:3])) * 26
+    kept = lines[:max_lines]
+    if len(lines) > max_lines and kept:
+        kept[-1] = kept[-1].rstrip(", ") + " …"
+    for offset, text in enumerate(kept):
+        draw.text((x, y + offset * 25), text, font=value_font, fill=INK)
+    return y + max(1, len(kept)) * 25
 
 
 def _flags(draw: ImageDraw.ImageDraw, y: int, flags: list[tuple[str, bool]]) -> int:
@@ -285,7 +302,7 @@ def _flags(draw: ImageDraw.ImageDraw, y: int, flags: list[tuple[str, bool]]) -> 
             (x + 22 + 148, row_y), "Yes" if on else "No", font=bold, fill=INK if on else MUTED
         )
     rows = (len(flags) + 2) // 3
-    return y + rows * 30
+    return y + rows * 28
 
 
 def _toner_bars(
@@ -300,7 +317,7 @@ def _toner_bars(
     font, bold = _font(19), _font(19, bold=True)
     bar_x, bar_w = MARGIN + 132, 300
     for index, (colour, percent, checked_at) in enumerate(toner[:4]):
-        row_y = y + index * 30
+        row_y = y + index * 28
         draw.text((MARGIN, row_y), colour.capitalize(), font=font, fill=MUTED)
         draw.rectangle([bar_x, row_y + 5, bar_x + bar_w, row_y + 21], outline=RULE, width=1)
         if percent is not None:
@@ -320,7 +337,7 @@ def _toner_bars(
         else:
             label, colour_of = "not reported", MUTED
         draw.text((bar_x + bar_w + 16, row_y), label, font=bold, fill=colour_of)
-    return y + max(1, len(toner[:4])) * 30
+    return y + max(1, len(toner[:4])) * 28
 
 
 def _quality_targets(draw: ImageDraw.ImageDraw, y: int, colour_device: bool) -> int:
@@ -340,9 +357,9 @@ def _quality_targets(draw: ImageDraw.ImageDraw, y: int, colour_device: bool) -> 
         patch_w = CONTENT_W // len(patches)
         for index, (name, rgb) in enumerate(patches):
             x = MARGIN + index * patch_w
-            draw.rectangle([x, y, x + patch_w - 10, y + 62], fill=rgb)
-            draw.text((x, y + 68), name, font=label_font, fill=MUTED)
-        y += 96
+            draw.rectangle([x, y, x + patch_w - 10, y + 54], fill=rgb)
+            draw.text((x, y + 60), name, font=label_font, fill=MUTED)
+        y += 86
 
     # Greyscale ramp: the single most useful target for spotting a failing
     # drum or a mis-set density — the steps should be evenly separated and
@@ -353,10 +370,10 @@ def _quality_targets(draw: ImageDraw.ImageDraw, y: int, colour_device: bool) -> 
         shade = 255 - round(index * 255 / (steps - 1))
         x = MARGIN + index * step_w
         draw.rectangle(
-            [x, y, x + step_w - 6, y + 46], fill=(shade, shade, shade), outline=RULE, width=1
+            [x, y, x + step_w - 6, y + 40], fill=(shade, shade, shade), outline=RULE, width=1
         )
-        draw.text((x, y + 52), f"{index * 10}%", font=label_font, fill=MUTED)
-    y += 82
+        draw.text((x, y + 46), f"{index * 10}%", font=label_font, fill=MUTED)
+    y += 74
 
     # Hairlines at known widths, horizontal and vertical, so a resolution
     # or registration problem shows up as lines that merge or break.
@@ -379,32 +396,42 @@ def _quality_targets(draw: ImageDraw.ImageDraw, y: int, colour_device: bool) -> 
             font=_font(_pt(points)),
             fill=INK,
         )
-        text_y += _pt(points) + 8
+        text_y += _pt(points) + 6
     return max(line_y, text_y) + 6
 
 
-def _checklist(draw: ImageDraw.ImageDraw, y: int, colour_device: bool) -> int:
+def _checklist(draw: ImageDraw.ImageDraw, y: int, footer_y: int, colour_device: bool) -> int:
     """What the targets above are actually for. Without this the patches
     and ramps are decoration — an admin holding the sheet at the device
-    needs to know what a bad one looks like."""
+    needs to know what a bad one looks like.
+
+    Skipped entirely when it won't fit. How tall the sheet runs depends on
+    how much the device reports about itself, and a well-described printer
+    pushed this straight through the pinned footer. The checklist is the
+    most expendable block on the page, so it yields rather than collide."""
     items = [
-        "All four corner marks printed",
-        "Hairlines stay separate — none merged or broken",
-        "5pt text is legible and sharp, not fuzzy",
-        "Grey steps separate evenly, no banding",
-        "The 10% grey step is visible against the paper",
+        "Corner marks all printed",
+        "Hairlines not merged",
+        "5pt text sharp",
+        "Grey steps even",
+        "10% grey visible",
     ]
     if colour_device:
-        items.insert(0, "Colour patches are solid and distinct")
+        items.insert(0, "Colour patches solid")
+
+    cols = 3
+    rows = (len(items) + cols - 1) // cols
+    if y + rows * 25 > footer_y - 14:
+        return y
+
     font = _font(17)
-    col_w = CONTENT_W // 2
-    rows = (len(items) + 1) // 2
+    col_w = CONTENT_W // cols
     for index, text in enumerate(items):
-        x = MARGIN + (index // rows) * col_w
-        row_y = y + (index % rows) * 26
+        x = MARGIN + (index % cols) * col_w
+        row_y = y + (index // cols) * 25
         draw.rectangle([x, row_y + 3, x + 14, row_y + 17], outline=MUTED, width=1)
-        draw.text((x + 26, row_y), text, font=font, fill=INK)
-    return y + rows * 26
+        draw.text((x + 24, row_y), text, font=font, fill=INK)
+    return y + rows * 25
 
 
 def _registration_marks(draw: ImageDraw.ImageDraw) -> None:
@@ -447,6 +474,21 @@ def _build_test_page(info: TestPageInfo, username: str, timezone: str | None = N
     text_x = MARGIN + logo.width + 24
     draw.text((text_x, MARGIN + 4), "Printer Test Page", font=_font(40, bold=True), fill=INK)
     draw.text((text_x, MARGIN + 52), info.name, font=_font(23), fill=MUTED)
+    now = datetime.now(tz)
+    draw.text(
+        (PAGE_W - MARGIN, MARGIN + 10),
+        f"{now:%B} {now.day}, {now.year}",
+        font=_font(18),
+        fill=MUTED,
+        anchor="ra",
+    )
+    draw.text(
+        (PAGE_W - MARGIN, MARGIN + 36),
+        f"{_clock(now)} {now:%Z}",
+        font=_font(18),
+        fill=MUTED,
+        anchor="ra",
+    )
     y = MARGIN + logo_h + 26
     draw.line([(MARGIN, y), (PAGE_W - MARGIN, y)], fill=INK, width=3)
     y += 28
@@ -489,7 +531,7 @@ def _build_test_page(info: TestPageInfo, username: str, timezone: str | None = N
     y += 10
     y = _wrapped(draw, y, "Resolutions", _join(info.resolutions, 4))
     y = _wrapped(draw, y, "Default media", media_label(info.default_media_size))
-    y = _wrapped(draw, y, "Media sizes", _join(info.media_sizes))
+    y = _wrapped(draw, y, "Media sizes", _join(info.media_sizes), max_lines=2)
     if info.media_trays:
         y = _wrapped(draw, y, "Loaded trays", _join(info.media_trays, 3))
     if info.finishings:
@@ -530,17 +572,16 @@ def _build_test_page(info: TestPageInfo, username: str, timezone: str | None = N
     y += 22
 
     # Quality --------------------------------------------------------------
+    footer_y = PAGE_H - MARGIN - 30
     y = _section(draw, y, "Print quality")
     y = _quality_targets(draw, y, info.color_supported)
-    y = _checklist(draw, y + 16, info.color_supported)
+    y = _checklist(draw, y + 14, footer_y, info.color_supported)
 
     # Footer ---------------------------------------------------------------
     # No rule above the footer: the footer is pinned to the bottom of the
     # sheet, so on a printer with little to report the line floated alone in
     # half a page of white space and read as a printing artefact.
-    footer_y = PAGE_H - MARGIN - 44
-    stamp = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S %Z")
-    left = f"Triggered by {username}  ·  {stamp}"
+    left = f"Triggered by {username}"
     right = f"PrintOps {info.app_version}" if info.app_version else "PrintOps"
     draw.text((MARGIN, footer_y + 12), left, font=_font(17), fill=MUTED)
     draw.text((PAGE_W - MARGIN, footer_y + 12), right, font=_font(17), fill=MUTED, anchor="ra")

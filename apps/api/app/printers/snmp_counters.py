@@ -319,11 +319,36 @@ class DetectedSupply:
     guessed_model: str | None = None
 
 
+# A part number whose final character is the colour: Kyocera's "TK-8802C",
+# and the same shape from several other vendors. Confirmed live against
+# 10.50.1.37, which reports TK-8802C/M/Y/K and nothing else — no colour
+# word anywhere in the supplies table.
+_PART_NUMBER_COLOR = re.compile(r"^[A-Z]{1,4}[- ]?\d{2,}([CMYK])$", re.IGNORECASE)
+
+_LETTER_COLORS: dict[str, CartridgeColorGuess] = {
+    "c": "cyan",
+    "m": "magenta",
+    "y": "yellow",
+    "k": "black",
+}
+
+
 def _guess_cartridge_color(description: str) -> CartridgeColorGuess | None:
+    """Colour words first, then a trailing C/M/Y/K on a part number.
+
+    The letter rule is deliberately narrow — it only fires on a token that
+    already looks like a part number (letters, then digits, then exactly
+    one colour letter). A looser rule would read the "C" ending plenty of
+    unrelated descriptions as cyan, and a wrong colour is worse than none:
+    it writes a level onto the wrong cartridge row silently, where "no
+    guess" at least surfaces in the endpoint's `unmatched` list."""
     lower = description.lower()
     for keyword, color in _COLOR_KEYWORDS:
         if keyword in lower:
             return color
+    match = _PART_NUMBER_COLOR.match(description.strip())
+    if match:
+        return _LETTER_COLORS[match.group(1).lower()]
     return None
 
 

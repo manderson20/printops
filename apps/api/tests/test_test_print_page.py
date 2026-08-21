@@ -171,3 +171,64 @@ def test_a_never_polled_slot_is_not_called_not_reported():
     # Both still render — the distinction is a label, never a failure.
     for info in (never, asked):
         assert _build_test_page(info, "someone@example.org", "America/Chicago").startswith(b"%PDF")
+
+
+def test_the_clock_is_12_hour_with_no_leading_zero():
+    from datetime import datetime
+
+    from app.printers.test_print import _clock
+
+    assert _clock(datetime(2026, 8, 20, 21, 2)) == "9:02 PM"
+    assert _clock(datetime(2026, 8, 20, 9, 2)) == "9:02 AM"
+    assert _clock(datetime(2026, 8, 20, 0, 30)) == "12:30 AM"
+    assert _clock(datetime(2026, 8, 20, 12, 30)) == "12:30 PM"
+
+
+def test_the_checklist_yields_rather_than_overrun_the_footer():
+    """How tall the sheet runs depends on how much the device reports, and
+    the footer is pinned. A well-described printer once pushed the checklist
+    straight through it on paper."""
+    from PIL import Image, ImageDraw
+
+    from app.printers.test_print import PAGE_H, PAGE_W, _checklist
+
+    draw = ImageDraw.Draw(Image.new("RGB", (PAGE_W, PAGE_H), "white"))
+
+    roomy = _checklist(draw, 1200, footer_y=1540, colour_device=True)
+    assert roomy > 1200, "should have drawn when there is room"
+
+    cramped = _checklist(draw, 1500, footer_y=1540, colour_device=True)
+    assert cramped == 1500, "should draw nothing rather than collide"
+
+
+def test_a_device_that_reports_everything_still_fits_on_one_page():
+    from app.printers.test_print import _build_test_page, build_page_info
+
+    printer = _FakePrinter(
+        capabilities={
+            "color_supported": True,
+            "duplex_supported": True,
+            "collation_supported": True,
+            "pin_printing_supported": True,
+            "accounting_supported": True,
+            "tls_supported": True,
+            "copies_max": 999,
+            "resolutions": [{"x": r, "y": r, "unit": 4} for r in (300, 600, 1200, 2400)],
+            "media_sizes": [f"na_size{n}_8.5x11in" for n in range(40)],
+            "media_types": [f"type-{n}" for n in range(20)],
+            "output_bins": [f"bin-{n}" for n in range(10)],
+            "finishings": [f"finish-{n}" for n in range(15)],
+            "document_formats": [f"application/format-{n}" for n in range(12)],
+            "media_trays": [
+                {"source": f"tray-{n}", "type": "stationery", "width_in": 8.5, "height_in": 11.0}
+                for n in range(6)
+            ],
+        }
+    )
+    info = build_page_info(
+        printer,
+        [_FakeCartridge(c, 50) for c in ("black", "cyan", "magenta", "yellow")],
+    )
+    pdf = _build_test_page(info, "manderson@brookfieldr3.org", "America/Chicago")
+    assert pdf.startswith(b"%PDF")
+    assert pdf.count(b"/Type /Page\n") <= 1

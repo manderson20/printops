@@ -7,6 +7,15 @@ schedules an update.
 
 ## [0.59.2] - 2026-08-21
 
+- **Fixed: toner levels were being read off some printers and then thrown
+  away.** PrintOps worked out which cartridge was which colour by looking
+  for the words "cyan", "magenta", "yellow" or "black" in whatever the
+  printer called its supplies. Kyocera devices don't use those words — they
+  report part numbers like `TK-8802C` — so every cartridge failed to match,
+  and the levels the printer was reporting perfectly well were discarded.
+  Setting the colours by hand in the printer's settings couldn't fix it,
+  because the matching never consulted that setting. Part numbers ending in
+  C, M, Y or K are now understood, so those printers report toner again.
 - **New: the test page is now a printer identity sheet.** It used to be a
   logo and four lines on a mostly empty page. It now prints what PrintOps
   knows about the device — model, serial, address, firmware, location, queue
