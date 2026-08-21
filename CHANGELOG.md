@@ -40,7 +40,9 @@ schedules an update.
   server's UTC clock. Comparing a freshly printed page against the job list
   meant mentally subtracting five hours. The test page now prints the time
   where you are, labelled with the zone you'd expect ("CDT", "CST"), and
-  follows daylight saving on its own with nothing to set.
+  follows daylight saving on its own with nothing to set. It reads as a
+  12-hour clock with AM/PM, and the date sits in the top-right of the
+  header rather than the footer.
 
 ## [0.59.1] - 2026-08-21
 
