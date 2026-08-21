@@ -5,6 +5,16 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.59.2] - 2026-08-21
+
+- **Fixed: the test page now prints in your own time, not UTC.** Every time
+  PrintOps shows you is in the timezone of the computer you're reading it on
+  — except the test page, which is composed on the server and carried the
+  server's UTC clock. Comparing a freshly printed page against the job list
+  meant mentally subtracting five hours. The test page now prints the time
+  where you are, labelled with the zone you'd expect ("CDT", "CST"), and
+  follows daylight saving on its own with nothing to set.
+
 ## [0.59.1] - 2026-08-21
 
 A printer that PrintOps could not print to had been reporting itself online

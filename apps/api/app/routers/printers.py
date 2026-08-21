@@ -44,6 +44,7 @@ from app.schemas.printer import (
     PrinterMdmConnectionOut,
     PrinterOut,
     PrinterUpdate,
+    TestPrintIn,
     VirtualQueueCreate,
 )
 from app.schemas.printer_ou_access import PrinterAllowedOuCreate, PrinterAllowedOuOut
@@ -669,13 +670,18 @@ async def get_cups_queue_defaults(printer_id: UUID, db: AsyncSession = Depends(g
 @router.post("/{printer_id}/test-print", dependencies=[Depends(require_role("admin"))])
 async def test_print(
     printer_id: UUID,
+    payload: TestPrintIn | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: UserOut = Depends(get_current_user),
 ):
     printer = await _get_printer_or_404(printer_id, db)
     try:
         message = await asyncio.to_thread(
-            submit_test_print, str(printer.id), printer.name, current_user.username
+            submit_test_print,
+            str(printer.id),
+            printer.name,
+            current_user.username,
+            payload.timezone if payload else None,
         )
     except TestPrintError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc

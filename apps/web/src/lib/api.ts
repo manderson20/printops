@@ -318,6 +318,12 @@ export async function testPrintPrinter(
 ): Promise<{ message: string }> {
   const response = await authorizedFetch(`/api/v1/printers/${id}/test-print`, {
     method: "POST",
+    // The test page is drawn server-side, so it can't pick up the browser's
+    // clock the way every other timestamp in the UI does. Send this admin's
+    // zone so the printed page reads in their local time rather than UTC.
+    body: JSON.stringify({
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }),
   });
   return response.json();
 }

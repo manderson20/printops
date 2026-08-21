@@ -303,12 +303,64 @@ def test_test_print_success(client, auth_headers, mock_failed_probe, monkeypatch
     monkeypatch.setattr(
         printers_router,
         "submit_test_print",
-        lambda pid, name, user: "request id is printops-xyz-1 (1 file(s))",
+        lambda pid, name, user, tz: "request id is printops-xyz-1 (1 file(s))",
     )
 
     response = client.post(f"/api/v1/printers/{printer_id}/test-print", headers=auth_headers)
     assert response.status_code == 200
     assert "request id" in response.json()["message"]
+
+
+def test_test_print_forwards_browser_timezone(client, auth_headers, mock_failed_probe, monkeypatch):
+    """The web UI sends the admin's IANA zone so the page prints in their
+    local time — it has to reach submit_test_print to have any effect."""
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Zone Target", "ip_address": "10.0.0.11"},
+    )
+    printer_id = create.json()["id"]
+
+    seen = {}
+
+    def fake_submit(pid, name, user, tz):
+        seen["tz"] = tz
+        return "request id is printops-xyz-2 (1 file(s))"
+
+    monkeypatch.setattr(printers_router, "submit_test_print", fake_submit)
+
+    response = client.post(
+        f"/api/v1/printers/{printer_id}/test-print",
+        headers=auth_headers,
+        json={"timezone": "America/Chicago"},
+    )
+    assert response.status_code == 200
+    assert seen["tz"] == "America/Chicago"
+
+
+def test_test_print_without_a_body_still_works(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    """curl and scripts post no body at all; that must stay a valid call
+    rather than a 422, and simply mean "no zone known"."""
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Bodyless Target", "ip_address": "10.0.0.12"},
+    )
+    printer_id = create.json()["id"]
+
+    seen = {}
+
+    def fake_submit(pid, name, user, tz):
+        seen["tz"] = tz
+        return "request id is printops-xyz-3 (1 file(s))"
+
+    monkeypatch.setattr(printers_router, "submit_test_print", fake_submit)
+
+    response = client.post(f"/api/v1/printers/{printer_id}/test-print", headers=auth_headers)
+    assert response.status_code == 200
+    assert seen["tz"] is None
 
 
 def test_test_print_translates_missing_queue_error(
@@ -323,7 +375,7 @@ def test_test_print_translates_missing_queue_error(
     )
     printer_id = create.json()["id"]
 
-    def fake_submit(pid, name, user):
+    def fake_submit(pid, name, user, tz):
         raise TestPrintError("No CUPS queue exists for this printer yet")
 
     monkeypatch.setattr(printers_router, "submit_test_print", fake_submit)

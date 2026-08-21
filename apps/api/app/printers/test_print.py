@@ -1,8 +1,9 @@
 import io
 import subprocess
 import tempfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -18,12 +19,30 @@ class TestPrintError(Exception):
     pass
 
 
-def _build_test_page(printer_name: str, username: str) -> bytes:
+def _resolve_timezone(timezone: str | None) -> tzinfo:
+    """Turns an IANA zone name from the caller's browser into a tzinfo.
+    Anything missing or unrecognised falls back to UTC rather than raising —
+    a test page that prints with an odd clock is still a useful test page,
+    and this is never worth failing the print over."""
+    if not timezone:
+        return UTC
+    try:
+        return ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return UTC
+
+
+def _build_test_page(printer_name: str, username: str, timezone: str | None = None) -> bytes:
     """Composes a one-page color PDF: the PrintOps logo plus identifying
     text. A real embedded color image is a better color check than plain
     text, and PDF is in every IPP Everywhere printer's PDL — no need to
     hand-roll PostScript or shell out to a converter."""
-    timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+    # Every other timestamp in PrintOps is rendered by the browser via
+    # toLocaleString, so it lands in the reader's own zone. This page is
+    # drawn server-side, where that isn't automatic — hence the caller
+    # passing its zone in. %Z prints the abbreviation the reader expects
+    # ("CDT"/"CST"), and follows DST on its own.
+    timestamp = datetime.now(_resolve_timezone(timezone)).strftime("%Y-%m-%d %H:%M:%S %Z")
 
     page = Image.new("RGB", PAGE_SIZE, "white")
     draw = ImageDraw.Draw(page)
@@ -54,14 +73,16 @@ def _build_test_page(printer_name: str, username: str) -> bytes:
     return buf.getvalue()
 
 
-def submit_test_print(printer_id: str, printer_name: str, username: str) -> str:
+def submit_test_print(
+    printer_id: str, printer_name: str, username: str, timezone: str | None = None
+) -> str:
     """Submits a test page to the printer's CUPS queue via `lp`, so it goes
     through the exact same path (printops backend -> job logging -> real ipp
     backend) as a real job. Requires scripts/sync_cups_queue.sh to have been
     run for this printer already — raises TestPrintError with a clear reason
     otherwise."""
     queue_name = f"printops-{printer_id}"
-    doc = _build_test_page(printer_name, username)
+    doc = _build_test_page(printer_name, username, timezone)
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
         f.write(doc)
