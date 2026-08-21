@@ -34,7 +34,7 @@ from app.printers.snmp_counters import (
     sync_toner_levels,
 )
 from app.printers.status import refresh_printer_status_and_rediscover
-from app.printers.test_print import TestPrintError, submit_test_print
+from app.printers.test_print import TestPrintError, build_page_info, submit_test_print
 from app.printers.toner_history import get_daily_toner_levels
 from app.quotas.service import get_pages_used, period_bounds
 from app.schemas.auth import UserOut
@@ -675,11 +675,23 @@ async def test_print(
     current_user: UserOut = Depends(get_current_user),
 ):
     printer = await _get_printer_or_404(printer_id, db)
+    # The page reports what PrintOps already knows about the device, so the
+    # snapshot is assembled here, while the session is awaited — the render
+    # runs in a worker thread and must not touch the ORM.
+    cartridges = (
+        (
+            await db.execute(
+                select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    info = build_page_info(printer, list(cartridges))
     try:
         message = await asyncio.to_thread(
             submit_test_print,
-            str(printer.id),
-            printer.name,
+            info,
             current_user.username,
             payload.timezone if payload else None,
         )

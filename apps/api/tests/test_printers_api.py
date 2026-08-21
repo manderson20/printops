@@ -303,7 +303,7 @@ def test_test_print_success(client, auth_headers, mock_failed_probe, monkeypatch
     monkeypatch.setattr(
         printers_router,
         "submit_test_print",
-        lambda pid, name, user, tz: "request id is printops-xyz-1 (1 file(s))",
+        lambda info, user, tz: "request id is printops-xyz-1 (1 file(s))",
     )
 
     response = client.post(f"/api/v1/printers/{printer_id}/test-print", headers=auth_headers)
@@ -323,8 +323,9 @@ def test_test_print_forwards_browser_timezone(client, auth_headers, mock_failed_
 
     seen = {}
 
-    def fake_submit(pid, name, user, tz):
+    def fake_submit(info, user, tz):
         seen["tz"] = tz
+        seen["name"] = info.name
         return "request id is printops-xyz-2 (1 file(s))"
 
     monkeypatch.setattr(printers_router, "submit_test_print", fake_submit)
@@ -336,6 +337,7 @@ def test_test_print_forwards_browser_timezone(client, auth_headers, mock_failed_
     )
     assert response.status_code == 200
     assert seen["tz"] == "America/Chicago"
+    assert seen["name"] == "Zone Target"
 
 
 def test_test_print_without_a_body_still_works(
@@ -352,7 +354,7 @@ def test_test_print_without_a_body_still_works(
 
     seen = {}
 
-    def fake_submit(pid, name, user, tz):
+    def fake_submit(info, user, tz):
         seen["tz"] = tz
         return "request id is printops-xyz-3 (1 file(s))"
 
@@ -375,7 +377,7 @@ def test_test_print_translates_missing_queue_error(
     )
     printer_id = create.json()["id"]
 
-    def fake_submit(pid, name, user, tz):
+    def fake_submit(info, user, tz):
         raise TestPrintError("No CUPS queue exists for this printer yet")
 
     monkeypatch.setattr(printers_router, "submit_test_print", fake_submit)

@@ -7,6 +7,21 @@ schedules an update.
 
 ## [0.59.2] - 2026-08-21
 
+- **New: the test page is now a printer identity sheet.** It used to be a
+  logo and four lines on a mostly empty page. It now prints what PrintOps
+  knows about the device — model, serial, address, firmware, location, queue
+  name and status; which features it has (colour, duplex, collation, PIN
+  printing, accounting, IPPS); its resolutions, media sizes, loaded trays,
+  finishing options and formats; toner levels and page counters as they read
+  at the moment you pressed the button. Walk to the printer, pick up the
+  page, and everything you'd otherwise go back to a screen for is on it.
+- **New: the test page actually tests the print.** Alongside the details it
+  carries colour patches, an eleven-step greyscale ramp, hairlines from one
+  to four pixels, a 5-to-10 point type ladder and corner registration marks
+  — plus a short checklist of what a good one looks like, so the targets
+  mean something to whoever is holding the sheet. A printer that has never
+  been discovered still gets a page; the parts PrintOps doesn't know are
+  simply blank rather than blocking the print.
 - **Fixed: the test page now prints in your own time, not UTC.** Every time
   PrintOps shows you is in the timezone of the computer you're reading it on
   — except the test page, which is composed on the server and carried the
