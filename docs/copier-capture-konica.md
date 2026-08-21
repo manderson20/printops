@@ -53,7 +53,7 @@ Two settings that matter before enabling Account Track anywhere:
 
 | Key | Value | Why it matters |
 |---|---|---|
-| `MFP.AuthSetting.CommonMode.NoAuthPrintOn` | `"true"` | Printing without authentication is **allowed**. Turning on Account Track will not break PrintOps' print path while this stays `true`. Do not change it in the same sitting. |
+| `MFP.AuthSetting.CommonMode.NoAuthPrintOn` | `"true"` | Printing without authentication is **allowed**. Turning on Account Track will not break PrintOps' print path while this stays `true`. Do not change it in the same sitting — and **re-read it afterwards**, because enabling Account Track can leave it `false`. See §3.9.4. |
 | `MFP.Security.AuthOperateProhibit.Count` / `.ReleaseTime` | `"3"` / `"5"` | The admin lockout really is 3 failed attempts, 5 minutes. This is why a rejected password must never be retried programmatically. |
 
 ---
@@ -357,6 +357,39 @@ It is not: the working endpoint is **`AppReqGetTrackCounterInfo`** (§3.9.3)
 — `AppReqGetTrackCounter` above is the same name one word short. Guessing
 endpoint names is what produced the wrong conclusion; §3.9.3 came from
 reading the device's own screen JS instead.
+
+### 3.9.4 Enabling Account Track can silently kill all printing — **observed in production**
+
+On the 750i (Monica), Account Track was enabled on 2026-08-19 and
+`NoAuthPrintOn` came out `false`. The device then **accepted every print
+job and deleted it at the panel**, because a job arriving without an
+account code is unauthenticated and nothing exempts printing any more.
+Walk-up copying stopped at the same moment for the same reason.
+
+It is silent from the server's side. CUPS hands the job off, marks it
+completed and logs no error — the job dies after the handoff. The three
+other bizhubs enabled in the same rollout kept `NoAuthPrintOn = "true"`
+and were unaffected, so "the other copiers work" does not clear this.
+
+**How to detect it:** the device's own meters stop. `page_count_print` and
+`page_count_copy` in `printer_counter_readings` freeze at the moment of
+the change and stay frozen while jobs keep arriving:
+
+```
+2026-08-19 17:51   print 227548   copy 540545
+2026-08-19 18:21   print 227549   copy 540545
+2026-08-20 15:36   print 227549   copy 540545   <- ~20 hours, nothing
+```
+
+A copier whose counters have not moved all day, on a queue that is still
+accepting jobs, is this until proven otherwise. Reading
+`NoAuthPrintOn` out of the §3.5 config blob confirms it in one call.
+
+**The fix is device-side and manual.** No write contract for this setting
+is captured here yet. Web Connection → Administrator → **User
+Auth/Account Track** → **Print without Authentication** → **Allow**
+(`#ID_SubMenu_Authentication_NoAuthPrintOn`, screen `003_004_APO000`).
+Jobs already deleted are gone — there is no spool to replay.
 
 ### 3.9.1 The admin pages behind Account Track — **verified**
 
