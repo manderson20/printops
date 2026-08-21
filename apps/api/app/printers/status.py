@@ -10,7 +10,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from app.models.printer import Printer
-from app.printers import cups_health
+from app.printers import cups_health, job_control, queue_stall
 from app.printers.discovery import refresh_printer_capabilities
 from app.printers.ipp_client import PrinterProbeError, PrinterStateResult, probe_printer_state
 from app.printers.queue_sync import QueueSyncError, sync_queue
@@ -96,7 +96,7 @@ async def refresh_printer_status(printer: Printer) -> None:
             printer.ip_address,
             port=printer.port,
             tls=printer.use_tls,
-            ipp_path=printer.ipp_path,
+            ipp_path=printer.effective_ipp_path,
         )
     except PrinterProbeError as exc:
         printer.status = "offline"
@@ -108,6 +108,43 @@ async def refresh_printer_status(printer: Printer) -> None:
         printer.status_reasons = [r for r in result.state_reasons if r != "none"] or None
         printer.status_message = result.state_message or message
     printer.status_checked_at = datetime.now(UTC)
+    await _apply_queue_stall(printer)
+
+
+async def _apply_queue_stall(printer: Printer) -> None:
+    """Downgrades an apparently-healthy printer whose queue has stopped moving.
+
+    Only applied to printers that look online: a printer already reporting
+    offline or error has told us something more specific, and burying that
+    under a stall message would lose the better diagnosis. The case this exists
+    for is precisely the one where every other signal says the printer is fine
+    (app/printers/queue_stall.py)."""
+    if printer.status != "online":
+        queue_stall.forget(str(printer.id))
+        return
+
+    # Reading the queue costs a cupsd client slot, and this runs for every
+    # online printer on the 60s poll — a standing load cupsd did not carry
+    # before. Detecting a stalled queue is not worth helping exhaust the
+    # MaxClients pool that cups_health exists to protect: a saturated
+    # scheduler already looks to users exactly like a printer that has
+    # stopped responding, which is the very failure this is meant to report.
+    # State is dropped rather than held, so the clock restarts once there is
+    # room again and a gap in observation can't be mistaken for a stall.
+    if cups_health.is_saturated():
+        queue_stall.forget(str(printer.id))
+        return
+
+    snapshot = await asyncio.to_thread(job_control.queue_snapshot, str(printer.id))
+    stuck_for = queue_stall.observe(str(printer.id), snapshot)
+    if stuck_for is None or snapshot is None:
+        return
+
+    reason = queue_stall.stall_reason(stuck_for, snapshot)
+    printer.status = "error"
+    printer.status_message = reason
+    printer.status_reasons = [*(printer.status_reasons or []), "printops-queue-stalled"]
+    logger.warning("%s: %s", printer.name, reason)
 
 
 async def refresh_printer_status_and_rediscover(printer: Printer) -> None:
@@ -137,11 +174,19 @@ async def run_automatic_queue_sync(printer: Printer) -> bool:
     doing it now would cost more than it's worth. Returns whether a sync
     was actually attempted.
 
-    Three gates, each learned from one flapping copier that resynced 137
+    Four gates. Three were learned from one flapping copier that resynced 137
     times in a day and took the whole scheduler down with it (see
     app/printers/cups_health.py): a per-printer cooldown that backs off on
     repeated failure, a check that cupsd has slots to spare, and a
     process-wide lock so a network blip can't start a dozen at once.
+
+    The fourth is that a queue with work on it is left alone. Syncing runs
+    `lpadmin`, and cupsd restarts every job on a queue whose printer is
+    modified — including jobs it has itself just given up on. On the LCACTC
+    Kyocera (2026-08-20) that closed a loop: a job stalled, cupsd cancelled it
+    after its 3-hour limit, the next automatic resync 30 seconds later
+    restarted it, and it stalled again, for six hours. Nothing behind it in
+    the queue ever printed.
 
     A skipped resync costs a stale PPD until the next transition. An
     unskipped one cost the district an afternoon of printing."""
@@ -156,6 +201,20 @@ async def run_automatic_queue_sync(printer: Printer) -> bool:
     if cups_health.is_saturated():
         # Deliberately not stamped as an attempt: nothing was tried, and a
         # printer shouldn't serve a cooldown for the scheduler's state.
+        return False
+
+    active = await asyncio.to_thread(job_control.active_job_count, str(printer.id))
+    if active is None or active > 0:
+        # Same reasoning as the saturation gate — nothing was attempted, so
+        # no cooldown is stamped and the resync happens on a later cycle once
+        # the queue has drained. `None` (couldn't ask cupsd) counts as busy:
+        # the whole point is to not modify a queue that might have work on it,
+        # and an unanswered lpstat is not evidence that it doesn't.
+        logger.debug(
+            "Skipping automatic queue resync for %s — %s.",
+            printer.name,
+            "could not determine queue depth" if active is None else f"{active} job(s) queued",
+        )
         return False
 
     async with _AUTO_RESYNC_LOCK:

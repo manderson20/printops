@@ -115,6 +115,7 @@ export type Printer = {
   port: number;
   use_tls: boolean;
   ipp_path: string | null;
+  ipp_path_detected: string | null;
   airprint_enabled: boolean;
   manufacturer: string | null;
   model: string | null;

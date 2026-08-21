@@ -12,6 +12,12 @@
 
 set -euo pipefail
 
+# everywhere_probe_ok(): the guard around `lpadmin -m everywhere`. Shared with
+# sync_release_queue.sh because queue_sync.py runs both scripts — guarding only
+# one of them leaves the leak just as open, which is exactly what happened the
+# first time this was fixed.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/everywhere_probe.sh"
+
 PRINTER_ID="${1:?Usage: sync_cups_queue.sh <printer-id>}"
 API_BASE="${PRINTOPS_API_BASE:-http://localhost:8000}"
 ENV_FILE="${PRINTOPS_ENV_FILE:-/home/itadmin/printops/apps/api/.env}"
@@ -80,7 +86,13 @@ fi
 # later at whichever physical printer the job is released to, so this queue
 # shouldn't be the thing silently downgrading Word/Adobe jobs to grayscale
 # (the same failure mode fixed for real printers in the Danica investigation).
-if [ "$IS_VIRTUAL" = true ] || ! timeout 30 sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m everywhere -D "$PRINTER_NAME"; then
+EVERYWHERE_SKIPPED=false
+if [ "$IS_VIRTUAL" = false ] && ! everywhere_probe_ok "$REAL_URI"; then
+    EVERYWHERE_SKIPPED=true
+    echo "WARNING: $REAL_URI did not answer the attribute request that -m everywhere depends on (within ${EVERYWHERE_PROBE_TIMEOUT}s) — skipping it rather than leaving a cupsd thread retrying this device indefinitely." >&2
+fi
+
+if [ "$IS_VIRTUAL" = true ] || [ "$EVERYWHERE_SKIPPED" = true ] || ! timeout 30 sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m everywhere -D "$PRINTER_NAME"; then
     if [ "$IS_VIRTUAL" = true ]; then
         sudo lpadmin -p "$QUEUE_NAME" -v "ipp://virtual.printops.internal/" -m "drv:///cupsfilters.drv/pwgrast.ppd" -D "$PRINTER_NAME"
     elif [ "$HAD_REAL_PPD" = true ]; then

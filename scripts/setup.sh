@@ -226,6 +226,10 @@ EOF
   pnpm install
   (cd apps/web && pnpm build)
 
+  # ---- CUPS backend ----
+  log "Installing the PrintOps CUPS backend"
+  ./scripts/install_cups_backend.sh
+
   # ---- CUPS held-job spool permissions ----
   # The CUPS backend (infra/cups/backends/printops) runs as root under
   # CUPS's own `lp` group and spools held documents to

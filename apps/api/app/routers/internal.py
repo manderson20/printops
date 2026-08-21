@@ -67,7 +67,15 @@ async def get_printer_connection(printer_id: UUID, db: AsyncSession = Depends(ge
     printer = await db.get(Printer, printer_id)
     if printer is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Printer not found")
-    return printer
+    connection = PrinterConnectionOut.model_validate(printer)
+    # The override column alone is not what to print to — a printer whose path
+    # was discovered rather than typed has it in `ipp_path_detected`, and since
+    # 0061 that is the normal case for the whole fleet. Serialising the raw
+    # column here would hand CUPS a null path for every one of them, silently
+    # falling back to /ipp/print and breaking the Konica bizhubs, which answer
+    # on "/".
+    connection.ipp_path = printer.effective_ipp_path
+    return connection
 
 
 @router.post("/syslog/events", response_model=SyslogIngestResult)

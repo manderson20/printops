@@ -193,6 +193,9 @@ class PrinterOut(BaseModel):
     port: int
     use_tls: bool
     ipp_path: str | None
+    # What probing last found, shown in the UI as the greyed default behind an
+    # empty IPP Path box so an override is visibly distinct from a detection.
+    ipp_path_detected: str | None = None
     airprint_enabled: bool
 
     manufacturer: str | None

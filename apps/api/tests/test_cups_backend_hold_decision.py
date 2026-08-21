@@ -70,18 +70,22 @@ def test_hold_reason_set_spools_and_never_calls_real_backend(
     )
     api_request_mock = MagicMock(side_effect=lambda *a, **k: next(responses))
     spool_mock = MagicMock(return_value="/var/spool/printops-held/job-record-1")
-    subprocess_mock = MagicMock()
+    popen_mock = MagicMock()
 
     with (
         patch.object(backend_module, "api_request", api_request_mock),
         patch.object(backend_module, "spool_held_file", spool_mock),
-        patch.object(backend_module.subprocess, "run", subprocess_mock),
+        patch.object(backend_module.subprocess, "Popen", popen_mock),
     ):
         exit_code = backend_module.main()
 
     assert exit_code == 0
     spool_mock.assert_called_once()
-    subprocess_mock.assert_not_called()
+    # Popen, not run: forwarding spawns the real backend via _run_real_backend
+    # so it can be reaped on SIGTERM. `run` is still used elsewhere in this
+    # script (ipptool), so asserting on it would no longer mean "did not
+    # forward" — and an unmocked Popen here would spawn a real ipp backend.
+    popen_mock.assert_not_called()
     # Third call is the PATCH marking the job held.
     patch_call = api_request_mock.call_args_list[2]
     assert patch_call.args[1] == "PATCH"
@@ -101,13 +105,14 @@ def test_no_hold_reason_proceeds_to_real_backend(backend_module, argv_and_env, m
     )
     api_request_mock = MagicMock(side_effect=lambda *a, **k: next(responses))
     spool_mock = MagicMock()
-    completed = MagicMock(returncode=0)
-    subprocess_mock = MagicMock(return_value=completed)
+    child = MagicMock()
+    child.wait.return_value = 0
+    popen_mock = MagicMock(return_value=child)
 
     with (
         patch.object(backend_module, "api_request", api_request_mock),
         patch.object(backend_module, "spool_held_file", spool_mock),
-        patch.object(backend_module.subprocess, "run", subprocess_mock),
+        patch.object(backend_module.subprocess, "Popen", popen_mock),
         patch.object(
             backend_module,
             "get_job_completion_attributes",
@@ -123,8 +128,8 @@ def test_no_hold_reason_proceeds_to_real_backend(backend_module, argv_and_env, m
 
     assert exit_code == 0
     spool_mock.assert_not_called()
-    subprocess_mock.assert_called_once()
-    real_argv = subprocess_mock.call_args.args[0]
+    popen_mock.assert_called_once()
+    real_argv = popen_mock.call_args.args[0]
     assert real_argv[0] == backend_module.REAL_IPP_BACKEND
 
 

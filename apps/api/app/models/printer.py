@@ -38,9 +38,34 @@ class Printer(Base, TimestampMixin):
 
     port: Mapped[int] = mapped_column(default=631, server_default="631")
     use_tls: Mapped[bool] = mapped_column(default=False, server_default="false")
-    # Optional override for the IPP resource path (e.g. "/printers/queue-name")
-    # when the default candidate-path probing doesn't find the printer.
+    # An admin's deliberate override of the IPP resource path (e.g.
+    # "/printers/queue-name"). Normally NULL: blank means "work it out", and
+    # discovery never touches this column, so a path typed by a person stays
+    # exactly as typed.
     ipp_path: Mapped[str | None] = mapped_column(default=None)
+    # What probing last found (app/printers/discovery.py). Purely a cache — it
+    # exists so the 60s status poll doesn't re-walk DEFAULT_CANDIDATE_PATHS
+    # against every printer forever — and it is refreshed whenever discovery
+    # runs, which is what lets a printer follow its device to a new path.
+    #
+    # These were one column until 0061. Nothing recorded which values were
+    # chosen and which were guessed, so a guess could never be safely revisited:
+    # the LCACTC Kyocera stayed on a '/' detected back when it answered plain
+    # IPP, long after the device had moved to TLS-only.
+    ipp_path_detected: Mapped[str | None] = mapped_column(default=None)
+
+    @property
+    def effective_ipp_path(self) -> str | None:
+        """The path to actually use: the override if there is one, else the
+        cached discovery, else None for "probe the candidates".
+
+        The single place the two are reconciled. Every consumer — the status
+        poll, capability discovery, and the CUPS device URI handed to
+        scripts/sync_cups_queue.sh via the internal connection endpoint — goes
+        through this, because a second copy of the rule is how one of them ends
+        up disagreeing with the others.
+        """
+        return self.ipp_path or self.ipp_path_detected
 
     # Controls whether the CUPS queue is advertised via mDNS/Bonjour (AirPrint
     # discovery) — off by default so a newly-added printer isn't visible to

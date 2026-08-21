@@ -49,6 +49,12 @@ echo "== Ensuring held-job spool permissions/group membership =="
 # on every update in case it drifted or was never run — otherwise the
 # CUPS backend's own 0o2770 enforcement (infra/cups/backends/printops)
 # locks the API out of releasing/purging held jobs.
+# Same reasoning as the spool-group call below: an already-deployed box
+# never re-runs setup.sh, so without this the backend in /usr/lib/cups
+# keeps whatever version was copied there by hand. It drifted six weeks
+# behind the repo once already (see scripts/install_cups_backend.sh).
+"$REPO_DIR/scripts/install_cups_backend.sh"
+
 "$REPO_DIR/scripts/ensure_held_spool_group.sh"
 
 echo "== Restarting printops-api.service =="

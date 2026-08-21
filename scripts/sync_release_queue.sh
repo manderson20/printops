@@ -16,6 +16,9 @@
 
 set -euo pipefail
 
+# See sync_cups_queue.sh — same guard, same reason, one implementation.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/everywhere_probe.sh"
+
 PRINTER_ID="${1:?Usage: sync_release_queue.sh <printer-id>}"
 API_BASE="${PRINTOPS_API_BASE:-http://localhost:8000}"
 ENV_FILE="${PRINTOPS_ENV_FILE:-/home/itadmin/printops/apps/api/.env}"
@@ -54,7 +57,13 @@ fi
 # Same bounded-timeout + generic-PPD fallback as sync_cups_queue.sh — see
 # that script's comment for why (confirmed live: a Kyocera ECOSYS can't
 # handle -m everywhere's full attribute probe on either queue).
-if ! timeout 30 sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m everywhere -D "${PRINTER_NAME} (internal release queue)"; then
+EVERYWHERE_SKIPPED=false
+if ! everywhere_probe_ok "$REAL_URI"; then
+    EVERYWHERE_SKIPPED=true
+    echo "WARNING: $REAL_URI did not answer the attribute request that -m everywhere depends on (within ${EVERYWHERE_PROBE_TIMEOUT}s) — skipping it rather than leaving a cupsd thread retrying this device indefinitely." >&2
+fi
+
+if [ "$EVERYWHERE_SKIPPED" = true ] || ! timeout 30 sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m everywhere -D "${PRINTER_NAME} (internal release queue)"; then
     if [ "$HAD_REAL_PPD" = true ]; then
         echo "WARNING: -m everywhere failed/timed out for $REAL_URI — keeping this release queue's existing real PPD from a prior successful sync instead of regressing it to the generic fallback." >&2
         # Still repoint device-uri (without -m, so the existing PPD is left

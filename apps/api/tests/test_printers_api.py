@@ -156,7 +156,11 @@ def test_create_printer_success_discovers_capabilities(client, auth_headers, moc
     assert body["capabilities"]["duplex_supported"] is True
     assert sorted(body["capabilities"]["finishings"]) == ["punch", "staple"]
     assert body["capabilities_error"] is None
-    assert body["ipp_path"] == "/ipp/print"
+    # The path discovery found lands in the cache, not the override: nobody
+    # typed it, so nothing should look as though they did, and it stays
+    # refreshable if the device later moves (migration 0061).
+    assert body["ipp_path_detected"] == "/ipp/print"
+    assert body["ipp_path"] is None
 
 
 def test_create_printer_offline_still_creates_record(client, auth_headers, mock_failed_probe):
