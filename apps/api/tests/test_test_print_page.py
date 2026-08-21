@@ -41,9 +41,10 @@ def test_central_prints_its_own_abbreviation_and_offset():
 
 
 class _FakeCartridge:
-    def __init__(self, color, percent):
+    def __init__(self, color, percent, checked_at=None):
         self.color = color
         self.current_level_percent = percent
+        self.level_checked_at = checked_at
 
 
 class _FakePrinter:
@@ -107,7 +108,7 @@ def test_page_info_flattens_capabilities():
     assert info.finishings == ["Staple top left"]
     # Black first regardless of the order the rows came back in — it's the
     # order the device's own panel lists them.
-    assert info.toner == [("black", 72), ("cyan", 41)]
+    assert info.toner == [("black", 72, None), ("cyan", 41, None)]
 
 
 def test_page_info_survives_a_printer_that_was_never_discovered():
@@ -150,3 +151,23 @@ def test_rendered_page_is_a_single_letter_sized_pdf():
     pdf = _build_test_page(info, "manderson@brookfieldr3.org", "America/Chicago")
     assert pdf.startswith(b"%PDF")
     assert pdf.count(b"/Type /Page\n") <= 1
+
+
+def test_a_never_polled_slot_is_not_called_not_reported():
+    """An admin who has just set the cartridge colours sees empty levels and
+    reasonably reads "not reported" as the device refusing to answer. The
+    two cases have different fixes, so the sheet distinguishes them."""
+    from datetime import datetime
+
+    from app.printers.test_print import _build_test_page, build_page_info
+
+    never = build_page_info(_FakePrinter(), [_FakeCartridge("black", None)])
+    assert never.toner == [("black", None, None)]
+
+    polled_at = datetime(2026, 8, 21, 2, 0, tzinfo=UTC)
+    asked = build_page_info(_FakePrinter(), [_FakeCartridge("black", None, polled_at)])
+    assert asked.toner == [("black", None, polled_at)]
+
+    # Both still render — the distinction is a label, never a failure.
+    for info in (never, asked):
+        assert _build_test_page(info, "someone@example.org", "America/Chicago").startswith(b"%PDF")

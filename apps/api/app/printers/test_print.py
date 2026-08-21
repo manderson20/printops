@@ -86,8 +86,10 @@ class TestPageInfo:
     finishings: list[str] = field(default_factory=list)
     document_formats: list[str] = field(default_factory=list)
     capabilities_detected_at: datetime | None = None
-    # (colour, percent-or-None), already ordered black-first by the router.
-    toner: list[tuple[str, int | None]] = field(default_factory=list)
+    # (colour, percent-or-None, last-polled-or-None), ordered black-first
+    # by build_page_info. The timestamp is what separates "the device says
+    # it doesn't know" from "nobody has asked yet" — see _toner_bars.
+    toner: list[tuple[str, int | None, datetime | None]] = field(default_factory=list)
     page_count_total: int | None = None
     page_count_print: int | None = None
     page_count_copy: int | None = None
@@ -286,7 +288,9 @@ def _flags(draw: ImageDraw.ImageDraw, y: int, flags: list[tuple[str, bool]]) -> 
     return y + rows * 30
 
 
-def _toner_bars(draw: ImageDraw.ImageDraw, y: int, toner: list[tuple[str, int | None]]) -> int:
+def _toner_bars(
+    draw: ImageDraw.ImageDraw, y: int, toner: list[tuple[str, int | None, datetime | None]]
+) -> int:
     swatch = {
         "black": (24, 24, 24),
         "cyan": (0, 158, 224),
@@ -295,7 +299,7 @@ def _toner_bars(draw: ImageDraw.ImageDraw, y: int, toner: list[tuple[str, int | 
     }
     font, bold = _font(19), _font(19, bold=True)
     bar_x, bar_w = MARGIN + 132, 300
-    for index, (colour, percent) in enumerate(toner[:4]):
+    for index, (colour, percent, checked_at) in enumerate(toner[:4]):
         row_y = y + index * 30
         draw.text((MARGIN, row_y), colour.capitalize(), font=font, fill=MUTED)
         draw.rectangle([bar_x, row_y + 5, bar_x + bar_w, row_y + 21], outline=RULE, width=1)
@@ -306,8 +310,16 @@ def _toner_bars(draw: ImageDraw.ImageDraw, y: int, toner: list[tuple[str, int | 
                     [bar_x, row_y + 5, bar_x + fill_w, row_y + 21],
                     fill=swatch.get(colour.lower(), ACCENT),
                 )
-        label = f"{percent}%" if percent is not None else "not reported"
-        draw.text((bar_x + bar_w + 16, row_y), label, font=bold, fill=INK)
+        # "Not reported" on a slot nobody has ever polled reads as a device
+        # fault when it is really just a missing poll — an admin who has
+        # just set the colours needs to be told which of the two it is.
+        if percent is not None:
+            label, colour_of = f"{percent}%", INK
+        elif checked_at is None:
+            label, colour_of = "never polled", MUTED
+        else:
+            label, colour_of = "not reported", MUTED
+        draw.text((bar_x + bar_w + 16, row_y), label, font=bold, fill=colour_of)
     return y + max(1, len(toner[:4])) * 30
 
 
@@ -497,6 +509,10 @@ def _build_test_page(info: TestPageInfo, username: str, timezone: str | None = N
     y = _section(draw, y, "Supplies and counters")
     if info.toner:
         y = _toner_bars(draw, y, info.toner)
+        polled = [checked for _, _, checked in info.toner if checked]
+        read_at = _stamp(max(polled), tz) if polled else "never"
+        draw.text((MARGIN, y + 4), f"Toner levels last read {read_at}", font=_font(15), fill=MUTED)
+        y += 26
     else:
         draw.text((MARGIN, y), "No toner levels recorded.", font=_font(19), fill=MUTED)
         y += 30
@@ -519,8 +535,10 @@ def _build_test_page(info: TestPageInfo, username: str, timezone: str | None = N
     y = _checklist(draw, y + 16, info.color_supported)
 
     # Footer ---------------------------------------------------------------
+    # No rule above the footer: the footer is pinned to the bottom of the
+    # sheet, so on a printer with little to report the line floated alone in
+    # half a page of white space and read as a printing artefact.
     footer_y = PAGE_H - MARGIN - 44
-    draw.line([(MARGIN, footer_y), (PAGE_W - MARGIN, footer_y)], fill=RULE, width=2)
     stamp = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S %Z")
     left = f"Triggered by {username}  ·  {stamp}"
     right = f"PrintOps {info.app_version}" if info.app_version else "PrintOps"
@@ -558,7 +576,7 @@ def build_page_info(printer: Printer, cartridges: list[PrinterTonerCartridge]) -
     )
 
     toner = sorted(
-        ((c.color, c.current_level_percent) for c in cartridges),
+        ((c.color, c.current_level_percent, c.level_checked_at) for c in cartridges),
         key=lambda item: (_TONER_ORDER.get((item[0] or "").lower(), 9), item[0] or ""),
     )
 

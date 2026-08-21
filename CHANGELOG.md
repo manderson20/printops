@@ -14,7 +14,10 @@ schedules an update.
   printing, accounting, IPPS); its resolutions, media sizes, loaded trays,
   finishing options and formats; toner levels and page counters as they read
   at the moment you pressed the button. Walk to the printer, pick up the
-  page, and everything you'd otherwise go back to a screen for is on it.
+  page, and everything you'd otherwise go back to a screen for is on it. A
+  toner slot that has never been polled says so, rather than "not reported"
+  — setting a cartridge's colour labels the slot, but only an SNMP poll
+  fills in a level, and the two need different fixes.
 - **New: the test page actually tests the print.** Alongside the details it
   carries colour patches, an eleven-step greyscale ramp, hairlines from one
   to four pixels, a 5-to-10 point type ladder and corner registration marks
