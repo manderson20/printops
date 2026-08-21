@@ -456,8 +456,22 @@ async def discover_printer(printer_id: UUID, db: AsyncSession = Depends(get_db))
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A virtual queue has no real device to discover capabilities from.",
         )
+    before = (printer.port, printer.use_tls, printer.effective_ipp_path)
     await refresh_printer_capabilities(printer)
+    transport_changed = (printer.port, printer.use_tls, printer.effective_ipp_path) != before
+    # Committed before the sync, not after: sync_cups_queue.sh reads the
+    # connection details back out of the database through the internal API, so
+    # syncing first would rebuild the queue from the *old* address (see
+    # _apply_queue_sync's docstring).
     await db.commit()
+    if transport_changed:
+        # Discovery can now move a printer onto a different address entirely —
+        # it follows a device's own redirect onto a new port/scheme, and
+        # refreshes the detected path (app/printers/discovery.py). All three
+        # feed the CUPS device URI, so leaving the queue alone would fix the
+        # printer everywhere except the one place that actually prints, while
+        # this page reported success.
+        await _apply_queue_sync(printer, db)
     await db.refresh(printer)
     return printer
 

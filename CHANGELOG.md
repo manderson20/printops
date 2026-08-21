@@ -5,6 +5,87 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.59.1] - 2026-08-21
+
+A printer that PrintOps could not print to had been reporting itself online
+for six hours. This release is the fixes that came out of finding out why.
+
+- **Fixed: a printer that redirects its IPP port is now reported as broken,
+  because it is.** The LCACTC Kyocera was switched to accept IPP only over
+  TLS, so its normal port began answering with a redirect to the secure one.
+  PrintOps' status check quietly followed that redirect and got a healthy
+  answer back; CUPS, which actually delivers the jobs, does not follow
+  redirects and failed every one. The dashboard read "online / Ready." the
+  whole time. PrintOps no longer follows a redirect the printing path can't,
+  and says which address the printer pointed at so the port/TLS/IPP path can
+  be corrected.
+- **Fixed: a cancelled job no longer leaves a process hammering the
+  printer.** When CUPS cancelled or restarted a job, PrintOps' backend exited
+  without stopping the delivery process it had started. That process kept its
+  connection to the printer and kept retrying — several hundred times a second
+  — and each cancelled job added another. Enough of them will take a printer
+  off the network entirely.
+- **Fixed: a resync no longer restarts jobs the printer just gave up on.**
+  Modifying a queue makes CUPS restart everything on it. A job that stalled,
+  got cancelled at its three-hour limit, and was then revived by the next
+  automatic resync could repeat that cycle all day while nothing behind it
+  printed. Queues with work waiting are now left alone until they drain.
+- **Fixed: an unresponsive printer no longer leaves CUPS retrying it
+  forever.** Building an accurate driver asks the printer for its full
+  capability list. Some devices never answer that particular question, and the
+  timeout only stopped PrintOps waiting — CUPS itself carried on asking,
+  permanently. The printer is now asked once, cheaply, whether it can answer
+  before the real request is made. Devices that can't get a generic driver
+  instead, which is what already happened, only now without the retry storm.
+- **New: a queue that stops moving is now noticed.** If jobs sit on a printer
+  that claims to be reachable, PrintOps says so rather than waiting for
+  someone to report that a print never arrived. Large jobs get proportionally
+  longer before this triggers — a 26 MB Photoshop file is ordinary traffic in
+  a graphic-arts lab and should not be mistaken for a fault.
+- **New: adding a printer no longer means knowing its IPP path, port or
+  scheme.** A device that has been switched to require TLS answers its old
+  address with a redirect naming exactly where it now lives. PrintOps now
+  reads that, checks the new address actually answers, and reconfigures the
+  printer onto it — so a printer added with nothing but an IP sorts out its
+  own port, TLS and path. It is adopted only after the new address responds:
+  CUPS can't follow redirects, so taking one on trust would just move the
+  printer somewhere that also doesn't print.
+- **Fixed: Rediscover now rebuilds the print queue when it needs to.** It
+  refreshes what PrintOps knows about a printer, and can now change the
+  address that printer is reached at — but it left the CUPS queue pointing at
+  the old one. The page reported success while the only part that actually
+  prints was still misconfigured.
+- **Changed: IPP Path now distinguishes "detected" from "set by you".** They
+  were the same field, so once detection filled it in there was no way — in
+  the interface or in the database — to tell a deliberate choice from a guess.
+  The two need opposite handling: a choice must survive, a guess must be
+  refreshable when the device changes. The box now shows the detected value as
+  greyed placeholder text and anything you type in solid, and clearing it hands
+  the printer back to detection. Existing paths were moved to the detected side
+  on upgrade, so the whole fleet can now follow its devices; type a path in if
+  you want one pinned.
+- **Fixed: leaving IPP Path blank now sticks.** Blank means "work it out", and
+  the probe has always tried the common paths — but it only recorded the
+  answer when the stored value was null, and clearing the field in the
+  interface stores an empty string. A cleared path re-probed on every cycle
+  and never remembered what it found.
+- **New: a printer's port and IPP path can now be edited.** They never could
+  be. When a printer is switched to require TLS it usually also moves from
+  port 631 to 443, and the only connection control on the page was the TLS
+  checkbox — which on its own cannot work, because the device is still
+  speaking cleartext on 631 and the TLS handshake simply fails. There was no
+  way to fix such a printer from the interface at all.
+- **Fixed: enabling TLS on the wrong port now says so.** That combination
+  previously reported "Error occurred while communicating with IPP server",
+  which reads exactly like a printer that is switched off. It now names the
+  port, explains that the port is answering in cleartext, and points at 443 —
+  and a genuine certificate problem is reported as a certificate problem
+  rather than sending you to change the port.
+- **Fixed: the print backend is now installed by setup and by updates.** It
+  was copied into place by hand, and had drifted six weeks behind the code in
+  the repository — including a spool-permission fix that had been written,
+  reviewed and never actually deployed.
+
 ## [0.59.0] - 2026-08-20
 
 Copy accounting goes from "the copiers are configured" to "you can see what

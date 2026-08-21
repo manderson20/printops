@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import urllib.error
@@ -23,6 +24,12 @@ import urllib.request
 API_BASE = "http://localhost:8000"
 REAL_IPP_BACKEND = "/usr/lib/cups/backend/ipp"
 ENV_FILE = "/home/itadmin/printops/apps/api/.env"
+
+# How long the real `ipp` backend gets to exit on SIGTERM before we SIGKILL it
+# (see _install_child_signal_forwarding). Generous enough for it to close its
+# IPP connection politely, short enough that cupsd's own job teardown isn't
+# left waiting on us.
+CHILD_TERM_GRACE_SECONDS = 5
 
 # Held documents live here until released (app/printers/release.py, invoked
 # from printops-api, which runs as a non-root service user) or purged past
@@ -177,6 +184,73 @@ def api_request(token: str, method: str, path: str, body: dict | None = None) ->
         return json.loads(resp.read())
 
 
+# The real `ipp` backend this script is currently proxying for, so the signal
+# handler installed below can reap it. Module-level because a signal handler
+# has no other way to reach it.
+_CHILD_PROC: subprocess.Popen | None = None
+
+
+def _install_child_signal_forwarding() -> None:
+    """Make this script kill the real `ipp` backend it spawned when cupsd
+    kills *it*.
+
+    cupsd sends SIGTERM to a job's backend whenever the job is cancelled,
+    held, or restarted — including its own "Canceling stuck job after 10800
+    seconds" timeout, and the "Job restarted because the printer was
+    modified" path that any `lpadmin` on this queue triggers. Python's
+    default SIGTERM handling exits this process immediately without touching
+    the child, so the real `ipp` backend survives, reparents to init, and
+    keeps its TCP connection to the printer open.
+
+    That is not merely untidy. A leaked backend goes on retrying into the
+    device, and CUPS's `ipp` backend retries a refusing device with no
+    backoff at all — several hundred connections a second, per orphan.
+    Confirmed live on the LCACTC Kyocera (2026-08-20): three orphans
+    accumulated across one afternoon, and together with the leaked cupsd
+    `-m everywhere` threads (scripts/sync_cups_queue.sh) they held the
+    device's IPP service saturated for hours, so *every* queue pointed at it
+    failed while SNMP kept reporting "Ready." Reaping the child on the way
+    out is what stops one bad job from becoming a device-wide outage.
+    """
+
+    def _forward(signum: int, _frame: object) -> None:
+        child = _CHILD_PROC
+        if child is not None and child.poll() is None:
+            child.terminate()
+            try:
+                child.wait(timeout=CHILD_TERM_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                # It ignored SIGTERM (the real `ipp` backend does exactly
+                # this while blocked in its own connect/retry loop, which is
+                # precisely the case that leaks). Nothing left to be polite
+                # with.
+                child.kill()
+                child.wait()
+        # 128+signum is the shell convention for "died on this signal", and
+        # what cupsd already expects from a backend that was signalled.
+        sys.exit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, _forward)
+
+
+def _run_real_backend(argv: list[str], env: dict, stdin=None) -> subprocess.Popen:
+    """Spawns the real `ipp` backend and records it globally so the signal
+    handler above can reap it. Always use this rather than subprocess.run() —
+    run() gives no handle to kill from a signal handler, which is how the
+    orphan leak happened in the first place.
+
+    close_fds=False: cupsd hands this script fds beyond 0/1/2 — notably a
+    back-channel (job status/auth) fd the real `ipp` backend polls on.
+    subprocess's default close_fds=True closes those before exec, so the real
+    backend was polling a dead fd and spinning forever (EBADF loop) instead of
+    ever opening the connection to the printer.
+    """
+    global _CHILD_PROC
+    _CHILD_PROC = subprocess.Popen(argv, env=env, stdin=stdin, close_fds=False)
+    return _CHILD_PROC
+
+
 def main() -> int:
     if len(sys.argv) == 1:
         # Discovery mode (e.g. `lpinfo -v`) — queues are created explicitly
@@ -288,13 +362,14 @@ def main() -> int:
     child_env = dict(os.environ)
     child_env["DEVICE_URI"] = real_uri
 
-    # close_fds=False: cupsd hands this script fds beyond 0/1/2 — notably a
-    # back-channel (job status/auth) fd the real `ipp` backend polls on.
-    # subprocess's default close_fds=True closes those before exec, so the
-    # real backend was polling a dead fd and spinning forever (EBADF loop)
-    # instead of ever opening the connection to the printer.
+    # Registered only now, immediately before the first child can exist:
+    # everything above this point is API bookkeeping with nothing to reap, and
+    # a handler installed earlier would only change how this script dies while
+    # it is still the sole process.
+    _install_child_signal_forwarding()
+
     if filename:
-        exit_code = subprocess.run(real_argv, env=child_env, close_fds=False).returncode
+        exit_code = _run_real_backend(real_argv, child_env).wait()
     else:
         # No filename means CUPS handed the document over via stdin instead
         # of a temp file — proxy it through to the real backend ourselves
@@ -303,7 +378,7 @@ def main() -> int:
         # size in this path. Same blocking/backpressure semantics as a
         # shell pipe: our writes just block until the child drains, no
         # deadlock risk since we never read the child's own stdout/stderr.
-        proc = subprocess.Popen(real_argv, env=child_env, stdin=subprocess.PIPE, close_fds=False)
+        proc = _run_real_backend(real_argv, child_env, stdin=subprocess.PIPE)
         file_size = 0
         try:
             while True:

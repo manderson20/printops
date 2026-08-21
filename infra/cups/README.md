@@ -22,6 +22,30 @@ backend (`backends/printops` in this directory, installed to
 
 See `scripts/sync_cups_queue.sh` for creating a queue for a given printer.
 
+### Installing the backend
+
+`scripts/install_cups_backend.sh` copies `backends/printops` to
+`/usr/lib/cups/backend/printops` with the ownership and mode CUPS insists on
+(root-owned, `0700` — it silently refuses to run a backend that is group- or
+world-writable). It is idempotent and runs from both `scripts/setup.sh` and
+`infra/update-watcher/apply-update.sh`, so a deployed box picks up backend
+changes on its next update.
+
+Run it by hand after editing `backends/printops`, or the file cupsd executes
+stays whatever was there before. It was installed by hand for a long time and
+drifted six weeks behind this directory, still carrying spool permissions that
+had already been fixed here — which is why it is scripted now.
+
+### Steps 3 and 4 are one process, deliberately
+
+The backend `Popen`s CUPS's `ipp` backend and forwards SIGTERM to it (see
+`_install_child_signal_forwarding`). cupsd SIGTERMs a job's backend on cancel,
+hold, restart and its own stuck-job timeout, and without that forwarding the
+`ipp` child survives, reparents to init, and keeps retrying into the printer —
+with no backoff, at several hundred connections a second. Anything spawning the
+real backend must go through `_run_real_backend` for that reason; a plain
+`subprocess.run` leaves no handle to kill.
+
 ## SNMP page/copy counter polling
 
 `app/printers/snmp_counters.py` polls each printer's page/copy/print counters

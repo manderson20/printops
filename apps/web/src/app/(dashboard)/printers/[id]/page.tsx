@@ -22,6 +22,18 @@ import { RollMediaCard } from "./RollMedia";
 import { SnmpCountersCard } from "./SnmpCounters";
 import { UsageHistoryCard } from "./UsageHistory";
 
+// Connection settings, kept separate from the identity fields below because
+// getting one of them wrong stops the printer working rather than just
+// mislabelling it. They were previously not editable here at all: when the
+// LCACTC Kyocera was switched to TLS-only IPP (2026-08-20) it needed port 443
+// and /ipp/print, and the form offered only the TLS checkbox — which on its own
+// cannot work, since the device serves cleartext on 631 and a TLS handshake
+// there just fails. There was no way to fix the printer from this page.
+const CONNECTION_FIELDS = [
+  ["port", "Port"],
+  ["ipp_path", "IPP Path"],
+] as const;
+
 const EDITABLE_FIELDS = [
   ["name", "Name"],
   ["ip_address", "IP Address"],
@@ -107,8 +119,14 @@ export default function PrinterOverviewTab() {
   const { printer, setPrinter } = usePrinterDetail();
   const isAdmin = useCurrentUser()?.role === "admin";
   const editableFields = printer.is_virtual ? VIRTUAL_EDITABLE_FIELDS : EDITABLE_FIELDS;
+  const connectionFields = printer.is_virtual ? [] : CONNECTION_FIELDS;
   const [form, setForm] = useState<Record<string, string>>(
-    Object.fromEntries(editableFields.map(([field]) => [field, (printer as never)[field] ?? ""])),
+    Object.fromEntries(
+      [...editableFields, ...connectionFields].map((entry) => [
+        entry[0],
+        String((printer as never)[entry[0]] ?? ""),
+      ]),
+    ),
   );
   const [airprintEnabled, setAirprintEnabled] = useState(printer.airprint_enabled);
   const [useTls, setUseTls] = useState(printer.use_tls);
@@ -123,8 +141,14 @@ export default function PrinterOverviewTab() {
     setSaving(true);
     setActionError(null);
     try {
+      const { port, ...rest } = form;
       const updated = await updatePrinter(printer.id, {
-        ...form,
+        ...rest,
+        // The form holds every value as a string; `port` is an integer on the
+        // API and a string 422s the entire save, taking the other edits with it.
+        ...(printer.is_virtual || port === undefined || port === ""
+          ? {}
+          : { port: Number(port) }),
         airprint_enabled: airprintEnabled,
         use_tls: useTls,
       });
@@ -242,6 +266,43 @@ export default function PrinterOverviewTab() {
             </span>
           </span>
         </label>
+
+        {!printer.is_virtual && (
+          <div className="mt-4 grid grid-cols-2 gap-4">
+            {CONNECTION_FIELDS.map(([field, label]) => (
+              <Field key={field} label={label}>
+                <Input
+                  value={form[field] ?? ""}
+                  disabled={!isAdmin}
+                  inputMode={field === "port" ? "numeric" : undefined}
+                  // An empty IPP Path means "detect it", so the box shows what
+                  // detection last found as its placeholder. Placeholder text
+                  // renders grey and a real value renders solid, which is the
+                  // whole distinction: grey = the server worked this out and
+                  // will keep it current, solid = someone pinned it and
+                  // detection will not touch it.
+                  placeholder={
+                    field === "port" ? "631" : printer.ipp_path_detected ?? "/ipp/print"
+                  }
+                  onChange={(e) => setForm((prev) => ({ ...prev, [field]: e.target.value }))}
+                />
+              </Field>
+            ))}
+          </div>
+        )}
+
+        {!printer.is_virtual && (
+          <p className="mt-2 text-xs text-zinc-500">
+            {printer.ipp_path
+              ? "IPP Path is set manually, so automatic detection won't change it. Clear the box to hand it back to detection."
+              : printer.ipp_path_detected
+                ? `IPP Path is detected automatically — currently ${printer.ipp_path_detected}. Type a value only to override it.`
+                : "Leave IPP Path empty and PrintOps will work it out from the printer."}{" "}
+            Port 631 is plain IPP; a printer set to require TLS normally serves IPPS on 443
+            instead. Turning on TLS below without also changing the port will fail — the device
+            is still speaking cleartext on 631, so the TLS handshake never completes.
+          </p>
+        )}
 
         {!printer.is_virtual && (
           <label className="mt-4 flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">

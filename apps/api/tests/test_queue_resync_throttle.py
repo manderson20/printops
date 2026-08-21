@@ -107,6 +107,79 @@ def test_a_configured_max_clients_is_honoured(monkeypatch, tmp_path):
     assert cups_health.max_clients() == 500
 
 
+def _idle_queue(monkeypatch, depth=0):
+    """Most of these tests predate the busy-queue gate and care about the
+    cooldown/saturation logic instead. Without a stub they'd trip over the
+    newer gate — there is no real CUPS queue in a unit test, so lpstat reports
+    nothing and 'couldn't tell' counts as busy."""
+    monkeypatch.setattr(status.job_control, "active_job_count", lambda _pid: depth)
+
+
+# ---- the busy-queue gate ----
+#
+# Syncing runs lpadmin, and cupsd restarts every job on a queue whose printer
+# is modified — including ones it has itself just given up on. On the LCACTC
+# Kyocera (2026-08-20) that closed a loop: job stalls, cupsd cancels it at its
+# 3-hour limit, the next resync restarts it, repeat for six hours, and nothing
+# behind it in the queue ever prints.
+
+
+@pytest.mark.asyncio
+async def test_a_queue_with_work_on_it_is_not_resynced(monkeypatch):
+    calls = []
+    _idle_queue(monkeypatch, depth=3)
+    monkeypatch.setattr(status.cups_health, "is_saturated", lambda: False)
+    monkeypatch.setattr(status, "sync_queue", lambda pid: calls.append(pid))
+
+    printer = _printer()
+    assert await status.run_automatic_queue_sync(printer) is False
+    assert calls == []
+    # Not stamped, for the same reason as the saturation gate: nothing was
+    # attempted, so the resync should happen on a later cycle once the queue
+    # has drained rather than serving a cooldown it did not earn.
+    assert printer.last_auto_queue_sync_at is None
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_queue_counts_as_busy(monkeypatch):
+    """The opposite default from the /proc check in cups_health: there,
+    'couldn't tell' must not disable maintenance forever. Here it must hold
+    off, because the cost of being wrong is restarting someone's print job —
+    and an unanswered lpstat is not evidence a queue is idle."""
+    calls = []
+    monkeypatch.setattr(status.job_control, "active_job_count", lambda _pid: None)
+    monkeypatch.setattr(status.cups_health, "is_saturated", lambda: False)
+    monkeypatch.setattr(status, "sync_queue", lambda pid: calls.append(pid))
+
+    assert await status.run_automatic_queue_sync(_printer()) is False
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_an_idle_queue_is_resynced_normally(monkeypatch):
+    calls = []
+    _idle_queue(monkeypatch, depth=0)
+    monkeypatch.setattr(status.cups_health, "is_saturated", lambda: False)
+    monkeypatch.setattr(status, "sync_queue", lambda pid: calls.append(pid))
+
+    assert await status.run_automatic_queue_sync(_printer()) is True
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_saturation_is_checked_before_the_queue_is_read(monkeypatch):
+    """Ordering matters: asking lpstat costs a cupsd client slot, which is the
+    exact resource the saturation gate is protecting."""
+
+    def _should_not_run(_pid):
+        raise AssertionError("queue was read despite a saturated scheduler")
+
+    monkeypatch.setattr(status.job_control, "active_job_count", _should_not_run)
+    monkeypatch.setattr(status.cups_health, "is_saturated", lambda: True)
+
+    assert await status.run_automatic_queue_sync(_printer()) is False
+
+
 # ---- the whole gate ----
 
 
@@ -126,6 +199,7 @@ async def test_a_saturated_scheduler_is_left_alone(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_successful_sync_clears_the_failure_count(monkeypatch):
+    _idle_queue(monkeypatch)
     monkeypatch.setattr(status.cups_health, "is_saturated", lambda: False)
     monkeypatch.setattr(status, "sync_queue", lambda pid: None)
 
@@ -144,6 +218,7 @@ async def test_a_failed_sync_counts_toward_the_backoff_and_is_not_raised(monkeyp
     def _boom(pid):
         raise QueueSyncError("Unable to connect to 192.0.2.5:631")
 
+    _idle_queue(monkeypatch)
     monkeypatch.setattr(status.cups_health, "is_saturated", lambda: False)
     monkeypatch.setattr(status, "sync_queue", _boom)
 
@@ -158,6 +233,7 @@ async def test_the_flapping_printer_gets_one_resync_not_a_hundred(monkeypatch):
     """The actual regression: 137 resyncs in one day from a single copier
     going offline and back every few minutes."""
     calls = []
+    _idle_queue(monkeypatch)
     monkeypatch.setattr(status.cups_health, "is_saturated", lambda: False)
     monkeypatch.setattr(status, "sync_queue", lambda pid: calls.append(pid))
 
@@ -166,3 +242,48 @@ async def test_the_flapping_printer_gets_one_resync_not_a_hundred(monkeypatch):
         await status.run_automatic_queue_sync(printer)
 
     assert len(calls) == 1
+
+
+# ---- the stall check must not become the problem it reports ----
+
+
+@pytest.mark.asyncio
+async def test_stall_detection_reads_no_queue_while_cupsd_is_saturated(monkeypatch):
+    """Reading the queue costs a cupsd client slot, once per online printer per
+    poll. A saturated scheduler already looks to users exactly like a printer
+    that has stopped responding, so the check must not help exhaust the pool it
+    exists to warn about."""
+
+    def _should_not_run(_pid):
+        raise AssertionError("queue was read despite a saturated scheduler")
+
+    monkeypatch.setattr(status.job_control, "queue_snapshot", _should_not_run)
+    monkeypatch.setattr(status.cups_health, "is_saturated", lambda: True)
+
+    printer = _printer()
+    printer.status = "online"
+    await status._apply_queue_stall(printer)
+
+    # Left as it was found — no stall asserted on evidence never gathered.
+    assert printer.status == "online"
+
+
+@pytest.mark.asyncio
+async def test_an_offline_printer_is_not_queried_either(monkeypatch):
+    """A printer already reporting offline/error has said something more
+    specific; burying it under a stall message would lose the better
+    diagnosis, and the lpstat would be wasted."""
+
+    def _should_not_run(_pid):
+        raise AssertionError("queue was read for a printer that is not online")
+
+    monkeypatch.setattr(status.job_control, "queue_snapshot", _should_not_run)
+    monkeypatch.setattr(status.cups_health, "is_saturated", lambda: False)
+
+    printer = _printer()
+    printer.status = "offline"
+    printer.status_message = "Timeout occurred while connecting to IPP server."
+    await status._apply_queue_stall(printer)
+
+    assert printer.status == "offline"
+    assert "Timeout" in printer.status_message
