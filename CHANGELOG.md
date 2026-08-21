@@ -5,6 +5,45 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.59.2] - 2026-08-21
+
+- **Fixed: toner levels were being read off some printers and then thrown
+  away.** PrintOps worked out which cartridge was which colour by looking
+  for the words "cyan", "magenta", "yellow" or "black" in whatever the
+  printer called its supplies. Kyocera devices don't use those words — they
+  report part numbers like `TK-8802C` — so every cartridge failed to match,
+  and the levels the printer was reporting perfectly well were discarded.
+  Setting the colours by hand in the printer's settings couldn't fix it,
+  because the matching never consulted that setting. Part numbers ending in
+  C, M, Y or K are now understood, so those printers report toner again.
+- **New: the test page is now a printer identity sheet.** It used to be a
+  logo and four lines on a mostly empty page. It now prints what PrintOps
+  knows about the device — model, serial, address, firmware, location, queue
+  name and status; which features it has (colour, duplex, collation, PIN
+  printing, accounting, IPPS); its resolutions, media sizes, loaded trays,
+  finishing options and formats; toner levels and page counters as they read
+  at the moment you pressed the button. Walk to the printer, pick up the
+  page, and everything you'd otherwise go back to a screen for is on it. A
+  toner slot that has never been polled says so, rather than "not reported"
+  — setting a cartridge's colour labels the slot, but only an SNMP poll
+  fills in a level, and the two need different fixes.
+- **New: the test page actually tests the print.** Alongside the details it
+  carries colour patches, an eleven-step greyscale ramp, hairlines from one
+  to four pixels, a 5-to-10 point type ladder and corner registration marks
+  — plus a short checklist of what a good one looks like, so the targets
+  mean something to whoever is holding the sheet. A printer that has never
+  been discovered still gets a page; the parts PrintOps doesn't know are
+  simply blank rather than blocking the print.
+- **Fixed: the test page now prints in your own time, not UTC.** Every time
+  PrintOps shows you is in the timezone of the computer you're reading it on
+  — except the test page, which is composed on the server and carried the
+  server's UTC clock. Comparing a freshly printed page against the job list
+  meant mentally subtracting five hours. The test page now prints the time
+  where you are, labelled with the zone you'd expect ("CDT", "CST"), and
+  follows daylight saving on its own with nothing to set. It reads as a
+  12-hour clock with AM/PM, and the date sits in the top-right of the
+  header rather than the footer.
+
 ## [0.59.1] - 2026-08-21
 
 A printer that PrintOps could not print to had been reporting itself online

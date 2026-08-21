@@ -46,6 +46,15 @@ class CupsQueueDefaultsOut(BaseModel):
     page_size: str | None = None
 
 
+class TestPrintIn(BaseModel):
+    # IANA zone name from the admin's browser
+    # (Intl.DateTimeFormat().resolvedOptions().timeZone) so the printed page
+    # carries the clock they're actually standing next to. Optional, and an
+    # unrecognised value is ignored rather than rejected — callers that
+    # aren't the web UI (curl, a script) just get UTC.
+    timezone: str | None = None
+
+
 class PrinterCreate(BaseModel):
     name: str
     ip_address: IPvAnyAddress

@@ -34,7 +34,7 @@ from app.printers.snmp_counters import (
     sync_toner_levels,
 )
 from app.printers.status import refresh_printer_status_and_rediscover
-from app.printers.test_print import TestPrintError, submit_test_print
+from app.printers.test_print import TestPrintError, build_page_info, submit_test_print
 from app.printers.toner_history import get_daily_toner_levels
 from app.quotas.service import get_pages_used, period_bounds
 from app.schemas.auth import UserOut
@@ -44,6 +44,7 @@ from app.schemas.printer import (
     PrinterMdmConnectionOut,
     PrinterOut,
     PrinterUpdate,
+    TestPrintIn,
     VirtualQueueCreate,
 )
 from app.schemas.printer_ou_access import PrinterAllowedOuCreate, PrinterAllowedOuOut
@@ -669,13 +670,30 @@ async def get_cups_queue_defaults(printer_id: UUID, db: AsyncSession = Depends(g
 @router.post("/{printer_id}/test-print", dependencies=[Depends(require_role("admin"))])
 async def test_print(
     printer_id: UUID,
+    payload: TestPrintIn | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: UserOut = Depends(get_current_user),
 ):
     printer = await _get_printer_or_404(printer_id, db)
+    # The page reports what PrintOps already knows about the device, so the
+    # snapshot is assembled here, while the session is awaited — the render
+    # runs in a worker thread and must not touch the ORM.
+    cartridges = (
+        (
+            await db.execute(
+                select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    info = build_page_info(printer, list(cartridges))
     try:
         message = await asyncio.to_thread(
-            submit_test_print, str(printer.id), printer.name, current_user.username
+            submit_test_print,
+            info,
+            current_user.username,
+            payload.timezone if payload else None,
         )
     except TestPrintError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
