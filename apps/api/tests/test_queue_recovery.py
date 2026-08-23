@@ -204,6 +204,70 @@ def test_backoff_is_capped_so_a_queue_is_never_abandoned(monkeypatch):
     assert queue_recovery.resume_due(PRINTER, now=T0 + queue_recovery.MAX_RESUME_BACKOFF) is True
 
 
+# ---- the backoff, when the device comes back ----
+
+
+def _fail_into_the_cap(monkeypatch):
+    """Seven resumes that didn't hold — the state a flapping printer reaches
+    within an hour, and the state that used to leave a serviced one dead."""
+    monkeypatch.setattr(queue_recovery.subprocess, "run", lambda *_a, **_k: _Completed())
+    for _ in range(7):
+        queue_recovery.resume_queue(PRINTER, now=T0)
+        queue_recovery.note_still_stopped(PRINTER)
+
+
+def test_a_printer_back_from_service_does_not_wait_out_its_backoff(monkeypatch):
+    """The 31-hour outage in a slower form: the backoff was earned while the
+    copier was unplugged, and a clock alone would keep the queue off for up to
+    four hours after it came back."""
+    _fail_into_the_cap(monkeypatch)
+    queue_recovery.note_device_away(PRINTER)
+    assert queue_recovery.resume_due(PRINTER, now=T0 + timedelta(hours=1)) is False
+
+    back = T0 + timedelta(hours=1)
+    stayed = back + queue_recovery.HEALTHY_RESET_PERIOD
+    queue_recovery.note_device_back(PRINTER, now=back)
+    queue_recovery.note_device_back(PRINTER, now=stayed)
+
+    assert queue_recovery.resume_due(PRINTER, now=stayed) is True
+
+
+def test_a_device_that_flaps_back_for_a_moment_does_not_reset_anything(monkeypatch):
+    """One healthy reading is not a return. Resetting on it would hand a
+    flapping printer a resume per cycle, which is what the doubling exists to
+    prevent."""
+    _fail_into_the_cap(monkeypatch)
+    queue_recovery.note_device_away(PRINTER)
+
+    back = T0 + timedelta(hours=1)
+    queue_recovery.note_device_back(PRINTER, now=back)
+    queue_recovery.note_device_back(PRINTER, now=back + timedelta(minutes=1))
+    # ...and away it goes again before the period is up.
+    queue_recovery.note_device_away(PRINTER)
+    queue_recovery.note_device_back(PRINTER, now=back + timedelta(minutes=2))
+
+    assert queue_recovery.resume_due(PRINTER, now=back + timedelta(minutes=2)) is False
+
+
+def test_a_device_that_never_went_away_keeps_its_backoff(monkeypatch):
+    """A device insisting it is online while every resume fails is exactly
+    what the backoff is for. Healthy readings from it are not news."""
+    _fail_into_the_cap(monkeypatch)
+    for minute in range(30):
+        queue_recovery.note_device_back(PRINTER, now=T0 + timedelta(minutes=minute))
+
+    assert queue_recovery.resume_due(PRINTER, now=T0 + timedelta(minutes=30)) is False
+
+
+def test_a_printer_with_no_recovery_in_progress_is_not_invented(monkeypatch):
+    """Both notes are called on every poll of a stopped queue, including for
+    printers this process has never attempted anything for."""
+    queue_recovery.note_device_away(PRINTER)
+    queue_recovery.note_device_back(PRINTER, now=T0)
+
+    assert queue_recovery.resume_due(PRINTER, now=T0) is True
+
+
 def test_a_failed_resume_is_reported_rather_than_swallowed(monkeypatch):
     monkeypatch.setattr(
         queue_recovery.subprocess,
@@ -392,3 +456,39 @@ def _async_state(**kwargs):
         return PrinterStateResult(state_message=None, **kwargs)
 
     return _probe
+
+
+@pytest.mark.asyncio
+async def test_a_serviced_printer_is_resumed_once_it_has_come_back_and_stayed(monkeypatch):
+    """End to end, at the level the 60-second poll works at: the queue is
+    stopped, the copier was away long enough to run the backoff up to its cap,
+    and it is now back. It should print, not wait out a timer."""
+    _queue(monkeypatch, STOPPED)
+    monkeypatch.setattr(queue_recovery.subprocess, "run", lambda *_a, **_k: _Completed())
+    for _ in range(7):
+        queue_recovery.resume_queue(PRINTER)
+        queue_recovery.note_still_stopped(PRINTER)
+    resumed = _record_resumes(monkeypatch)
+    # Real polls, so real elapsed time — the reset period is what's under test
+    # here, not how long it is.
+    monkeypatch.setattr(queue_recovery, "HEALTHY_RESET_PERIOD", timedelta(0))
+
+    # While it is away: checked every cycle, never resumed. The queue keeps
+    # accepting, so its users' jobs queue up behind it rather than failing.
+    away = _printer(status="offline", status_message="Timeout connecting to IPP")
+    for _ in range(5):
+        assert await status._apply_queue_recovery(away) is False
+    assert resumed == []
+    assert QUEUE_PAUSED_REASON in away.status_reasons
+
+    # It comes back. The first healthy poll starts the clock, the next one
+    # clears the backoff and the queue starts.
+    back = _printer(status="online")
+    assert await status._apply_queue_recovery(back) is True
+    assert resumed == []
+
+    back = _printer(status="online")
+    assert await status._apply_queue_recovery(back) is True
+    assert resumed == [PRINTER]
+    assert back.status == "online"
+    assert "started again automatically" in back.status_message
