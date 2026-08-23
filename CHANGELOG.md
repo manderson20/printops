@@ -5,6 +5,30 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.59.5] - 2026-08-23
+
+- **Fixed: filtering Insights to one printer only filtered half the page.**
+  Picking a printer (or a department) narrowed every printing number on the
+  report, but left every walk-up copying number exactly as it was — the whole
+  district's. The Combined Leaderboard was the clearest place to see it: it
+  ranked people by their printing on the one printer plus their copying
+  everywhere, so someone who had never used that machine still appeared on
+  its report, and everyone's totals were too high. Both filters now apply to
+  copying as well, through the link between a copier and the printer it also
+  is in PrintOps. A printer with no copier attached to it now reports no
+  copies, which is the right answer for an ordinary desktop printer.
+- **Fixed: a job could be written off when the print server was simply unable
+  to answer for it.** When PrintOps checks what became of a job whose delivery
+  never reported back, it asks the print server directly. It treated every
+  kind of unhelpful reply as "no record of this job" — including replies that
+  mean the server declined to answer, such as a permissions error or a
+  momentary hiccup — and a job with no record is eventually recorded as
+  "outcome unknown" once it is a couple of hours old. So a job that was
+  printing perfectly well could lose its history because the question came at
+  a bad moment. PrintOps now tells the two apart: only a genuine "I have no
+  record of that job" counts, and anything else is asked again on the next
+  check.
+
 ## [0.59.4] - 2026-08-23
 
 - **Fixed: jobs that stayed "printing" forever.** A job's record was written
