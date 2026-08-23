@@ -10,7 +10,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from app.models.printer import Printer
-from app.printers import cups_health, job_control, queue_stall
+from app.printers import cups_health, job_control, queue_recovery, queue_stall
 from app.printers.discovery import refresh_printer_capabilities
 from app.printers.ipp_client import PrinterProbeError, PrinterStateResult, probe_printer_state
 from app.printers.queue_sync import QueueSyncError, sync_queue
@@ -87,10 +87,14 @@ def derive_status(printer_state: int | None, state_reasons: list[str]) -> tuple[
     return "unknown", None
 
 
-async def refresh_printer_status(printer: Printer) -> None:
+async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> None:
     """Probes `printer` over IPP and updates its status fields in place.
     Does not commit — the caller owns the transaction (matches
-    app/printers/queue_sync.py's convention)."""
+    app/printers/queue_sync.py's convention).
+
+    `manual` marks a check a person asked for (the "Check Status" button),
+    which skips the recovery cooldown below — same rule as
+    auto_resync_due."""
     try:
         result: PrinterStateResult = await probe_printer_state(
             printer.ip_address,
@@ -108,7 +112,102 @@ async def refresh_printer_status(printer: Printer) -> None:
         printer.status_reasons = [r for r in result.state_reasons if r != "none"] or None
         printer.status_message = result.state_message or message
     printer.status_checked_at = datetime.now(UTC)
+    if await _apply_queue_recovery(printer, manual=manual):
+        # A queue that cupsd had stopped explains everything the stall
+        # detector would otherwise report, and says it more usefully. Running
+        # both would bury the real diagnosis under "check the port/TLS/IPP
+        # path", which is precisely the wrong place to send someone whose
+        # printer was simply away being serviced.
+        return
     await _apply_queue_stall(printer)
+
+
+async def _apply_queue_recovery(printer: Printer, *, manual: bool = False) -> bool:
+    """Starts this printer's CUPS queue again if cupsd had stopped it, and
+    reports the fact either way. Returns whether the queue was found stopped
+    — i.e. whether this is now the printer's diagnosis.
+
+    The device having gone away and come back is the ordinary case, not an
+    exotic one: a copier is wheeled off for service, cupsd stops its queue
+    when a job fails mid-delivery, and the copier comes back fine. Nothing
+    used to notice, because every other signal PrintOps collects describes
+    the device rather than the queue — see app/printers/queue_recovery.py.
+
+    A queue is only resumed when the device itself is reporting healthy. If
+    the printer is still offline or in error, resuming would hand cupsd one
+    more job to fail and get the queue stopped again; the device's own
+    message is the better diagnosis, so it is kept and the paused queue is
+    recorded alongside it as a reason."""
+    printer_id = str(printer.id)
+
+    # Same cupsd-slot reasoning as _apply_queue_stall below: this adds one
+    # short-lived lpstat per printer per cycle, and a scheduler with no room
+    # left is not the moment to spend slots on maintenance. Skipping is safe
+    # — a stopped queue stays stopped, and the next uncongested cycle finds
+    # it.
+    if cups_health.is_saturated():
+        return False
+
+    state = await asyncio.to_thread(queue_recovery.local_queue_state, printer_id)
+    if state is None or not state.stopped:
+        # Includes "couldn't ask cupsd" and "this printer has no queue": in
+        # neither case is there a recovery in progress to remember.
+        queue_recovery.forget(printer_id)
+        return False
+
+    # The stall clock measures how long the head job has sat there, which on a
+    # stopped queue is only a measure of how long the queue was off. Left
+    # standing, it would fire the moment the queue restarts — reporting a
+    # four-hour stall against a job that is at that moment printing normally,
+    # with the port/TLS/IPP-path advice attached. Restart the clock instead.
+    queue_stall.forget(printer_id)
+
+    if printer.status != "online":
+        queue_recovery.note_still_stopped(printer_id)
+        printer.status_reasons = [
+            *(printer.status_reasons or []),
+            queue_recovery.QUEUE_PAUSED_REASON,
+        ]
+        return False
+
+    if not (manual or queue_recovery.resume_due(printer_id)):
+        queue_recovery.note_still_stopped(printer_id)
+        _mark_paused(printer, state, resumed=False)
+        return True
+
+    try:
+        await asyncio.to_thread(queue_recovery.resume_queue, printer_id)
+    except queue_recovery.QueueResumeError as exc:
+        logger.warning("Could not restart the CUPS queue for %s: %s", printer.name, exc)
+        _mark_paused(printer, state, resumed=False)
+        return True
+
+    logger.warning(
+        "%s: CUPS had stopped this printer's queue (%s) — restarted it.",
+        printer.name,
+        state.message or "no reason given",
+    )
+    _mark_paused(printer, state, resumed=True)
+    return True
+
+
+def _mark_paused(printer: Printer, state: queue_recovery.LocalQueueState, *, resumed: bool) -> None:
+    """Records a stopped queue on the printer row.
+
+    A queue that was just restarted is left reading `online` with no reason
+    keyword: the fault is over, the message says what happened, and the UI
+    renders every status reason as a red badge (apps/web .../printers/[id]).
+    A red badge on a printer that is working again is an error nobody can
+    act on, and those train people to ignore the field. A queue still
+    stopped keeps both — there it is exactly what an admin should see."""
+    printer.status_message = queue_recovery.paused_reason(state, resumed)
+    if resumed:
+        return
+    printer.status = "error"
+    printer.status_reasons = [
+        *(printer.status_reasons or []),
+        queue_recovery.QUEUE_PAUSED_REASON,
+    ]
 
 
 async def _apply_queue_stall(printer: Printer) -> None:
@@ -147,7 +246,7 @@ async def _apply_queue_stall(printer: Printer) -> None:
     logger.warning("%s: %s", printer.name, reason)
 
 
-async def refresh_printer_status_and_rediscover(printer: Printer) -> None:
+async def refresh_printer_status_and_rediscover(printer: Printer, *, manual: bool = False) -> None:
     """Refreshes status, then re-runs capability discovery
     (app/printers/discovery.py) and retries the CUPS queue sync
     (app/printers/queue_sync.py) if the printer just came back online — a
@@ -160,7 +259,7 @@ async def refresh_printer_status_and_rediscover(printer: Printer) -> None:
     check-status endpoint (app/main.py, app/routers/printers.py) so the two
     behave identically."""
     was_online = printer.status == "online"
-    await refresh_printer_status(printer)
+    await refresh_printer_status(printer, manual=manual)
     if printer.status != "online" or was_online:
         return
     # Capability discovery is one IPP probe and stays unconditional; it is
