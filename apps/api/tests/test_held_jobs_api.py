@@ -75,27 +75,32 @@ async def _make_job(db_session_factory, printer_id, submitted_by, **overrides):
 
 
 def test_requires_auth(client, printer_id):
-    response = client.get("/api/v1/quota-holds")
+    response = client.get("/api/v1/held-jobs")
     assert response.status_code == 401
 
 
-async def test_lists_only_quota_held_jobs(client, auth_headers, printer_id, db_session_factory):
+async def test_lists_every_held_job_whatever_is_holding_it(
+    client, auth_headers, printer_id, db_session_factory
+):
+    """This used to list quota holds only, which left the release holds with
+    no admin surface at all — see the module docstring on held_jobs.py for who
+    that stranded."""
     await _make_job(db_session_factory, printer_id, "matt@example.org")
     await _make_job(db_session_factory, printer_id, "other@example.org", hold_reason="pin_release")
     await _make_job(db_session_factory, printer_id, "third@example.org", status="forwarded")
 
-    response = client.get("/api/v1/quota-holds", headers=auth_headers)
+    response = client.get("/api/v1/held-jobs", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
-    assert len(body) == 1
-    assert body[0]["submitted_by"] == "matt@example.org"
+    assert {row["submitted_by"] for row in body} == {"matt@example.org", "other@example.org"}
+    assert {row["hold_reason"] for row in body} == {"quota", "pin_release"}
     assert body[0]["printer_name"] == "Color Printer"
 
 
 async def test_release_succeeds(client, auth_headers, printer_id, db_session_factory):
     job = await _make_job(db_session_factory, printer_id, "matt@example.org")
-    with patch("app.routers.quota_holds.submit_released_job", return_value="request id is x-1"):
-        response = client.post(f"/api/v1/quota-holds/{job.id}/release", headers=auth_headers)
+    with patch("app.routers.held_jobs.submit_released_job", return_value="request id is x-1"):
+        response = client.post(f"/api/v1/held-jobs/{job.id}/release", headers=auth_headers)
     assert response.status_code == 200
     assert response.json()["status"] == "forwarded"
 
@@ -105,25 +110,81 @@ async def test_release_failure_marks_job_failed(
 ):
     job = await _make_job(db_session_factory, printer_id, "matt@example.org")
     with patch(
-        "app.routers.quota_holds.submit_released_job", side_effect=ReleaseError("lp exploded")
+        "app.routers.held_jobs.submit_released_job", side_effect=ReleaseError("lp exploded")
     ):
-        response = client.post(f"/api/v1/quota-holds/{job.id}/release", headers=auth_headers)
+        response = client.post(f"/api/v1/held-jobs/{job.id}/release", headers=auth_headers)
     assert response.status_code == 502
 
 
-async def test_cannot_release_pin_release_job_via_admin_route(
+async def test_an_admin_can_release_a_pin_release_hold(
     client, auth_headers, printer_id, db_session_factory
 ):
+    """The case that motivated this: a test page is submitted through the
+    printer's own queue on purpose, so a release-enabled printer holds it like
+    any other job. The kiosk can only hand it back to the person whose PIN maps
+    to the address on the job, so anyone the roster doesn't know, or who has no
+    PIN yet, previously had no way to release it at all."""
     job = await _make_job(
         db_session_factory, printer_id, "matt@example.org", hold_reason="pin_release"
     )
-    response = client.post(f"/api/v1/quota-holds/{job.id}/release", headers=auth_headers)
-    assert response.status_code == 404
+    with patch("app.routers.held_jobs.submit_released_job", return_value="request id is x-1"):
+        response = client.post(f"/api/v1/held-jobs/{job.id}/release", headers=auth_headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "forwarded"
+
+
+async def test_a_follow_me_job_will_not_be_released_without_a_printer(
+    client, auth_headers, db_session_factory
+):
+    """A Follow-Me job was addressed to a virtual queue with no device behind
+    it. The kiosk resolves that to whichever printer the person is standing at;
+    an admin isn't standing anywhere, so they have to say which."""
+    async with db_session_factory() as session:
+        virtual = Printer(name="Follow-Me", ip_address="", is_virtual=True)
+        session.add(virtual)
+        await session.commit()
+        await session.refresh(virtual)
+        virtual_id = virtual.id
+    job = await _make_job(
+        db_session_factory, virtual_id, "matt@example.org", hold_reason="follow_me"
+    )
+
+    response = client.post(f"/api/v1/held-jobs/{job.id}/release", headers=auth_headers)
+
+    assert response.status_code == 400
+    assert "Choose the printer" in response.json()["detail"]
+
+
+async def test_a_follow_me_job_is_released_at_the_printer_the_admin_names(
+    client, auth_headers, printer_id, db_session_factory
+):
+    async with db_session_factory() as session:
+        virtual = Printer(name="Follow-Me", ip_address="", is_virtual=True)
+        session.add(virtual)
+        await session.commit()
+        await session.refresh(virtual)
+        virtual_id = virtual.id
+    job = await _make_job(
+        db_session_factory, virtual_id, "matt@example.org", hold_reason="follow_me"
+    )
+
+    with patch(
+        "app.routers.held_jobs.submit_released_job", return_value="request id is x-1"
+    ) as submit:
+        response = client.post(
+            f"/api/v1/held-jobs/{job.id}/release",
+            headers=auth_headers,
+            json={"printer_id": str(printer_id)},
+        )
+
+    assert response.status_code == 200, response.text
+    assert submit.call_args.args[0] == str(printer_id)
 
 
 async def test_cannot_release_already_forwarded_job(
     client, auth_headers, printer_id, db_session_factory
 ):
     job = await _make_job(db_session_factory, printer_id, "matt@example.org", status="forwarded")
-    response = client.post(f"/api/v1/quota-holds/{job.id}/release", headers=auth_headers)
+    response = client.post(f"/api/v1/held-jobs/{job.id}/release", headers=auth_headers)
     assert response.status_code == 404

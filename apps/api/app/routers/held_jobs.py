@@ -1,9 +1,19 @@
-"""Admin release path for jobs held over a page quota (Job.hold_reason ==
-"quota") — a second, admin-only release surface distinct from the
-self-service PIN kiosk (app/routers/release.py), which is restricted to
-hold_reason="pin_release" jobs only (see release.py's query filters). Reuses
-the same delivery primitive (app/printers/release.py:submit_released_job) as
-the kiosk, just gated by JWT admin role instead of a PIN."""
+"""Admin release path for any job PrintOps is holding — a second release
+surface distinct from the self-service PIN kiosk (app/routers/release.py),
+gated by JWT admin role instead of a PIN. Reuses the same delivery primitive
+(app/printers/release.py:submit_released_job) as the kiosk.
+
+It used to cover only quota holds, on the reasoning that the kiosk handles the
+rest. The kiosk can only release a job to the person who sent it: it resolves a
+PIN to a Google Workspace user and matches Job.submitted_by against that
+address. So anyone the roster doesn't know, or who has no PIN yet, had a job
+that nothing in PrintOps could release — including, routinely, a test page,
+which is submitted through the printer's own queue precisely so it is treated
+like a real job and is therefore held like one. The admin was told "request id
+is ..." and left standing at a printer that was never going to print.
+
+Nothing here weakens the quota hold: an over-quota job still cannot be released
+by the person who sent it, only by an admin, which was always the point."""
 
 import asyncio
 from datetime import UTC, datetime
@@ -19,17 +29,20 @@ from app.deps import require_role
 from app.models.job import Job
 from app.models.printer import Printer
 from app.printers.release import ReleaseError, submit_released_job
-from app.schemas.job import JobListOut, JobOut
+from app.schemas.job import HeldJobReleaseIn, JobListOut, JobOut
 
 router = APIRouter(dependencies=[Depends(require_role("admin"))])
 
 
 @router.get("", response_model=list[JobListOut])
-async def list_quota_holds(db: AsyncSession = Depends(get_db)):
+async def list_held_jobs(db: AsyncSession = Depends(get_db)):
+    """Every job currently held, whatever is holding it. hold_reason rides
+    along on JobOut so the UI can say which is which — an over-quota job and a
+    job waiting at a release printer need different things from an admin."""
     stmt = (
         select(Job, Printer.name)
         .join(Printer, Job.printer_id == Printer.id)
-        .where(Job.status == "held", Job.hold_reason == "quota")
+        .where(Job.status == "held")
         .order_by(Job.created_at)
     )
     rows = (await db.execute(stmt)).all()
@@ -40,16 +53,34 @@ async def list_quota_holds(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{job_id}/release", response_model=JobOut)
-async def release_quota_hold(job_id: UUID, db: AsyncSession = Depends(get_db)):
-    job = await db.get(Job, job_id)
-    if job is None or job.status != "held" or job.hold_reason != "quota":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Quota-held job not found."
-        )
+async def release_held_job(
+    job_id: UUID,
+    payload: HeldJobReleaseIn | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Releases one held job, optionally at a printer of the admin's choosing.
 
-    printer = await db.get(Printer, job.printer_id)
+    The target defaults to the printer the job was sent to, which is the right
+    answer for everything except a Follow-Me job: that was addressed to a
+    virtual queue with no device behind it, and the kiosk resolves it to
+    whichever printer the person is standing at. An admin isn't standing
+    anywhere, so they have to say."""
+    job = await db.get(Job, job_id)
+    if job is None or job.status != "held":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Held job not found.")
+
+    target_id = payload.printer_id if payload else None
+    printer = await db.get(Printer, target_id or job.printer_id)
     if printer is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Printer not found.")
+    if printer.is_virtual:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "This job was sent to a Follow-Me queue, which has no printer behind it. "
+                "Choose the printer to release it at."
+            ),
+        )
 
     try:
         await asyncio.to_thread(
