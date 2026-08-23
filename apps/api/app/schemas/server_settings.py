@@ -1,6 +1,8 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from app.core.validation import validate_timezone
 
 
 class TlsCertificateStatusOut(BaseModel):
@@ -17,6 +19,8 @@ class ServerSettingsUpdate(BaseModel):
     timezone: str | None = None
     require_encryption: bool | None = None
     advertise_ipps: bool | None = None
+
+    _validate_timezone = field_validator("timezone")(validate_timezone)
 
 
 class ServerSettingsOut(BaseModel):

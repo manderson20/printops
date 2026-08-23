@@ -86,11 +86,23 @@ function defaultGranularity(preset: DatePreset): ReportGranularity {
   return "week";
 }
 
+// Dates, not instants. The API resolves a bare date against the district's own
+// timezone (Settings > Server), which is the only place that knows it. Sending
+// an instant built from *this browser's* midnight meant an admin in another
+// timezone — or with a wrong device clock — filtered one day's jobs and had
+// them bucketed by another: part of the day missing, and the rest split across
+// two dates on the chart.
+function isoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+}
+
 function computeRange(
   preset: DatePreset,
   customStart: string,
   customEnd: string,
-): { start: Date; end: Date } | null {
+): { start: string; end: string } | null {
   const now = new Date();
   const startOfToday = new Date(
     now.getFullYear(),
@@ -100,42 +112,41 @@ function computeRange(
   const tomorrow = new Date(startOfToday);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
+  // `end` is exclusive throughout: the day after the last day wanted.
   switch (preset) {
     case "today":
-      return { start: startOfToday, end: tomorrow };
+      return { start: isoDate(startOfToday), end: isoDate(tomorrow) };
     case "week": {
       const start = new Date(startOfToday);
       start.setDate(start.getDate() - 7);
-      return { start, end: tomorrow };
+      return { start: isoDate(start), end: isoDate(tomorrow) };
     }
     case "month": {
       const start = new Date(startOfToday);
       start.setDate(start.getDate() - 30);
-      return { start, end: tomorrow };
+      return { start: isoDate(start), end: isoDate(tomorrow) };
     }
     case "semester_fall": {
       const y = now.getFullYear();
-      return { start: new Date(y, 7, 1), end: new Date(y, 11, 31, 23, 59, 59) };
+      return { start: `${y}-08-01`, end: `${y + 1}-01-01` };
     }
     case "semester_spring": {
       const y = now.getFullYear();
-      return { start: new Date(y, 0, 1), end: new Date(y, 5, 30, 23, 59, 59) };
+      return { start: `${y}-01-01`, end: `${y}-07-01` };
     }
     case "school_year": {
       const y = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
-      return {
-        start: new Date(y, 7, 1),
-        end: new Date(y + 1, 6, 31, 23, 59, 59),
-      };
+      return { start: `${y}-08-01`, end: `${y + 1}-08-01` };
     }
     case "all":
-      return { start: new Date(2000, 0, 1), end: tomorrow };
+      return { start: "2000-01-01", end: isoDate(tomorrow) };
     case "custom": {
       if (!customStart || !customEnd) return null;
-      const start = new Date(customStart);
-      const end = new Date(customEnd);
+      // The date inputs already hand back YYYY-MM-DD; the end date is the
+      // last day the admin wants included, so send the day after it.
+      const end = new Date(`${customEnd}T00:00:00`);
       end.setDate(end.getDate() + 1);
-      return { start, end };
+      return { start: customStart, end: isoDate(end) };
     }
   }
 }
@@ -309,8 +320,8 @@ export default function InsightsPage() {
 
   const filters: ReportFilters = useMemo(
     () => ({
-      start: range?.start.toISOString(),
-      end: range?.end.toISOString(),
+      start: range?.start,
+      end: range?.end,
       building: isAdmin && building ? building : undefined,
       department: isAdmin && department ? department : undefined,
       printer_id: isAdmin && printerId ? printerId : undefined,
@@ -337,7 +348,13 @@ export default function InsightsPage() {
   // useCurrentUser.ts for the same pattern and why (avoids a render or two
   // of stale prior-filter data before the new fetch resolves). Bundled into
   // one JSON key since there are several independent inputs here.
-  const loadKey = JSON.stringify([filters, granularity, periodLabel, preset, range]);
+  const loadKey = JSON.stringify([
+    filters,
+    granularity,
+    periodLabel,
+    preset,
+    range,
+  ]);
   const [prevLoadKey, setPrevLoadKey] = useState(loadKey);
   if (loadKey !== prevLoadKey) {
     setPrevLoadKey(loadKey);
@@ -469,7 +486,8 @@ export default function InsightsPage() {
           </p>
           {isOuViewer && (
             <p className="mt-1 text-xs text-zinc-500">
-              {currentUser?.granted_ou_paths && currentUser.granted_ou_paths.length > 0
+              {currentUser?.granted_ou_paths &&
+              currentUser.granted_ou_paths.length > 0
                 ? `Insights scoped to: ${currentUser.granted_ou_paths.join(", ")}`
                 : "No org units granted yet — ask an admin to grant you one in Settings > Users."}
             </p>
@@ -1014,11 +1032,13 @@ export default function InsightsPage() {
               </>
             ) : (
               <p className="text-xs text-zinc-500">
-                No copier is reporting per-account counters yet. Turn on
-                Account Track on a copier, sync staff accounts to it, and
-                enable &ldquo;Read the counts automatically&rdquo; on its page
-                under{" "}
-                <Link href="/mfp-devices" className="text-accent hover:underline">
+                No copier is reporting per-account counters yet. Turn on Account
+                Track on a copier, sync staff accounts to it, and enable
+                &ldquo;Read the counts automatically&rdquo; on its page under{" "}
+                <Link
+                  href="/mfp-devices"
+                  className="text-accent hover:underline"
+                >
                   Copiers
                 </Link>
                 .
@@ -1046,8 +1066,12 @@ export default function InsightsPage() {
                     <thead className="text-xs uppercase tracking-wide text-zinc-500">
                       <tr>
                         <th className="py-2 font-medium">Copier</th>
-                        <th className="py-2 font-medium">Unattributed copies</th>
-                        <th className="py-2 font-medium">Estimated untracked</th>
+                        <th className="py-2 font-medium">
+                          Unattributed copies
+                        </th>
+                        <th className="py-2 font-medium">
+                          Estimated untracked
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1093,8 +1117,8 @@ export default function InsightsPage() {
                     >
                       Settings → Insights
                     </Link>{" "}
-                    to start estimating walk-up copy activity PrintOps
-                    otherwise has no visibility into.
+                    to start estimating walk-up copy activity PrintOps otherwise
+                    has no visibility into.
                   </>
                 ) : (
                   "An admin can turn this on in Settings to estimate walk-up copy activity PrintOps otherwise has no visibility into."

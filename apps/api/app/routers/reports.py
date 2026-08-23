@@ -2,7 +2,7 @@ import csv
 import io
 import logging
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -77,9 +77,50 @@ logger = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
+def _range_boundary(value: str | None, tz: ZoneInfo) -> datetime | None:
+    """One end of a report's range, as an instant.
+
+    A bare date means midnight in the district's own zone: 2026-08-23 is the
+    day people worked, not the UTC day that starts at 7pm the evening before.
+    Anything else is parsed as an instant and used unchanged, so the intraday
+    dashboard — which computes a real local midnight client-side and sends it
+    with an offset — keeps working exactly as it did."""
+    if value is None or not value.strip():
+        return None
+    text = value.strip()
+
+    # Which form this is has to be decided before parsing, not by trying the
+    # instant parser first and falling through: datetime.fromisoformat accepts
+    # a bare "2026-08-23" and hands back a naive midnight, so a date would be
+    # silently read as midnight UTC — five hours off, and exactly the bug this
+    # function exists to prevent. A test caught it.
+    if "T" in text or " " in text:
+        try:
+            moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"{value!r} is not a date or a timestamp",
+            ) from exc
+        if moment.tzinfo is None:
+            # No offset means whoever sent it was thinking in local terms;
+            # the server's own clock is not the answer to that question.
+            moment = moment.replace(tzinfo=tz)
+        return moment.astimezone(UTC)
+
+    try:
+        day = date.fromisoformat(text)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{value!r} is not a date or a timestamp",
+        ) from exc
+    return datetime.combine(day, time.min, tzinfo=tz).astimezone(UTC)
+
+
 async def _report_filters(
-    start: datetime | None = None,
-    end: datetime | None = None,
+    start: str | None = None,
+    end: str | None = None,
     building: str | None = None,
     department: str | None = None,
     printer_id: UUID | None = None,
@@ -100,7 +141,20 @@ async def _report_filters(
     is re-read from the User row here, never trusted from the JWT (see
     app.deps.get_current_user's docstring), so a grant change an admin
     makes takes effect on this account's very next request, not just its
-    next login. "admin" is unrestricted, as before."""
+    next login. "admin" is unrestricted, as before.
+
+    start/end accept either a date (2026-08-23) or a full instant. A date is
+    the boundary of a *day in the district*, resolved here against the
+    configured zone — the only place that knows it. The Insights presets used
+    to send instants built from the browser's midnight, so an admin in another
+    timezone, or with a wrong device clock, filtered one day's worth of jobs
+    and then had them bucketed by another: part of the requested day missing,
+    and what survived split across two dates on the chart. An instant is still
+    accepted and used as given, which is what the live dashboard's intraday
+    view sends."""
+    zone = await _district_zone(db)
+    start_at = _range_boundary(start, zone)
+    end_at = _range_boundary(end, zone)
     submitted_by_in = None
     if current_user.role == "ou_viewer":
         result = await db.execute(
@@ -114,8 +168,8 @@ async def _report_filters(
     elif current_user.role != "admin":
         submitted_by = current_user.username
     return ReportFilters(
-        start=start,
-        end=end,
+        start=start_at,
+        end=end_at,
         building=building,
         department=department,
         printer_id=printer_id,
@@ -947,9 +1001,10 @@ async def create_snapshot(
         duplex=payload.filters.duplex,
     )
 
+    zone = await _district_zone(db)
     summary = await get_summary(db, filters)
-    timeline = await get_timeline(db, filters, granularity="day")
-    peak_times = await get_peak_times(db, filters)
+    timeline = await get_timeline(db, filters, granularity="day", tz=zone)
+    peak_times = await get_peak_times(db, filters, tz=zone)
     printer_leaderboard = await get_printer_leaderboard(db, filters)
     formula_settings = await _get_or_create_formula_settings(db)
     formulas = _formula_values(formula_settings)

@@ -31,8 +31,10 @@ from app.models.printer import Printer
 
 TERMINAL_STATUSES = ("forwarded", "failed", "cancelled")
 
-# Used where a caller has not supplied one, so behaviour is unchanged rather
-# than guessed at; every real report path passes the district's zone.
+# No caller gets a default zone: an omitted one silently means UTC, which is
+# the bug this module was just fixed for. create_snapshot omitted it and froze
+# UTC busiest-hours into stored snapshots while the live report beside it read
+# the district's zone. Required keyword, so the compiler asks instead.
 UTC_ZONE = ZoneInfo("UTC")
 Granularity = str  # "day" | "week" | "month"
 
@@ -222,7 +224,8 @@ async def get_timeline(
     db: AsyncSession,
     filters: ReportFilters,
     granularity: Granularity = "day",
-    tz: ZoneInfo = UTC_ZONE,
+    *,
+    tz: ZoneInfo,
 ) -> list[TimelineBucket]:
     rows = await _fetch_raw_rows(db, filters)
     buckets: dict[date, TimelineBucket] = {}
@@ -363,9 +366,7 @@ class PeakTimes:
     by_hour: dict[int, int] = field(default_factory=dict)  # 0..23
 
 
-async def get_peak_times(
-    db: AsyncSession, filters: ReportFilters, tz: ZoneInfo = UTC_ZONE
-) -> PeakTimes:
+async def get_peak_times(db: AsyncSession, filters: ReportFilters, *, tz: ZoneInfo) -> PeakTimes:
     """Busiest day and hour, counted in the district's own time — the whole
     point of the chart is which part of the working day is busy."""
     rows = await _fetch_raw_rows(db, filters)
