@@ -399,6 +399,41 @@ async def test_a_person_checking_the_status_is_never_made_to_wait(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_missed_probe_does_not_arm_the_away_bookkeeping(monkeypatch):
+    """note_device_away pairs with note_device_back, which drops the whole
+    recovery backoff once the device has read online for five minutes. A
+    printer that drops the odd probe but never leaves must not clear its
+    cooldown that way, or a queue that keeps failing gets handed another job.
+    One missed probe blocks this cycle's resume; it is not a device that has
+    gone away."""
+    _queue(monkeypatch, STOPPED)
+    away = []
+    monkeypatch.setattr(queue_recovery, "note_device_away", lambda pid: away.append(pid))
+    monkeypatch.setattr(queue_recovery, "note_still_stopped", lambda pid: None)
+    resumed = _record_resumes(monkeypatch)
+
+    handled = await status._apply_queue_recovery(_printer(status="online"), device_answered=False)
+
+    assert handled is False
+    assert resumed == []
+    assert away == []
+
+
+@pytest.mark.asyncio
+async def test_a_printer_the_debounce_called_offline_does_arm_it(monkeypatch):
+    """The case the bookkeeping exists for: actually away, so the backoff
+    should track it."""
+    _queue(monkeypatch, STOPPED)
+    away = []
+    monkeypatch.setattr(queue_recovery, "note_device_away", lambda pid: away.append(pid))
+    monkeypatch.setattr(queue_recovery, "note_still_stopped", lambda pid: None)
+
+    await status._apply_queue_recovery(_printer(status="offline"), device_answered=False)
+
+    assert away == [PRINTER]
+
+
+@pytest.mark.asyncio
 async def test_a_queue_is_not_resumed_on_a_probe_that_did_not_answer(monkeypatch):
     """Since the offline debounce, `status` can still read "online" for one
     missed probe after the device stopped answering. Resuming a queue on the

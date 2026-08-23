@@ -161,6 +161,16 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
         # printer was simply away being serviced.
         return
     if not answered:
+        # The stall clock still has to be cleared, which _apply_queue_stall
+        # used to do on this path: before the debounce a failed probe set the
+        # status to offline, and its first act for a non-online printer is to
+        # forget the head-job observation. Returning without that left the
+        # observation standing for the whole outage, so the first successful
+        # probe after 30 minutes away reported the unchanged head job as a
+        # stalled queue — on a printer that had just come back, and with an
+        # "error" status that stops refresh_printer_status_and_rediscover
+        # doing the reconnect discovery and resync that would get it moving.
+        queue_stall.forget(str(printer.id))
         return
     await _apply_queue_stall(printer)
 
@@ -220,8 +230,16 @@ async def _apply_queue_recovery(
         # behind it and print when it starts again — which is the behaviour
         # wanted while a printer is away, rather than handing cupsd one more
         # job to fail every minute.
-        queue_recovery.note_device_away(printer_id)
-        queue_recovery.note_still_stopped(printer_id)
+        if printer.status != "online":
+            # Only a printer the debounce has actually called offline counts
+            # as away. One missed probe blocks this cycle's resume, but must
+            # not arm this bookkeeping: note_device_away pairs with
+            # note_device_back, which discards the whole backoff once the
+            # device reads online for five minutes. A lossy printer that never
+            # left would otherwise clear its four-hour cooldown every time it
+            # dropped a single probe, and be handed another job to fail.
+            queue_recovery.note_device_away(printer_id)
+            queue_recovery.note_still_stopped(printer_id)
         printer.status_reasons = [
             *(printer.status_reasons or []),
             queue_recovery.QUEUE_PAUSED_REASON,
