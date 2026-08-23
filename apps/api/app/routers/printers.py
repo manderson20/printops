@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import secrets
 from datetime import UTC, datetime
 from uuid import UUID
@@ -23,6 +24,7 @@ from app.models.report import PrinterTonerCartridge
 from app.printers.counter_history import get_daily_deltas
 from app.printers.cups_ppd_info import get_cups_queue_default_page_size
 from app.printers.discovery import refresh_printer_capabilities
+from app.printers.ipp_client import PrinterProbeError, probe_printer
 from app.printers.job_control import JobControlError, purge_cups_queue
 from app.printers.queue_sync import QueueSyncError, remove_queue, sync_queue
 from app.printers.snmp_counters import (
@@ -63,6 +65,8 @@ from app.schemas.snmp import DailyCounterDeltaOut
 from app.schemas.syslog import SyslogEventPage
 from app.server_settings.service import get_or_create_server_settings
 from app.syslog.service import list_events as list_syslog_events
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -501,6 +505,108 @@ async def regenerate_release_token(printer_id: UUID, db: AsyncSession = Depends(
     since it's looked up by token on every call, not cached anywhere."""
     printer = await _get_printer_or_404(printer_id, db)
     printer.release_token = secrets.token_urlsafe(16)
+    await db.commit()
+    await db.refresh(printer)
+    return printer
+
+
+@router.post(
+    "/{printer_id}/redirect/confirm",
+    response_model=PrinterOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def confirm_redirect(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Moves this printer to the address the device said it had moved to.
+
+    A redirect that changes port, scheme or path is adopted automatically —
+    that is the same device, reached differently. A redirect naming a different
+    *host* is not, because the host is which device this is, and a machine does
+    not get to reassign a printer to itself. So it waits here for a person, and
+    this is that person saying yes.
+
+    Verified before it is applied, and applied only if the new address actually
+    answers: an unverified move would take a printer that is merely
+    unreachable and point it somewhere it cannot print from either, which is a
+    worse position than the one it started in. The device's own claim is
+    evidence, not proof."""
+    printer = await _get_printer_or_404(printer_id, db)
+    pending = printer.pending_redirect
+    if not pending:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="This printer has no redirect waiting to be confirmed.",
+        )
+
+    host = pending.get("host")
+    port = pending.get("port")
+    tls = bool(pending.get("tls"))
+    path = pending.get("path")
+    try:
+        result = await probe_printer(host, port=port, tls=tls, ipp_path=path)
+    except PrinterProbeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(f"{host} did not answer, so this printer has been left where it is: {exc}"),
+        ) from exc
+
+    previous = f"{printer.ip_address}:{printer.port}"
+    printer.ip_address = host
+    printer.port = port
+    printer.use_tls = tls
+    printer.ipp_path_detected = result.resolved_path
+    # An explicit ipp_path override was a deliberate choice about the *old*
+    # machine, and effective_ipp_path prefers it over anything discovered
+    # (app/models/printer.py). Left in place across a host move it would win
+    # over the path just verified on the new host, and the queue would be
+    # rebuilt against a path nobody has confirmed answers there — a printer
+    # that reads as moved and cannot print. The verified path is the better
+    # evidence, so the override goes.
+    if printer.ipp_path and printer.ipp_path != result.resolved_path:
+        logger.warning(
+            "%s: dropping the ipp_path override %r, which was set for %s; the new host "
+            "answered on %r.",
+            printer.name,
+            printer.ipp_path,
+            previous,
+            result.resolved_path,
+        )
+        printer.ipp_path = None
+    printer.pending_redirect = None
+    await db.commit()
+    await db.refresh(printer)
+
+    logger.warning(
+        "%s moved from %s to %s:%s after an admin confirmed the device's redirect.",
+        printer.name,
+        previous,
+        host,
+        port,
+    )
+    # The queue points at the old address until it is rebuilt, so this is the
+    # half of the move that actually reaches CUPS. Non-fatal, same as every
+    # other automatic resync — the error lands on the row.
+    try:
+        await asyncio.to_thread(sync_queue, str(printer.id), printer.is_virtual)
+        printer.queue_sync_error = None
+    except QueueSyncError as exc:
+        printer.queue_sync_error = str(exc)
+    await db.commit()
+    await db.refresh(printer)
+    return printer
+
+
+@router.post(
+    "/{printer_id}/redirect/dismiss",
+    response_model=PrinterOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def dismiss_redirect(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Forgets a redirect an admin has decided against — a device that was
+    replaced, or one answering for an address it should not be. It comes back
+    if the device says it again, which is the point: this dismisses the
+    suggestion, not the evidence."""
+    printer = await _get_printer_or_404(printer_id, db)
+    printer.pending_redirect = None
     await db.commit()
     await db.refresh(printer)
     return printer

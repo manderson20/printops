@@ -67,10 +67,35 @@ async def _probe_following_redirect(printer: Printer) -> ProbeResult:
             ipp_path=printer.effective_ipp_path,
         )
     except PrinterProbeError as exc:
-        transport = _transport_from_redirect(exc.redirect.location if exc.redirect else None)
+        location = exc.redirect.location if exc.redirect else None
+        transport = _transport_from_redirect(location)
         if transport is None:
             raise
         port, tls, path = transport
+
+        # A redirect to a different host is not adopted. Port and scheme are
+        # how this printer is reached; the host is which printer it is, and a
+        # device does not get to move itself — PrintOps would be sending
+        # documents, including held ones, to a machine nobody chose, on the
+        # word of the machine it replaced. Recorded for an admin to confirm
+        # (app/routers/printers.py:confirm_redirect), and the probe fails as it
+        # would have anyway, so nothing about this printer's state is invented.
+        target_host = urlsplit(location).hostname if location else None
+        if target_host and target_host != printer.ip_address:
+            printer.pending_redirect = {
+                "host": target_host,
+                "port": port,
+                "tls": tls,
+                "path": path or printer.effective_ipp_path,
+                "seen_at": datetime.now(UTC).isoformat(),
+            }
+            logger.warning(
+                "%s redirected to a different host (%s); recorded for confirmation "
+                "rather than adopted.",
+                printer.name,
+                location,
+            )
+            raise
         # Falsy rather than None: an empty path from the redirect target means
         # "it didn't say", so keep whatever the printer already had and let the
         # candidate-path walk settle it if that is blank too.

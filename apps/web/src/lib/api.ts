@@ -136,6 +136,16 @@ export type Printer = {
   queue_sync_error: string | null;
   status: PrinterStatus;
   status_reasons: string[] | null;
+  // Where the device says it has moved, when that is a different host. Shown
+  // for confirmation rather than acted on: the host is which printer this is,
+  // and a device does not get to reassign itself.
+  pending_redirect: {
+    host: string;
+    port: number;
+    tls: boolean;
+    path: string | null;
+    seen_at: string;
+  } | null;
   status_message: string | null;
   status_checked_at: string | null;
   archived_at: string | null;
@@ -2971,6 +2981,22 @@ export async function deletePrinterAllowedOu(
 export async function listAllGoogleWorkspaceOrgUnits(): Promise<string[]> {
   const response = await authorizedFetch(
     "/api/v1/settings/google-workspace/org-units?scope=all",
+  );
+  return response.json();
+}
+
+export async function confirmPrinterRedirect(id: string): Promise<Printer> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${id}/redirect/confirm`,
+    { method: "POST" },
+  );
+  return response.json();
+}
+
+export async function dismissPrinterRedirect(id: string): Promise<Printer> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${id}/redirect/dismiss`,
+    { method: "POST" },
   );
   return response.json();
 }
