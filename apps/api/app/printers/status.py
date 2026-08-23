@@ -10,7 +10,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from app.models.printer import Printer
-from app.printers import cups_health, job_control, queue_recovery, queue_stall
+from app.printers import cups_health, job_control, network_health, queue_recovery, queue_stall
 from app.printers.discovery import refresh_printer_capabilities
 from app.printers.ipp_client import PrinterProbeError, PrinterStateResult, probe_printer_state
 from app.printers.queue_sync import QueueSyncError, sync_queue
@@ -148,6 +148,11 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
         printer.status_reasons = [r for r in result.state_reasons if r != "none"] or None
         printer.status_message = result.state_message or message
     printer.status_checked_at = datetime.now(UTC)
+    # Recorded for every probe, including the misses that never reach the
+    # offline threshold above. Those are exactly the evidence the debounce
+    # exists to stop acting on, and exactly what says the path to a printer is
+    # dropping traffic (app/printers/network_health.py).
+    flap = network_health.observe(str(printer.id), answered)
     # Both of the steps below used to read `status` as "what the probe just
     # found", which it no longer is: the debounce lets it lag a cycle behind.
     # They are told what this probe actually did instead, or the first missed
@@ -173,6 +178,7 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
         queue_stall.forget(str(printer.id))
         return
     await _apply_queue_stall(printer)
+    _apply_network_flap(printer, flap)
 
 
 async def _apply_queue_recovery(
@@ -325,6 +331,31 @@ async def _apply_queue_stall(printer: Printer) -> None:
     printer.status = "error"
     printer.status_message = reason
     printer.status_reasons = [*(printer.status_reasons or []), "printops-queue-stalled"]
+    logger.warning("%s: %s", printer.name, reason)
+
+
+def _apply_network_flap(printer: Printer, flap: network_health.NetworkFlap | None) -> None:
+    """Reports a printer that is answering, but missing enough status checks
+    that the path to it is the thing worth looking at.
+
+    Left reading `online`, and that is the whole judgement here. The printer is
+    up and printing; calling it "error" would put a red badge on a working
+    machine, and those are what teach people to stop reading the field — the
+    same reasoning _mark_paused uses when it declines to leave a badge on a
+    queue that has just been fixed. What is faulty is the path, not the device,
+    so it gets its own keyword and the UI says so in its own tone.
+
+    Not applied over a more specific diagnosis: a stopped or stalled queue has
+    already given an admin something to act on directly, and a lossy path is
+    background next to either."""
+    if flap is None or printer.status != "online":
+        return
+    reason = network_health.flap_reason(flap)
+    printer.status_message = reason
+    printer.status_reasons = [
+        *(printer.status_reasons or []),
+        network_health.NETWORK_UNSTABLE_REASON,
+    ]
     logger.warning("%s: %s", printer.name, reason)
 
 
