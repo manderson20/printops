@@ -14,7 +14,6 @@ import uuid
 from datetime import UTC, datetime
 from unittest.mock import patch
 
-import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
