@@ -201,10 +201,12 @@ def _plist_value(output: str, key: str) -> str | None:
 def cups_job_outcome(printer_id: str, cups_job_id: int) -> CupsJobOutcome | None:
     """Asks the local cupsd what became of one job on a printer's queue.
 
-    Returns None when cupsd couldn't be asked at all — a distinct answer from
-    CupsJobOutcome(state=None), which is cupsd answering that it has no record
-    of this job. Neither is an outcome, and a caller that conflates them will
-    eventually write off a job that is at that moment printing.
+    Returns None when the question went unanswered — cupsd couldn't be
+    reached, or answered with an IPP error other than client-error-not-found.
+    That is a distinct answer from CupsJobOutcome(state=None), which is cupsd
+    answering that it has no record of this job. Neither is an outcome, and a
+    caller that conflates them will eventually write off a job that is at that
+    moment printing.
 
     Only the client-facing queue is asked. The internal release queue has no
     custom backend on it (app/printers/release.py), so it never produces the
@@ -228,12 +230,20 @@ def cups_job_outcome(printer_id: str, cups_job_id: int) -> CupsJobOutcome | None
     status = _plist_value(output, "StatusCode")
     if status is None:
         return None
-    if status != "successful-ok":
-        # client-error-not-found is the ordinary case here: the job is long
-        # gone from cupsd's history. Any other IPP error means the question
-        # couldn't be answered rather than that the job doesn't exist, but
-        # both leave us with no state — see CupsJobOutcome.state.
+    if status == "client-error-not-found":
+        # The ordinary case, and the only status that actually answers the
+        # question with "no": the job is long gone from cupsd's history.
         return CupsJobOutcome(state=None)
+    if status != "successful-ok":
+        # Every other IPP error — not-authorized, a queue that isn't there, a
+        # transient server-error — leaves the question unanswered. Reporting
+        # that as state=None would say cupsd has no record of this job, and
+        # _resolve (app/printers/job_reconcile.py) writes such a row off as an
+        # unknown outcome once it is two hours old. That is the conflation
+        # this function's own contract rules out: a job cupsd declined to
+        # talk about may be printing right now. An unanswered question stays
+        # unanswered, the sweep counts it as unasked, and it asks again.
+        return None
 
     state_raw = _plist_value(output, "job-state")
     if state_raw is None or not state_raw.isdigit():

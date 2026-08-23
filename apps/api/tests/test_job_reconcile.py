@@ -26,7 +26,7 @@ from sqlalchemy.pool import StaticPool
 from app.models.base import Base
 from app.models.job import Job
 from app.models.printer import Printer
-from app.printers import job_reconcile
+from app.printers import job_control, job_reconcile
 from app.printers.job_control import CupsJobOutcome
 from app.printers.job_reconcile import STUCK_AFTER, UNRESOLVABLE_AFTER, reconcile_stuck_jobs
 
@@ -270,6 +270,32 @@ async def test_a_cupsd_that_will_not_answer_changes_nothing(db, printer, monkeyp
     result = await reconcile_stuck_jobs(db, now=NOW)
 
     assert result.unasked == 1
+    await db.refresh(job)
+    assert job.status == "forwarding"
+
+
+@pytest.mark.asyncio
+async def test_a_cupsd_that_answers_with_an_error_is_not_read_as_no_record(
+    db, printer, monkeypatch
+):
+    """An IPP error is cupsd declining to answer, not cupsd saying the job
+    never existed — the distinction the two-hour write-off rests on. This
+    goes through the real cups_job_outcome rather than stubbing the lookup,
+    since the conflation being guarded against lived in that parsing."""
+    job = await _add_job(db, printer, created_at=LONG_AGO)
+    monkeypatch.setattr(
+        job_control,
+        "_ipptool_plist",
+        lambda _queue, _request: (
+            '<plist version="1.0"><dict><key>StatusCode</key>'
+            "<string>client-error-not-authorized</string></dict></plist>"
+        ),
+    )
+
+    result = await reconcile_stuck_jobs(db, now=NOW)
+
+    assert result.unasked == 1
+    assert result.resolved == 0
     await db.refresh(job)
     assert job.status == "forwarding"
 
