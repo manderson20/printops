@@ -5,6 +5,27 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.59.6] - 2026-08-23
+
+- **A printer is no longer called offline on one missed check.** PrintOps
+  checks every printer once a minute, and a single check that didn't come back
+  was enough to show the printer as offline. On a network that drops the odd
+  packet that happens to a perfectly healthy printer, which then reads as
+  offline for a minute and comes back on the next check — and every one of
+  those round trips made PrintOps re-examine the printer and rebuild its print
+  queue, for nothing. A printer now has to miss two checks in a row before it
+  is reported offline. One that has genuinely been switched off or unplugged
+  still shows up as offline within two minutes, and a printer that answers
+  when asked a second time is left alone. This was found on the LCACTC RM 502,
+  which loses about a fifth of the traffic sent to it in short bursts while
+  reporting no fault of its own — that underlying network problem is still
+  open, and is being followed up separately.
+- **Held documents are stored less permissively.** A print-and-release job's
+  document waits on the server until someone releases it at the printer. It
+  was being written in a way that let anything running as the print system
+  modify it, where only reading it back is ever needed. It is now written
+  read-only to that group. No change to how releasing a job works.
+
 ## [0.59.5] - 2026-08-23
 
 - **Fixed: filtering Insights to one printer only filtered half the page.**
