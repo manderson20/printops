@@ -5,6 +5,30 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.59.7] - 2026-08-23
+
+- **Fixed: a queue restart that failed was reported as a success.** When
+  PrintOps finds a printer's queue switched off and restarts it, the restart
+  is carried out by a small script on the server. If the server refused the
+  command, the script reported success anyway — so PrintOps told the admin the
+  queue was running again, cleared the printer's warning, and stopped
+  checking, while jobs kept piling up behind a queue that had never started.
+  That is the same silent failure the queue restart was built to end, one step
+  further up. A refused restart is now reported as a failure, with the
+  server's own reason attached, and the printer keeps its warning until the
+  queue really is running.
+- **Fixed: some printers couldn't be added by IP alone.** A printer that
+  answers on the expected port but serves printing from a different address
+  path says so when PrintOps first contacts it. PrintOps was treating that
+  reply as "the address I already tried" and giving up, so the printer looked
+  unreachable even though it had just said exactly where to find it. Those
+  printers are now followed to the address they name and added normally.
+- **Clearer error when a printer's port is mistyped.** Entering something that
+  isn't a number in the Port field failed the entire save — including every
+  other change on the form — and reported only "Failed to save changes". It
+  now says the port must be a whole number between 1 and 65535, and leaves
+  the rest of the edits in place.
+
 ## [0.59.6] - 2026-08-23
 
 - **A printer is no longer called offline on one missed check.** PrintOps
