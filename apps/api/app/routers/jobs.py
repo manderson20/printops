@@ -110,6 +110,7 @@ async def create_job(payload: JobCreate, db: AsyncSession = Depends(get_db)):
     job = Job(
         printer_id=payload.printer_id,
         cups_job_id=payload.cups_job_id,
+        cups_job_uuid=payload.cups_job_uuid,
         submitted_by=attributed_user,
         attribution_method=attribution_method,
         mac_address=mac_address,
@@ -152,7 +153,7 @@ async def _supersede_earlier_attempts(db: AsyncSession, job: Job) -> None:
 
     app/printers/job_reconcile.py does the same thing from the other end, for
     rows whose backend never reported at all."""
-    if job.cups_job_id is None:
+    if job.cups_job_id is None and job.cups_job_uuid is None:
         return
     # Flushed first so the row has its id: without it `Job.id != job.id`
     # compares against None, which SQLAlchemy renders as `id IS NOT NULL` —
@@ -160,15 +161,29 @@ async def _supersede_earlier_attempts(db: AsyncSession, job: Job) -> None:
     # this job supersede itself. test_create_and_update_job caught exactly
     # that.
     await db.flush()
+    if job.cups_job_uuid is not None:
+        # CUPS's own identifier, so no time bound is needed or wanted: it is
+        # generated per job and never reused, and two rows carrying it are two
+        # attempts at the same job however far apart they are.
+        identity = [Job.cups_job_uuid == job.cups_job_uuid]
+    else:
+        # A backend that predates job-uuid, or a job CUPS gave none for. The
+        # number resets when the spool is cleared, so this is bounded in time
+        # to keep an unrelated job from inheriting an old one's history.
+        identity = [
+            Job.printer_id == job.printer_id,
+            Job.cups_job_id == job.cups_job_id,
+            Job.cups_job_uuid.is_(None),
+            Job.created_at >= datetime.now(UTC) - SUPERSEDES_WITHIN,
+        ]
+
     earlier = (
         (
             await db.execute(
                 select(Job).where(
-                    Job.printer_id == job.printer_id,
-                    Job.cups_job_id == job.cups_job_id,
+                    *identity,
                     Job.id != job.id,
                     Job.status.not_in(("forwarded", "held")),
-                    Job.created_at >= datetime.now(UTC) - SUPERSEDES_WITHIN,
                 )
             )
         )
@@ -177,9 +192,10 @@ async def _supersede_earlier_attempts(db: AsyncSession, job: Job) -> None:
     )
     for previous in earlier:
         previous.status = "cancelled"
+        previous.superseded_by_job_id = job.id
         previous.error_message = (
-            f"Superseded — the print server retried CUPS job {job.cups_job_id}, and the "
-            "later record of it has what became of it."
+            "Superseded — the print server retried this job, and the later record of it "
+            "has what became of it."
         )
         if previous.completed_at is None:
             previous.completed_at = datetime.now(UTC)

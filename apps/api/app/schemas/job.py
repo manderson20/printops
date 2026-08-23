@@ -7,6 +7,9 @@ from pydantic import BaseModel
 class JobCreate(BaseModel):
     printer_id: UUID
     cups_job_id: int | None = None
+    # CUPS's permanent per-job identifier, from the job options the backend
+    # already receives. Optional so a backend that predates it still works.
+    cups_job_uuid: str | None = None
     submitted_by: str | None = None
     file_size_bytes: int | None = None
     # Client IP (job-originating-host-name), used for MDM-based attribution

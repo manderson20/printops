@@ -16,13 +16,17 @@ schedules an update.
   took: one that answers only after retrying is counted as evidence too. A
   printer that is simply slow is not affected — the comparison is against that
   same printer's own quick answers, not a fixed number.
-- **Fixed: one print job could be reported as dozens of failures.** When the
-  print server retries a job, it starts delivery again from the beginning, and
-  PrintOps recorded each attempt as a separate job — every one of them a
-  failure. One teacher's job in August was retried 51 times and appeared in the
-  reports as 51 failed jobs. Attempts at the same job are now folded together,
-  so the failure count means what it says. Jobs that actually printed are never
-  altered.
+- **Fixed: one print job could be reported as dozens of jobs, and dozens of
+  failures.** When the print server retries a job it starts delivery again from
+  the beginning, and PrintOps recorded each attempt as a separate job — every
+  one of them a failure. One teacher's job in August was retried 51 times and
+  appeared in the reports as 51 failed jobs. Attempts at the same job are now
+  recognised as one job: the reports count it once, and the failure count means
+  what it says. Every attempt is still listed on the Jobs page, where seeing
+  that a job took four tries is the point. Jobs that actually printed are never
+  altered, and attempts are matched using the print server's own permanent job
+  identifier, so a job number that comes round again after the print queue is
+  cleared cannot be mistaken for a retry of an older job.
 
 ## [0.60.0] - 2026-08-23
 

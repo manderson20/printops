@@ -66,6 +66,23 @@ def parse_source_host(job_options: str) -> str | None:
     return None
 
 
+def parse_job_uuid(job_options: str) -> str | None:
+    """CUPS's own permanent identifier for this job — job-uuid=urn:uuid:...,
+    in the same options string as job-originating-host-name above.
+
+    Worth recording because `job_id` is not an identity. CUPS job numbers are
+    per-spool and reset when the spool is cleared, so the same number comes
+    round again on the same printer, while the uuid is generated per job and
+    never reused. app/routers/jobs.py folds a job's retries together, and
+    matching those on a number that resets means an unrelated job can inherit
+    an old one's number and rewrite its history."""
+    for token in job_options.split():
+        if token.startswith("job-uuid="):
+            value = token.removeprefix("job-uuid=")
+            return value or None
+    return None
+
+
 JOB_COMPLETION_ATTRIBUTES = [
     "job-media-sheets-completed",
     "sides",
@@ -378,6 +395,7 @@ def main() -> int:
                 "submitted_by": job_user,
                 "file_size_bytes": file_size,
                 "source_host": parse_source_host(job_options),
+                "cups_job_uuid": parse_job_uuid(job_options),
                 "document_name": job_title or None,
                 "copy_count": copy_count,
             },

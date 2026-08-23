@@ -55,6 +55,13 @@ def _apply_filters(stmt: Select, filters: ReportFilters) -> Select:
     """Applied identically everywhere a filtered job query is built, so
     every report endpoint agrees on what a given filter set means."""
     stmt = stmt.join(Printer, Job.printer_id == Printer.id)
+    # A superseded row is an earlier attempt at a job that a later row already
+    # accounts for (app/routers/jobs.py:_supersede_earlier_attempts). Excluded
+    # here rather than at each call site, because every report counts rows:
+    # leaving them in reported job 4584's 51 retries as 51 jobs, which is not
+    # what the teacher who pressed print did. The rows stay on the Jobs page,
+    # where the trail is history rather than arithmetic.
+    stmt = stmt.where(Job.superseded_by_job_id.is_(None))
     if filters.start is not None:
         stmt = stmt.where(Job.created_at >= filters.start)
     if filters.end is not None:

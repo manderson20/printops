@@ -96,7 +96,7 @@ UNKNOWN_MESSAGE = (
 
 async def _superseding_job_ids(db: AsyncSession, candidates: list[Job]) -> set:
     """Which of these rows were superseded by a later attempt at the same CUPS
-    job.
+    job, mapped to the row that superseded them.
 
     When cupsd restarts a job it runs the backend again, and the backend
     creates a *new* row — so one CUPS job can leave a trail of rows of which
@@ -130,12 +130,12 @@ async def _superseding_job_ids(db: AsyncSession, candidates: list[Job]) -> set:
         if best is None or row.created_at > best[1]:
             latest[key] = (row.id, row.created_at)
 
-    superseded = set()
+    superseded = {}
     for job in candidates:
         key = (job.printer_id, job.cups_job_id)
         winner = latest.get(key)
         if winner is not None and winner[0] != job.id:
-            superseded.add(job.id)
+            superseded[job.id] = winner[0]
     return superseded
 
 
@@ -214,6 +214,10 @@ async def reconcile_stuck_jobs(
     for job in candidates:
         if job.id in superseded:
             job.status = "cancelled"
+            # Marked as well as cancelled: the reports count rows, so an
+            # earlier attempt left in them reports one job as several
+            # (app/reports/aggregation.py:_apply_filters).
+            job.superseded_by_job_id = superseded[job.id]
             job.error_message = _superseded_message(job.cups_job_id)
             job.completed_at = now
             result.resolved += 1

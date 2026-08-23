@@ -60,21 +60,26 @@ async def printer_id(db_session_factory):
 
 
 @pytest.fixture
+def auth_headers(client):
+    response = client.post("/auth/login", json={"username": "admin", "password": "changeme"})
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+@pytest.fixture
 def backend_headers():
     return {"X-Backend-Token": get_settings().backend_token}
 
 
-def _register(client, headers, printer_id, cups_job_id=4584):
-    response = client.post(
-        "/api/v1/jobs",
-        headers=headers,
-        json={
-            "printer_id": str(printer_id),
-            "cups_job_id": cups_job_id,
-            "submitted_by": "ateacher",
-            "document_name": "Cupcake toppers - Google Docs",
-        },
-    )
+def _register(client, headers, printer_id, cups_job_id=4584, job_uuid="urn:uuid:job-4584"):
+    body = {
+        "printer_id": str(printer_id),
+        "cups_job_id": cups_job_id,
+        "submitted_by": "ateacher",
+        "document_name": "Cupcake toppers - Google Docs",
+    }
+    if job_uuid is not None:
+        body["cups_job_uuid"] = job_uuid
+    response = client.post("/api/v1/jobs", headers=headers, json=body)
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -117,7 +122,9 @@ async def test_fifty_one_retries_leave_one_open_row(
 async def test_a_different_cups_job_is_not_touched(
     client, backend_headers, printer_id, db_session_factory
 ):
-    other = _register(client, backend_headers, printer_id, cups_job_id=4585)
+    other = _register(
+        client, backend_headers, printer_id, cups_job_id=4585, job_uuid="urn:uuid:job-4585"
+    )
     _register(client, backend_headers, printer_id, cups_job_id=4584)
     _register(client, backend_headers, printer_id, cups_job_id=4584)
 
@@ -147,8 +154,9 @@ async def test_a_delivered_job_is_never_rewritten(
 async def test_an_old_row_with_the_same_number_is_left_alone(
     client, backend_headers, printer_id, db_session_factory
 ):
-    """Job numbers reset when the spool is cleared, so a row from last week
-    that shares a number is a different job, not an earlier attempt."""
+    """The fallback path, for a backend that reports no job uuid. Job numbers
+    reset when the spool is cleared, so a row from last week that shares a
+    number is a different job, not an earlier attempt."""
     async with db_session_factory() as session:
         stale = Job(
             id=uuid.uuid4(),
@@ -163,8 +171,72 @@ async def test_an_old_row_with_the_same_number_is_left_alone(
         await session.commit()
         stale_id = str(stale.id)
 
-    _register(client, backend_headers, printer_id)
+    _register(client, backend_headers, printer_id, job_uuid=None)
 
     rows = {str(row.id): row for row in await _rows(db_session_factory, printer_id)}
     assert rows[stale_id].status == "failed"
     assert rows[stale_id].error_message is None
+
+
+async def test_a_reused_job_number_cannot_rewrite_an_older_job(
+    client, backend_headers, printer_id, db_session_factory
+):
+    """The reason retries are matched on CUPS's uuid rather than its job
+    number. The number is a spool position: clear the spool and it comes round
+    again, so an unrelated job can arrive holding a number an older job used —
+    inside any time window you care to pick."""
+    older = _register(client, backend_headers, printer_id, job_uuid="urn:uuid:job-A")
+    unrelated = _register(client, backend_headers, printer_id, job_uuid="urn:uuid:job-B")
+
+    rows = {str(row.id): row for row in await _rows(db_session_factory, printer_id)}
+    assert rows[older["id"]].status == "forwarding", "a different job, same number"
+    assert rows[older["id"]].superseded_by_job_id is None
+    assert rows[unrelated["id"]].status == "forwarding"
+
+
+async def test_a_superseded_row_points_at_the_row_that_took_over(
+    client, backend_headers, printer_id, db_session_factory
+):
+    """Cancelling the row is not enough: the reports count rows, so they need
+    to know which ones a later attempt already accounts for."""
+    first = _register(client, backend_headers, printer_id)
+    second = _register(client, backend_headers, printer_id)
+
+    rows = {str(row.id): row for row in await _rows(db_session_factory, printer_id)}
+    assert str(rows[first["id"]].superseded_by_job_id) == second["id"]
+    assert rows[second["id"]].superseded_by_job_id is None
+
+
+async def test_the_reports_count_one_job_not_fifty_one(
+    client, backend_headers, auth_headers, printer_id, db_session_factory
+):
+    """The half that marking rows cancelled did not fix. Every report counts
+    rows, so 51 attempts became 50 cancelled jobs plus one — the reports still
+    said a teacher had sent 51 jobs, just no longer that 51 had failed."""
+    for _ in range(51):
+        _register(client, backend_headers, printer_id)
+
+    summary = client.get("/api/v1/reports/summary", headers=auth_headers)
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["total_jobs"] == 1
+
+    leaderboard = client.get(
+        "/api/v1/reports/leaderboard", params={"type": "user"}, headers=auth_headers
+    )
+    assert leaderboard.status_code == 200, leaderboard.text
+    entries = leaderboard.json()
+    assert len(entries) == 1
+    assert entries[0]["job_count"] == 1
+
+
+async def test_the_jobs_page_still_shows_every_attempt(
+    client, backend_headers, auth_headers, printer_id, db_session_factory
+):
+    """The trail stays on the Jobs page. It is history there, not arithmetic —
+    an admin looking at why a job took four tries needs to see the four."""
+    for _ in range(4):
+        _register(client, backend_headers, printer_id)
+
+    response = client.get("/api/v1/jobs", headers=auth_headers)
+    assert response.status_code == 200, response.text
+    assert len(response.json()) == 4
