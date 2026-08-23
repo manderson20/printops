@@ -5,6 +5,20 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.59.8] - 2026-08-23
+
+- **Fixed: a printer that missed one check could have its queue restarted
+  anyway.** 0.59.6 stopped PrintOps calling a printer offline on a single
+  missed check, which also meant the printer kept reading "online" for that
+  one cycle. Two things read that status as "what the check just found": the
+  repair that restarts a stopped print queue, and the detector that watches
+  for a queue that has stopped moving. So a printer that had just failed to
+  answer could have its queue restarted on the strength of a status a minute
+  out of date — handing the print server work for a machine it could not
+  reach, when the jobs were safely held. Both now use the result of the check
+  actually made. This fix was written alongside 0.59.6 but missed that
+  release.
+
 ## [0.59.7] - 2026-08-23
 
 - **Fixed: a queue restart that failed was reported as a success.** When
