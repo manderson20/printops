@@ -47,11 +47,11 @@ from app.routers import (
     copier_unmapped,
     device_overrides,
     health,
+    held_jobs,
     internal,
     jobs,
     mfp_devices,
     printers,
-    quota_holds,
     release,
     reports,
     self_service_print,
@@ -649,7 +649,7 @@ app.include_router(copier_imports.router, prefix="/api/v1/copier-imports", tags=
 app.include_router(
     copier_unmapped.router, prefix="/api/v1/copier-unmapped", tags=["copier-unmapped"]
 )
-app.include_router(quota_holds.router, prefix="/api/v1/quota-holds", tags=["quota-holds"])
+app.include_router(held_jobs.router, prefix="/api/v1/held-jobs", tags=["held-jobs"])
 app.include_router(
     self_service_print.router, prefix="/api/v1/self-service-print", tags=["self-service-print"]
 )

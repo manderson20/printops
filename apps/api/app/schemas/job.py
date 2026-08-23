@@ -113,3 +113,11 @@ class UserUsagePage(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class HeldJobReleaseIn(BaseModel):
+    """Which printer an admin wants a held job released at. Omitted means the
+    printer it was sent to, which is what every hold except Follow-Me wants —
+    see app/routers/held_jobs.py:release_held_job."""
+
+    printer_id: UUID | None = None

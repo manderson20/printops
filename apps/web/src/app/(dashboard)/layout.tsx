@@ -35,10 +35,11 @@ const OU_VIEWER_NAV_LINKS = [{ href: "/insights", label: "Insights" }] as const;
 // Prefixes a non-admin role is allowed to navigate to directly (by URL,
 // not just nav clicks) — everything else bounces to that role's default
 // landing page, mirroring the pre-existing ou_viewer redirect below.
-const ALLOWED_PATH_PREFIXES: Record<"viewer" | "ou_viewer", readonly string[]> = {
-  viewer: ["/print", "/insights"],
-  ou_viewer: ["/insights"],
-};
+const ALLOWED_PATH_PREFIXES: Record<"viewer" | "ou_viewer", readonly string[]> =
+  {
+    viewer: ["/print", "/insights"],
+    ou_viewer: ["/insights"],
+  };
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   useAuthGuard();
@@ -56,7 +57,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           { href: "/usage", label: "Usage" },
           { href: "/devices", label: "Devices" },
           { href: "/mfp-devices", label: "Copiers" },
-          { href: "/quota-holds", label: "Quota Holds" },
+          { href: "/held-jobs", label: "Held Jobs" },
           { href: "/settings", label: "Settings" },
           { href: "/updates", label: "Updates" },
         ]
@@ -101,8 +102,10 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       {currentUser?.impersonated_by && (
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-amber-300 bg-amber-100 px-4 py-2 text-sm text-amber-900 print:hidden dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
           <span>
-            Viewing as <strong>{currentUser.email ?? currentUser.username}</strong>{" "}
-            ({currentUser.role}) — read-only. Nothing you do here affects real data.
+            Viewing as{" "}
+            <strong>{currentUser.email ?? currentUser.username}</strong> (
+            {currentUser.role}) — read-only. Nothing you do here affects real
+            data.
           </span>
           <button
             onClick={handleExitImpersonation}

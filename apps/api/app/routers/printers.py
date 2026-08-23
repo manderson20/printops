@@ -36,7 +36,7 @@ from app.printers.snmp_counters import (
 from app.printers.status import refresh_printer_status_and_rediscover
 from app.printers.test_print import TestPrintError, build_page_info, submit_test_print
 from app.printers.toner_history import get_daily_toner_levels
-from app.quotas.service import get_pages_used, period_bounds
+from app.quotas.service import get_pages_used, period_bounds, resolve_hold_reason
 from app.schemas.auth import UserOut
 from app.schemas.printer import (
     CupsQueueDefaultsOut,
@@ -701,7 +701,53 @@ async def test_print(
         )
     except TestPrintError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    return {"message": message}
+    return {"message": await _test_print_message(db, printer, current_user, message)}
+
+
+async def _test_print_message(
+    db: AsyncSession, printer: Printer, current_user: UserOut, lp_output: str
+) -> str:
+    """What to tell the admin, given that a test page does not always come out
+    of the printer.
+
+    The page is submitted to the printer's own queue on purpose, so it takes
+    the identical path a real job does (app/printers/test_print.py) — which
+    means it is subject to the identical hold rules. On a print-and-release
+    printer it is held like anything else, and the reply used to be `lp`'s own
+    "request id is ..." line, which reads as success. Someone then stands at a
+    printer that is never going to produce anything, while the one action that
+    would release it goes unmentioned. The entire question a test print answers
+    is "did paper come out of this machine", so a held one has to say so.
+
+    The hold is predicted with the same resolve_hold_reason the job creation
+    path uses, rather than read back off the job row: the row is written
+    asynchronously by the CUPS backend, and racing it would report "not held"
+    for the ordinary reason that it does not exist yet."""
+    submitted_by = current_user.email or current_user.username
+    hold_reason = await resolve_hold_reason(db, printer, submitted_by)
+    if hold_reason is None:
+        return lp_output
+
+    if hold_reason == "quota":
+        return (
+            f"{lp_output} — but it is being held, because {submitted_by} is over the page "
+            "quota for this printer. Release it from Held Jobs; nothing will print until "
+            "you do."
+        )
+
+    where = "at this printer" if hold_reason == "pin_release" else "at any Follow-Me printer"
+    # Held Jobs is named first, and the PIN second. A test page is submitted by
+    # whoever is logged into PrintOps, and that is often an account the kiosk
+    # cannot help: the break-glass admin has no Workspace identity at all, and
+    # a new admin may have no PIN yet. Sending them to a kiosk that will not
+    # recognise them is the same unhelpful confidence this message exists to
+    # remove — releasing it from Held Jobs always works.
+    return (
+        f"{lp_output} — but this printer holds jobs for release, so the page is waiting "
+        f"rather than printing. Release it from Held Jobs, or {where} with the PIN for "
+        f"{submitted_by} if that account has one. Nothing will come out of the printer "
+        "until you do."
+    )
 
 
 @router.get("/{printer_id}/toner-cartridges", response_model=list[CartridgeOut])

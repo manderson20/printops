@@ -315,6 +315,63 @@ def test_test_print_success(client, auth_headers, mock_failed_probe, monkeypatch
     assert "request id" in response.json()["message"]
 
 
+def test_test_print_on_a_release_printer_says_it_is_held(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    """A test page goes through the printer's own queue on purpose, so a
+    release-enabled printer holds it like any other job. Reporting `lp`'s
+    "request id is ..." line as success leaves an admin standing at a printer
+    that is never going to produce anything."""
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Release Printer", "ip_address": "10.0.0.11"},
+    )
+    printer_id = create.json()["id"]
+    client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"release_required": True},
+    )
+    monkeypatch.setattr(
+        printers_router,
+        "submit_test_print",
+        lambda info, user, tz: "request id is printops-xyz-1 (1 file(s))",
+    )
+
+    response = client.post(f"/api/v1/printers/{printer_id}/test-print", headers=auth_headers)
+
+    assert response.status_code == 200
+    message = response.json()["message"]
+    assert "request id" in message, "the lp output is still there for anyone who wants it"
+    assert "holds jobs for release" in message
+    # Held Jobs first: the account that submits a test page is often one the
+    # kiosk cannot help — the break-glass admin has no Workspace identity at
+    # all, and a new admin may have no PIN yet.
+    assert "Held Jobs" in message
+    assert "Quota Holds" not in message, "that page no longer exists"
+
+
+def test_test_print_on_an_ordinary_printer_says_nothing_extra(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Plain Printer", "ip_address": "10.0.0.12"},
+    )
+    printer_id = create.json()["id"]
+    monkeypatch.setattr(
+        printers_router,
+        "submit_test_print",
+        lambda info, user, tz: "request id is printops-xyz-1 (1 file(s))",
+    )
+
+    response = client.post(f"/api/v1/printers/{printer_id}/test-print", headers=auth_headers)
+
+    assert response.json()["message"] == "request id is printops-xyz-1 (1 file(s))"
+
+
 def test_test_print_forwards_browser_timezone(client, auth_headers, mock_failed_probe, monkeypatch):
     """The web UI sends the admin's IANA zone so the page prints in their
     local time — it has to reach submit_test_print to have any effect."""

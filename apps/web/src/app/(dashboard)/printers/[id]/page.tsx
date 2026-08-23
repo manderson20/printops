@@ -10,7 +10,10 @@ import {
 } from "@/lib/api";
 import { capabilityBadges } from "@/lib/capabilities";
 import { formatRelativeTime } from "@/lib/format";
-import { printerStatusInfo } from "@/lib/printerStatus";
+import {
+  NETWORK_UNSTABLE_REASON,
+  printerStatusInfo,
+} from "@/lib/printerStatus";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -258,8 +261,21 @@ export default function PrinterOverviewTab() {
                   printer.status_reasons.length > 0 && (
                     <div className="flex flex-wrap gap-1">
                       {printer.status_reasons.map((reason) => (
-                        <Badge key={reason} tone="danger">
-                          {reason}
+                        // Amber, not red, for the network warning: the printer
+                        // is working and it is the path to it that isn't, so a
+                        // red badge would misname the fault and send someone to
+                        // the wrong machine.
+                        <Badge
+                          key={reason}
+                          tone={
+                            reason === NETWORK_UNSTABLE_REASON
+                              ? "warning"
+                              : "danger"
+                          }
+                        >
+                          {reason === NETWORK_UNSTABLE_REASON
+                            ? "Network unstable"
+                            : reason}
                         </Badge>
                       ))}
                     </div>

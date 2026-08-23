@@ -1,4 +1,9 @@
-import { exitImpersonation, getToken, isImpersonating, logout } from "@/lib/auth";
+import {
+  exitImpersonation,
+  getToken,
+  isImpersonating,
+  logout,
+} from "@/lib/auth";
 import { API_URL } from "@/lib/config";
 
 export { API_URL };
@@ -236,7 +241,9 @@ export async function createVirtualFollowMeQueue(
   return response.json();
 }
 
-export async function listPrinters(params?: { includeArchived?: boolean }): Promise<Printer[]> {
+export async function listPrinters(params?: {
+  includeArchived?: boolean;
+}): Promise<Printer[]> {
   const qs = params?.includeArchived ? "?include_archived=true" : "";
   const response = await authorizedFetch(`/api/v1/printers${qs}`);
   return response.json();
@@ -410,7 +417,9 @@ export type CupsQueueDefaults = {
   page_size: string | null;
 };
 
-export async function getCupsQueueDefaults(id: string): Promise<CupsQueueDefaults> {
+export async function getCupsQueueDefaults(
+  id: string,
+): Promise<CupsQueueDefaults> {
   const response = await authorizedFetch(
     `/api/v1/printers/${id}/cups-queue-defaults`,
   );
@@ -565,14 +574,18 @@ export type ProvisionedAccount = {
 };
 
 export async function getLatestMfpSyncJob(id: string): Promise<SyncJob | null> {
-  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/sync-jobs/latest`);
+  const response = await authorizedFetch(
+    `/api/v1/mfp-devices/${id}/sync-jobs/latest`,
+  );
   return response.json();
 }
 
 export async function listMfpProvisionedAccounts(
   id: string,
 ): Promise<ProvisionedAccount[]> {
-  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/provisioned-accounts`);
+  const response = await authorizedFetch(
+    `/api/v1/mfp-devices/${id}/provisioned-accounts`,
+  );
   return response.json();
 }
 
@@ -590,9 +603,12 @@ export async function syncMfpDeviceUsers(
   options: { rewrite?: boolean } = {},
 ): Promise<SyncJob> {
   const query = options.rewrite ? "?rewrite=true" : "";
-  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/sync-users${query}`, {
-    method: "POST",
-  });
+  const response = await authorizedFetch(
+    `/api/v1/mfp-devices/${id}/sync-users${query}`,
+    {
+      method: "POST",
+    },
+  );
   return response.json();
 }
 
@@ -611,10 +627,15 @@ export type CounterPollResult = {
 /** Reads the copier's per-account counters and records whatever usage has
  * happened since the last read. The first run of a device only stores the
  * baseline — see CounterPollResult.baselines. */
-export async function pollMfpDeviceCounters(id: string): Promise<CounterPollResult> {
-  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/poll-counters`, {
-    method: "POST",
-  });
+export async function pollMfpDeviceCounters(
+  id: string,
+): Promise<CounterPollResult> {
+  const response = await authorizedFetch(
+    `/api/v1/mfp-devices/${id}/poll-counters`,
+    {
+      method: "POST",
+    },
+  );
   return response.json();
 }
 
@@ -652,7 +673,9 @@ export type DeviceUser = {
 };
 
 export async function listMfpDeviceAccounts(id: string): Promise<DeviceUser[]> {
-  const response = await authorizedFetch(`/api/v1/mfp-devices/${id}/device-accounts`);
+  const response = await authorizedFetch(
+    `/api/v1/mfp-devices/${id}/device-accounts`,
+  );
   return response.json();
 }
 
@@ -1091,7 +1114,10 @@ export type JobStatus =
   "received" | "forwarding" | "forwarded" | "failed" | "cancelled" | "held";
 export type AttributionMethod =
   "cups" | "mosyle" | "google_workspace" | "unresolved";
-export type HoldReason = "pin_release" | "quota" | null;
+// Mirrors app/quotas/service.py:resolve_hold_reason. "follow_me" was missing
+// here while the API had been returning it since Follow-Me shipped, so any UI
+// that switched on this type silently had no case for those jobs.
+export type HoldReason = "pin_release" | "follow_me" | "quota" | null;
 
 export type Job = {
   id: string;
@@ -1137,18 +1163,25 @@ export async function listJobs(params?: {
   return response.json();
 }
 
-export async function listQuotaHolds(): Promise<Job[]> {
-  const response = await authorizedFetch("/api/v1/quota-holds");
+// Admin-side: every held job, whatever is holding it. Distinct from the
+// kiosk's listHeldJobs below, which is PIN-scoped to one person at one printer.
+export async function listAllHeldJobs(): Promise<Job[]> {
+  const response = await authorizedFetch("/api/v1/held-jobs");
   return response.json();
 }
 
-export async function releaseQuotaHold(jobId: string): Promise<Job> {
-  const response = await authorizedFetch(
-    `/api/v1/quota-holds/${jobId}/release`,
-    {
-      method: "POST",
-    },
-  );
+export async function adminReleaseHeldJob(
+  jobId: string,
+  printerId?: string,
+): Promise<Job> {
+  const response = await authorizedFetch(`/api/v1/held-jobs/${jobId}/release`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // A Follow-Me job was addressed to a virtual queue, so the API asks
+    // which printer to release it at; everything else defaults to the
+    // printer it was sent to.
+    body: JSON.stringify(printerId ? { printer_id: printerId } : {}),
+  });
   return response.json();
 }
 
@@ -1183,12 +1216,16 @@ export async function getJobUsage(params?: {
   if (params?.pageSize) query.set("page_size", String(params.pageSize));
   if (params?.search) query.set("search", params.search);
   const qs = query.toString();
-  const response = await authorizedFetch(`/api/v1/jobs/usage${qs ? `?${qs}` : ""}`);
+  const response = await authorizedFetch(
+    `/api/v1/jobs/usage${qs ? `?${qs}` : ""}`,
+  );
   return response.json();
 }
 
 export async function getUserUsage(email: string): Promise<UserUsage> {
-  const response = await authorizedFetch(`/api/v1/jobs/usage/${encodeURIComponent(email)}`);
+  const response = await authorizedFetch(
+    `/api/v1/jobs/usage/${encodeURIComponent(email)}`,
+  );
   return response.json();
 }
 
@@ -1449,7 +1486,9 @@ export async function updateUser(
  * should NOT call this through anything that already holds an
  * impersonation token themselves (mutating calls, which this is, are
  * blocked server-side while impersonating — see block_impersonated_mutations). */
-export async function impersonateUser(id: string): Promise<{ access_token: string }> {
+export async function impersonateUser(
+  id: string,
+): Promise<{ access_token: string }> {
   const response = await authorizedFetch(`/api/v1/users/${id}/impersonate`, {
     method: "POST",
   });
@@ -1500,7 +1539,9 @@ export async function listKnownDevices(params?: {
   if (params?.pageSize) query.set("page_size", String(params.pageSize));
   if (params?.search) query.set("search", params.search);
   const qs = query.toString();
-  const response = await authorizedFetch(`/api/v1/devices${qs ? `?${qs}` : ""}`);
+  const response = await authorizedFetch(
+    `/api/v1/devices${qs ? `?${qs}` : ""}`,
+  );
   return response.json();
 }
 
@@ -1744,9 +1785,12 @@ export async function updateZabbixSettings(
 }
 
 export async function regenerateZabbixToken(): Promise<ZabbixSettings> {
-  const response = await authorizedFetch("/api/v1/settings/zabbix/regenerate-token", {
-    method: "POST",
-  });
+  const response = await authorizedFetch(
+    "/api/v1/settings/zabbix/regenerate-token",
+    {
+      method: "POST",
+    },
+  );
   return response.json();
 }
 
@@ -1872,12 +1916,17 @@ export type HourlyBucket = {
 // start/end are full ISO instants (typically the viewer's local midnight
 // through now) — see app/reports/aggregation.py:get_hourly_timeline's
 // docstring for why this endpoint has no server-side notion of "today".
-export async function getLiveHourly(start: Date, end: Date): Promise<HourlyBucket[]> {
+export async function getLiveHourly(
+  start: Date,
+  end: Date,
+): Promise<HourlyBucket[]> {
   const query = new URLSearchParams({
     start: start.toISOString(),
     end: end.toISOString(),
   });
-  const response = await authorizedFetch(`/api/v1/reports/live/hourly?${query.toString()}`);
+  const response = await authorizedFetch(
+    `/api/v1/reports/live/hourly?${query.toString()}`,
+  );
   return response.json();
 }
 
@@ -2366,10 +2415,13 @@ export type BulkCartridgeUpdate = {
 export async function bulkUpdateTonerCartridges(
   updates: BulkCartridgeUpdate[],
 ): Promise<FleetCartridge[]> {
-  const response = await authorizedFetch("/api/v1/printers/toner-cartridges/bulk", {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
+  const response = await authorizedFetch(
+    "/api/v1/printers/toner-cartridges/bulk",
+    {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    },
+  );
   return response.json();
 }
 
@@ -2675,14 +2727,7 @@ export async function updateLdapRelaySettings(
 }
 
 export type SyslogSeverity =
-  | "emerg"
-  | "alert"
-  | "crit"
-  | "err"
-  | "warning"
-  | "notice"
-  | "info"
-  | "debug";
+  "emerg" | "alert" | "crit" | "err" | "warning" | "notice" | "info" | "debug";
 
 export type SyslogSettings = {
   enabled: boolean;
@@ -2732,7 +2777,12 @@ export type SyslogEventPage = {
 
 export async function listPrinterSyslogEvents(
   printerId: string,
-  params?: { severity?: SyslogSeverity; search?: string; page?: number; pageSize?: number },
+  params?: {
+    severity?: SyslogSeverity;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+  },
 ): Promise<SyslogEventPage> {
   const query = new URLSearchParams();
   if (params?.severity) query.set("severity", params.severity);
@@ -2879,8 +2929,12 @@ export type PrinterAllowedOu = {
   ou_path: string;
 };
 
-export async function listPrinterAllowedOus(printerId: string): Promise<PrinterAllowedOu[]> {
-  const response = await authorizedFetch(`/api/v1/printers/${printerId}/allowed-ous`);
+export async function listPrinterAllowedOus(
+  printerId: string,
+): Promise<PrinterAllowedOu[]> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/allowed-ous`,
+  );
   return response.json();
 }
 
@@ -2888,20 +2942,31 @@ export async function createPrinterAllowedOu(
   printerId: string,
   ouPath: string,
 ): Promise<PrinterAllowedOu> {
-  const response = await authorizedFetch(`/api/v1/printers/${printerId}/allowed-ous`, {
-    method: "POST",
-    body: JSON.stringify({ ou_path: ouPath }),
-  });
+  const response = await authorizedFetch(
+    `/api/v1/printers/${printerId}/allowed-ous`,
+    {
+      method: "POST",
+      body: JSON.stringify({ ou_path: ouPath }),
+    },
+  );
   return response.json();
 }
 
-export async function deletePrinterAllowedOu(printerId: string, allowedId: string): Promise<void> {
-  await authorizedFetch(`/api/v1/printers/${printerId}/allowed-ous/${allowedId}`, {
-    method: "DELETE",
-  });
+export async function deletePrinterAllowedOu(
+  printerId: string,
+  allowedId: string,
+): Promise<void> {
+  await authorizedFetch(
+    `/api/v1/printers/${printerId}/allowed-ous/${allowedId}`,
+    {
+      method: "DELETE",
+    },
+  );
 }
 
 export async function listAllGoogleWorkspaceOrgUnits(): Promise<string[]> {
-  const response = await authorizedFetch("/api/v1/settings/google-workspace/org-units?scope=all");
+  const response = await authorizedFetch(
+    "/api/v1/settings/google-workspace/org-units?scope=all",
+  );
   return response.json();
 }
