@@ -5,6 +5,19 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.62.0] - 2026-08-23
+
+- **Jobs sent to a printer that is switched off now wait for it.** The print
+  server queued them by itself, but only for three hours, after which it
+  cancelled them outright — so a job sent to a classroom printer at 5pm was
+  destroyed at 8pm, with nothing left in the queue by morning and no notice to
+  the person who sent it. Observed happening to a real job on 2026-08-23.
+  PrintOps now holds those jobs instead: they wait as long as they need to,
+  they appear on the **Held Jobs** page marked "Waiting for printer", and they
+  are sent automatically, oldest first, the moment the printer answers again.
+  Nobody needs to do anything. The print server's own limit has also been
+  raised from 3 hours to 72, so a job already queued survives a weekend.
+
 ## [0.61.0] - 2026-08-23
 
 - **Reports now read in the district's own time, not UTC.** Print times have

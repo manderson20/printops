@@ -15,6 +15,7 @@ from app.models.job import Job
 from app.models.printer import Printer
 from app.models.release import PrintReleaseSettings
 from app.models.report import ReportFormulaSettings
+from app.printers import offline_holds
 from app.printers.job_control import JobControlError, cancel_cups_job
 from app.quotas.service import resolve_hold_reason
 from app.reports.aggregation import (
@@ -233,11 +234,22 @@ async def update_job(job_id: UUID, payload: JobUpdate, db: AsyncSession = Depend
     if payload.status == "held":
         job.held_file_path = payload.held_file_path
         job.held_job_options = payload.held_job_options
-        # Computed server-side, never trusted from the backend script's own
-        # clock (see JobUpdate's docstring).
-        release_settings = await _get_or_create_print_release_settings(db)
-        hold_hours = release_settings.hold_expiry_hours
-        job.held_expires_at = datetime.now(UTC) + timedelta(hours=hold_hours)
+        if job.hold_reason == offline_holds.HOLD_REASON:
+            # No expiry on a job that is only waiting for its printer to be
+            # switched on. The release-hold expiry exists because a person who
+            # never comes to collect their printing should not leave it on the
+            # server forever — but nobody has failed to collect this one, and
+            # the clock would run out while the printer is off for the very
+            # weekend the hold exists to survive: held Friday, deleted Sunday
+            # at the 48-hour default, printing Monday impossible. It goes when
+            # the printer answers (app/printers/offline_holds.py).
+            job.held_expires_at = None
+        else:
+            # Computed server-side, never trusted from the backend script's own
+            # clock (see JobUpdate's docstring).
+            release_settings = await _get_or_create_print_release_settings(db)
+            hold_hours = release_settings.hold_expiry_hours
+            job.held_expires_at = datetime.now(UTC) + timedelta(hours=hold_hours)
     else:
         # "forwarded"/"failed" are the only other statuses this endpoint
         # ever sets — both terminal (see Job.status's docstring), so this

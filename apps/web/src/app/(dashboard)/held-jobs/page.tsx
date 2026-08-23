@@ -26,12 +26,17 @@ const HOLD_LABEL: Record<string, string> = {
   quota: "Over quota",
   pin_release: "Release at printer",
   follow_me: "Follow-Me",
+  printer_offline: "Waiting for printer",
 };
 
 const HOLD_TONE: Record<string, "warning" | "info" | "neutral"> = {
   quota: "warning",
   pin_release: "info",
   follow_me: "info",
+  // Not a warning: nothing is wrong with the job, and it goes on its own as
+  // soon as the printer answers. Releasing it by hand is possible but not
+  // something anyone needs to do.
+  printer_offline: "neutral",
 };
 
 export default function HeldJobsPage() {

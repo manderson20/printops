@@ -1127,7 +1127,8 @@ export type AttributionMethod =
 // Mirrors app/quotas/service.py:resolve_hold_reason. "follow_me" was missing
 // here while the API had been returning it since Follow-Me shipped, so any UI
 // that switched on this type silently had no case for those jobs.
-export type HoldReason = "pin_release" | "follow_me" | "quota" | null;
+export type HoldReason =
+  "pin_release" | "follow_me" | "quota" | "printer_offline" | null;
 
 export type Job = {
   id: string;

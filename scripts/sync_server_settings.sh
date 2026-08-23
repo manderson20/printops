@@ -129,6 +129,19 @@ block_lines = [
     marker_begin,
     f'ServerName {hostname}',
     f'DefaultEncryption {default_encryption}',
+    # cupsd cancels a job that has been trying to reach its printer for
+    # MaxJobTime seconds — 'Canceling stuck job after 10800 seconds' at the
+    # 3-hour default. That is the right answer for a printer someone is about
+    # to walk over and switch on, and the wrong one for a printer that is off
+    # overnight: a job sent at 5pm is destroyed at 8pm, with no notice to the
+    # person who sent it and nothing left in the queue by morning. Observed
+    # live on 2026-08-23 with a teacher's job to a powered-off classroom
+    # printer.
+    #
+    # 72 hours, not 0: a job should survive a weekend, and a printer that has
+    # been decommissioned should not accumulate other people's documents
+    # forever.
+    'MaxJobTime 259200',
     marker_end,
 ]
 
@@ -143,7 +156,7 @@ echo "$NEW_CONF" | sudo tee "$CUPSD_CONF" > /dev/null
 # Brief interruption to the daemon, not just a config re-read.
 sudo systemctl restart cups.service
 
-echo "Applied ServerName=$HOSTNAME_VALUE, DefaultEncryption=$DEFAULT_ENCRYPTION to $CUPSD_CONF, restarted cups."
+echo "Applied ServerName=$HOSTNAME_VALUE, DefaultEncryption=$DEFAULT_ENCRYPTION, MaxJobTime=259200 to $CUPSD_CONF, restarted cups."
 
 # Step 4: regenerate every active printer's Avahi service file, so
 # advertise_ipps takes effect fleet-wide immediately rather than waiting
