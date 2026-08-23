@@ -170,7 +170,12 @@ def spool_held_file(job_record_id: str, filename: str | None) -> str:
     else:
         with open(dest, "wb") as out:
             shutil.copyfileobj(sys.stdin.buffer, out)
-    os.chmod(dest, 0o660)
+    # 0o640: the API process reads this back to release the job and unlinks it
+    # when it's done, and unlinking is governed by the directory's group-write
+    # bit above, not the file's. Nothing ever writes to a spooled document
+    # after this line, so group write is permission this file doesn't need —
+    # and this is somebody's document (CodeQL py/overly-permissive-file, 229).
+    os.chmod(dest, 0o640)
     return dest
 
 

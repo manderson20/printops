@@ -248,6 +248,10 @@ def test_check_status_rediscovers_capabilities_on_reconnect(
         raise PrinterProbeError("Could not reach an IPP printer at 10.0.0.8:631: timed out")
 
     monkeypatch.setattr(printer_status, "probe_printer_state", offline_state)
+    # Twice: one missed probe no longer makes a printer offline (status.py's
+    # CONSECUTIVE_PROBE_FAILURES_BEFORE_OFFLINE), and this test needs it
+    # genuinely offline before it can come back from anywhere.
+    client.post(f"/api/v1/printers/{printer_id}/check-status", headers=auth_headers)
     still_offline = client.post(f"/api/v1/printers/{printer_id}/check-status", headers=auth_headers)
     assert still_offline.json()["status"] == "offline"
     assert still_offline.json()["capabilities"] is None
