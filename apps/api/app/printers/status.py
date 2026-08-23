@@ -24,6 +24,11 @@ PRINTER_STATE_STOPPED = 5
 # another one. A printer that genuinely comes back after being switched off
 # overnight is well past this and resyncs immediately; a printer flapping
 # every few minutes gets one resync and then waits.
+# How many consecutive failed probes it takes before a printer is called
+# offline. Two, because one is a timeout and two in a row a minute apart is
+# a printer — see refresh_printer_status.
+CONSECUTIVE_PROBE_FAILURES_BEFORE_OFFLINE = 2
+
 AUTO_RESYNC_COOLDOWN = timedelta(minutes=30)
 
 # Each consecutive failure doubles the wait, because a resync that just
@@ -94,7 +99,33 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
 
     `manual` marks a check a person asked for (the "Check Status" button),
     which skips the recovery cooldown below — same rule as
-    auto_resync_due."""
+    auto_resync_due.
+
+    One failed probe is not offline.
+
+    The trigger for this was the LCACTC RM 502 (an HP M652). Measured
+    2026-08-23: it loses about 18% of packets sent to it, in blackouts of
+    almost exactly 7 seconds arriving almost exactly 37 seconds apart, and it
+    does this under continuous once-a-second traffic, so it is not the device
+    sleeping between requests. Its own interface counters are clean — link up
+    at 1 Gbps, no flap in three days, zero errors and zero discards in either
+    direction — which says the traffic never reaches it. The cause is on the
+    network path and is not diagnosed yet; a printer on the same subnet lost
+    nothing across 51 samples.
+
+    The probe usually survives a blackout on TCP retransmits, and when the
+    retransmit ladder overshoots STATE_TIMEOUT_SECONDS the printer flips to
+    offline and back — with a capability rediscovery and a queue resync on
+    every return trip. Nothing was wrong with the printer on any of them.
+
+    So a miss is counted rather than acted on, and only
+    CONSECUTIVE_PROBE_FAILURES_BEFORE_OFFLINE in a row change the status. A
+    printer that has genuinely gone away misses every time and is reported
+    within two cycles; a sleeping one almost never misses twice running. The
+    debounce applies to a manual check too — the button asks the same question
+    over the same 5 seconds, and a person clicking it deserves the same
+    standard of evidence, not a faster wrong answer.
+    """
     try:
         result: PrinterStateResult = await probe_printer_state(
             printer.ip_address,
@@ -103,10 +134,13 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
             ipp_path=printer.effective_ipp_path,
         )
     except PrinterProbeError as exc:
-        printer.status = "offline"
-        printer.status_reasons = None
-        printer.status_message = str(exc)
+        printer.status_probe_failures = (printer.status_probe_failures or 0) + 1
+        if printer.status_probe_failures >= CONSECUTIVE_PROBE_FAILURES_BEFORE_OFFLINE:
+            printer.status = "offline"
+            printer.status_reasons = None
+            printer.status_message = str(exc)
     else:
+        printer.status_probe_failures = 0
         status, message = derive_status(result.printer_state, result.state_reasons)
         printer.status = status
         printer.status_reasons = [r for r in result.state_reasons if r != "none"] or None

@@ -142,6 +142,12 @@ class Printer(Base, TimestampMixin):
     status_checked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+    # Consecutive failed probes, reset to 0 by any success. A printer has to
+    # miss CONSECUTIVE_PROBE_FAILURES_BEFORE_OFFLINE times in a row before
+    # `status` is allowed to say "offline" — see app/printers/status.py:
+    # refresh_printer_status for why one 5-second timeout isn't evidence of
+    # an absent printer.
+    status_probe_failures: Mapped[int] = mapped_column(default=0, server_default="0")
 
     # Print-and-release. When true, the CUPS backend script
     # (infra/cups/backends/printops) holds every job sent to this printer's
