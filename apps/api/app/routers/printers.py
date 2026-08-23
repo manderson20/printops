@@ -524,7 +524,7 @@ async def check_status(printer_id: UUID, db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A virtual queue has no real device to check the status of.",
         )
-    await refresh_printer_status_and_rediscover(printer, manual=True)
+    await refresh_printer_status_and_rediscover(printer, db, manual=True)
     await db.commit()
     await db.refresh(printer)
     return printer

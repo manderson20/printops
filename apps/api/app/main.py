@@ -124,7 +124,7 @@ async def _printer_status_poll_loop() -> None:
                 )
 
                 async def _refresh_one(printer: Printer) -> None:
-                    await refresh_printer_status_and_rediscover(printer)
+                    await refresh_printer_status_and_rediscover(printer, db)
 
                 await asyncio.gather(*(_refresh_one(p) for p in printers), return_exceptions=True)
                 await db.commit()

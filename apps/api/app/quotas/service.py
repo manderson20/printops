@@ -158,13 +158,31 @@ async def resolve_hold_reason(
     other follow_me_enabled one (app/routers/release.py). A bypassed user is
     treated exactly as if both flags were off for them — they still fall
     through to ordinary quota resolution below, rather than skipping every
-    hold outright."""
+    hold outright.
+
+    A printer that is offline holds too — see the comment below on why that
+    belongs here rather than in cupsd's own queue."""
     if printer.release_required or printer.follow_me_enabled:
         bypassed = submitted_by is not None and await has_release_bypass(
             db, printer.id, submitted_by
         )
         if not bypassed:
             return "follow_me" if printer.follow_me_enabled else "pin_release"
+
+    # A printer PrintOps cannot currently reach holds its work here rather
+    # than in cupsd. CUPS does queue behind an absent printer, but only for
+    # MaxJobTime — three hours by default, which quietly destroyed a teacher's
+    # job sent at 5pm to a classroom printer switched off for the night
+    # (2026-08-23, job 5058). Held here instead, the job waits as long as it
+    # takes, shows up on the Held Jobs page while it waits, and is released
+    # automatically the moment the printer answers again
+    # (app/printers/offline_holds.py).
+    #
+    # Below release/follow-me, which are how a job gets delivered at all and
+    # whose kiosk the person is standing at; above quota, because a job that
+    # cannot reach its printer is not a quota decision.
+    if printer.status == "offline":
+        return "printer_offline"
 
     if submitted_by is None:
         return None
