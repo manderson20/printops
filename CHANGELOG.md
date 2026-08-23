@@ -5,6 +5,16 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.60.1] - 2026-08-23
+
+- **Fixed: one print job could be reported as dozens of failures.** When the
+  print server retries a job, it starts delivery again from the beginning, and
+  PrintOps recorded each attempt as a separate job — every one of them a
+  failure. One teacher's job in August was retried 51 times and appeared in the
+  reports as 51 failed jobs. Attempts at the same job are now folded together,
+  so the failure count means what it says. Jobs that actually printed are never
+  altered.
+
 ## [0.60.0] - 2026-08-23
 
 - **New: PrintOps now warns when a printer is hard to reach.** Every health
