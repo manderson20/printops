@@ -20,6 +20,16 @@ class Job(Base, TimestampMixin):
         Uuid, ForeignKey("printers.id", ondelete="CASCADE"), index=True
     )
     cups_job_id: Mapped[int | None] = mapped_column(default=None)
+    # CUPS's own permanent identifier for the job (job-uuid=urn:uuid:...).
+    # cups_job_id is a spool position, not an identity: it resets when the
+    # spool is cleared and comes round again. This is what a job's retries are
+    # matched on — see app/routers/jobs.py:_supersede_earlier_attempts.
+    cups_job_uuid: Mapped[str | None] = mapped_column(index=True, default=None)
+    # Set when a later attempt at the same CUPS job took over. The row stays on
+    # the Jobs page as history; the reports leave it out, because counting it
+    # would report one job a person sent as however many times cupsd retried it
+    # (app/reports/aggregation.py:_apply_filters).
+    superseded_by_job_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, default=None)
 
     # Resolved via app/attribution/resolve.py's ordered strategy chain
     # (ARCHITECTURE.md §4) — not necessarily the raw CUPS-reported value

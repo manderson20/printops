@@ -62,6 +62,27 @@ MISS_THRESHOLD = 3
 # working, and unreliable to reach.
 MIN_SUCCESSES = 1
 
+# A probe that answered, but took this long or longer, counts as evidence of
+# loss too — and it is the evidence that matters, because a failed probe is the
+# rare case. The status probe opens a TCP connection with a five-second
+# timeout, and TCP retransmits a lost SYN at roughly one second and again at
+# three. RM 502's blackouts last about seven seconds, so a probe only *fails*
+# if it starts in the first two or three of one; every other probe that runs
+# into a blackout succeeds on a retransmit and looks perfectly healthy. That is
+# how the first version of this alarm sat silent through a printer losing a
+# fifth of its traffic: it was built on the pass/fail signal that the offline
+# debounce had deliberately made tolerant.
+#
+# Two seconds, because a healthy IPP probe on this fleet measured 0.4-1.2s
+# end to end and one lost SYN adds about a second on top of that.
+SLOW_PROBE_SECONDS = 2.0
+
+# ...but only for a printer that is otherwise quick. A device that always takes
+# three seconds is a slow device, not a lossy path, and calling it lossy every
+# hour of every day is how an alarm gets ignored. Slow probes count as evidence
+# only when this same printer has also answered quickly inside the window, so
+# each one is judged against itself rather than a fleet-wide guess.
+FAST_PROBE_SECONDS = 1.0
 # The keyword the UI keys off to render this as a warning about the network
 # rather than a fault on the printer (apps/web/.../printers).
 NETWORK_UNSTABLE_REASON = "printops-network-unstable"
@@ -72,17 +93,24 @@ class NetworkFlap:
     """A window's worth of evidence that the path to a printer is lossy."""
 
     misses: int
+    slow: int
     probes: int
     window: timedelta
 
     @property
+    def affected(self) -> int:
+        """Probes that ran into the fault, whether or not they survived it."""
+        return self.misses + self.slow
+
+    @property
     def loss_percent(self) -> int:
-        return round(100 * self.misses / self.probes) if self.probes else 0
+        return round(100 * self.affected / self.probes) if self.probes else 0
 
 
 ProbeLog = list[list]
-"""[[iso timestamp, answered], ...] — JSON-native, so it round-trips through
-the column without a converter."""
+"""[[iso timestamp, answered, seconds], ...] — JSON-native, so it round-trips
+through the column without a converter. Entries written before probe timing
+existed have two elements and are read as "no duration recorded"."""
 
 
 def _prune(log: ProbeLog | None, cutoff: datetime) -> ProbeLog:
@@ -94,19 +122,30 @@ def _prune(log: ProbeLog | None, cutoff: datetime) -> ProbeLog:
     kept: ProbeLog = []
     for entry in log or []:
         try:
-            stamp, answered = entry
+            stamp, answered = entry[0], entry[1]
+            seconds = entry[2] if len(entry) > 2 else None
             when = datetime.fromisoformat(stamp)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, IndexError):
             continue
         if when.tzinfo is None:
             when = when.replace(tzinfo=UTC)
         if when >= cutoff:
-            kept.append([stamp, bool(answered)])
+            kept.append([stamp, bool(answered), _as_seconds(seconds)])
     return kept
 
 
+def _as_seconds(value) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def observe(
-    log: ProbeLog | None, answered: bool, now: datetime | None = None
+    log: ProbeLog | None,
+    answered: bool,
+    seconds: float | None = None,
+    now: datetime | None = None,
 ) -> tuple[ProbeLog, NetworkFlap | None]:
     """Records one probe outcome against a printer's log, returning the log to
     store and the flap verdict if the recent history now warrants one.
@@ -117,13 +156,27 @@ def observe(
     """
     now = now or datetime.now(UTC)
     history = _prune(log, now - WINDOW)
-    history.append([now.isoformat(), answered])
+    history.append([now.isoformat(), answered, _as_seconds(seconds)])
 
-    misses = sum(1 for _, ok in history if not ok)
+    misses = sum(1 for entry in history if not entry[1])
     successes = len(history) - misses
-    if misses < MISS_THRESHOLD or successes < MIN_SUCCESSES:
+    # Judged against this printer's own quick answers — see FAST_PROBE_SECONDS.
+    normally_quick = any(
+        entry[1] and entry[2] is not None and entry[2] < FAST_PROBE_SECONDS for entry in history
+    )
+    slow = (
+        sum(
+            1
+            for entry in history
+            if entry[1] and entry[2] is not None and entry[2] >= SLOW_PROBE_SECONDS
+        )
+        if normally_quick
+        else 0
+    )
+
+    if misses + slow < MISS_THRESHOLD or successes < MIN_SUCCESSES:
         return history, None
-    return history, NetworkFlap(misses=misses, probes=len(history), window=WINDOW)
+    return history, NetworkFlap(misses=misses, slow=slow, probes=len(history), window=WINDOW)
 
 
 def flap_reason(flap: NetworkFlap) -> str:
@@ -132,11 +185,18 @@ def flap_reason(flap: NetworkFlap) -> str:
     checked — without asserting a cause this cannot know."""
     hours = int(flap.window.total_seconds() // 3600)
     window_text = "the last hour" if hours == 1 else f"the last {hours} hours"
+    if flap.misses and flap.slow:
+        detail = f"{flap.misses} got no reply at all and {flap.slow} answered only after retrying"
+    elif flap.misses:
+        detail = f"{flap.misses} got no reply at all"
+    else:
+        detail = f"{flap.slow} answered only after retrying"
     return (
-        f"Answered {flap.probes - flap.misses} of {flap.probes} status checks in "
-        f"{window_text} — {flap.loss_percent}% of them got no reply, while the printer "
-        "answered normally in between. That pattern is the network path dropping "
-        "traffic rather than a fault on the printer, which will report itself healthy "
-        "throughout. Worth checking the switch port, the cable and the wall port, "
-        "particularly if this printer was moved recently."
+        f"{flap.affected} of {flap.probes} status checks in {window_text} ran into "
+        f"trouble reaching this printer ({flap.loss_percent}%) — {detail}, while it "
+        f"answered normally in "
+        "between. That pattern is the network path dropping traffic rather than a fault "
+        "on the printer, which will report itself healthy throughout. Worth checking the "
+        "switch port, the cable and the wall port, particularly if this printer was "
+        "moved recently."
     )

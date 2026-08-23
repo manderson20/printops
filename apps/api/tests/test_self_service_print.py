@@ -11,6 +11,9 @@ from app.db import get_db
 from app.main import app
 from app.models.base import Base
 from app.models.google_workspace import GoogleWorkspaceUser
+from app.printers import discovery as printer_discovery
+from app.printers.ipp_client import PrinterProbeError
+from app.routers import printers as printers_router
 from app.routers import self_service_print as self_service_print_router
 
 GOOGLE_CLAIMS = {
@@ -95,6 +98,32 @@ def viewer_headers(client, google_settings, monkeypatch):
     )
     token = response.headers["location"].split("token=", 1)[1]
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(autouse=True)
+def mock_printer_creation_side_effects(monkeypatch):
+    """`POST /printers` probes the device over IPP and then syncs its CUPS
+    queue. Neither was stubbed here, so every test in this file that created a
+    printer opened a real TCP connection to 10.0.1.5:631 — an address nothing
+    answers on — and shelled out to scripts/sync_cups_queue.sh.
+
+    The connection has no timeout on that path, so the run did not fail: it
+    stopped, in SYN-SENT, indefinitely. Two runs started 2026-08-20 were found
+    still stuck three days later, one of them under a `timeout 900` that never
+    fired because the timeout bounds the command and not the socket, and they
+    had to be killed with SIGKILL. The whole suite has been run with
+    `--ignore=tests/test_self_service_print.py` ever since, which quietly meant
+    this file's coverage stopped running at all.
+
+    Same two stubs the printers API tests use, for the same reason: nothing in
+    this file is about reaching a printer."""
+
+    async def fake_probe_printer(ip_address, port=631, tls=False, timeout=5, ipp_path=None):
+        raise PrinterProbeError(f"Could not reach an IPP printer at {ip_address}:{port}: timed out")
+
+    monkeypatch.setattr(printer_discovery, "probe_printer", fake_probe_printer)
+    monkeypatch.setattr(printers_router, "sync_queue", lambda printer_id, is_virtual=False: None)
+    monkeypatch.setattr(printers_router, "remove_queue", lambda printer_id, is_virtual=False: None)
 
 
 def _create_printer(client, auth_headers, name="Self-Service Target", ip="10.0.1.5"):

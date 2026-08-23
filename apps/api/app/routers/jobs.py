@@ -110,6 +110,7 @@ async def create_job(payload: JobCreate, db: AsyncSession = Depends(get_db)):
     job = Job(
         printer_id=payload.printer_id,
         cups_job_id=payload.cups_job_id,
+        cups_job_uuid=payload.cups_job_uuid,
         submitted_by=attributed_user,
         attribution_method=attribution_method,
         mac_address=mac_address,
@@ -120,9 +121,84 @@ async def create_job(payload: JobCreate, db: AsyncSession = Depends(get_db)):
         hold_reason=hold_reason,
     )
     db.add(job)
+    await _supersede_earlier_attempts(db, job)
     await db.commit()
     await db.refresh(job)
     return job
+
+
+# How far back an earlier row for the same CUPS job is treated as an earlier
+# attempt at it. cupsd's retries arrive seconds to minutes apart, so this is
+# generous; the bound exists because CUPS job numbers are not unique forever —
+# they reset when the spool is cleared, and an unrelated job inheriting an old
+# number must not reach back and rewrite a stranger's history.
+SUPERSEDES_WITHIN = timedelta(hours=6)
+
+
+async def _supersede_earlier_attempts(db: AsyncSession, job: Job) -> None:
+    """Closes out earlier rows for the CUPS job this one is retrying.
+
+    cupsd re-runs the backend for every retry of a job, and the backend
+    registers a new row each time, so one CUPS job can leave a trail. Job 4584
+    on the ES Veronica Copier left 51 of them in August, every one of them
+    recorded as a failure — so the reports showed 51 failed jobs where a person
+    had sent one. The failure count is the number an admin acts on, and it was
+    wrong by a factor of fifty.
+
+    Earlier attempts are marked cancelled with the reason spelled out, not
+    failed: what failed is the delivery of one job, and the last row in the
+    trail is the one that says how that ended. A row already recorded as
+    `forwarded` is left alone — that is a delivery that happened, whatever
+    cupsd did with the job number afterwards.
+
+    app/printers/job_reconcile.py does the same thing from the other end, for
+    rows whose backend never reported at all."""
+    if job.cups_job_id is None and job.cups_job_uuid is None:
+        return
+    # Flushed first so the row has its id: without it `Job.id != job.id`
+    # compares against None, which SQLAlchemy renders as `id IS NOT NULL` —
+    # and the autoflush that the query below triggers anyway would then have
+    # this job supersede itself. test_create_and_update_job caught exactly
+    # that.
+    await db.flush()
+    if job.cups_job_uuid is not None:
+        # CUPS's own identifier, so no time bound is needed or wanted: it is
+        # generated per job and never reused, and two rows carrying it are two
+        # attempts at the same job however far apart they are.
+        identity = [Job.cups_job_uuid == job.cups_job_uuid]
+    else:
+        # A backend that predates job-uuid, or a job CUPS gave none for. The
+        # number resets when the spool is cleared, so this is bounded in time
+        # to keep an unrelated job from inheriting an old one's history.
+        identity = [
+            Job.printer_id == job.printer_id,
+            Job.cups_job_id == job.cups_job_id,
+            Job.cups_job_uuid.is_(None),
+            Job.created_at >= datetime.now(UTC) - SUPERSEDES_WITHIN,
+        ]
+
+    earlier = (
+        (
+            await db.execute(
+                select(Job).where(
+                    *identity,
+                    Job.id != job.id,
+                    Job.status.not_in(("forwarded", "held")),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for previous in earlier:
+        previous.status = "cancelled"
+        previous.superseded_by_job_id = job.id
+        previous.error_message = (
+            "Superseded — the print server retried this job, and the later record of it "
+            "has what became of it."
+        )
+        if previous.completed_at is None:
+            previous.completed_at = datetime.now(UTC)
 
 
 async def _get_or_create_print_release_settings(db: AsyncSession) -> PrintReleaseSettings:

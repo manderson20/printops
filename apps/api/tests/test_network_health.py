@@ -24,12 +24,21 @@ PRINTER = "2ea028f4-abc2-423b-9204-aaf47c6a9be2"
 T0 = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
 
+FAST = 0.3
+SLOW = 3.1
+
+
 def _observe(outcomes, start=T0, every=timedelta(minutes=1), log=None):
     """Runs a sequence of probe outcomes through the log the way the status
-    poll does — read the row, observe, write it back."""
+    poll does — read the row, observe, write it back.
+
+    An outcome is True/False for answered, or a float for "answered, and took
+    this long", so a test can describe a probe that succeeded on a retransmit."""
     verdict = None
-    for i, answered in enumerate(outcomes):
-        log, verdict = network_health.observe(log, answered, now=start + every * i)
+    for i, outcome in enumerate(outcomes):
+        answered = outcome is not False
+        seconds = outcome if isinstance(outcome, float) else (FAST if answered else None)
+        log, verdict = network_health.observe(log, answered, seconds=seconds, now=start + every * i)
     return log, verdict
 
 
@@ -70,6 +79,46 @@ def test_misses_outside_the_window_stop_counting():
     assert len(log) == 1
 
 
+def test_a_probe_that_only_succeeded_after_retrying_counts():
+    """The case the first version of this alarm missed entirely. RM 502 was
+    losing ~18% of its traffic and failing almost no probes: TCP retransmits a
+    lost SYN, so the probe answers a second or three later and is recorded as a
+    clean success. Measured on it: 0.11s normally, against 1.11/2.11/3.12/4.61s
+    while the path was dropping packets."""
+    _, flap = _observe([True, SLOW, True, SLOW, True, SLOW, True])
+
+    assert flap is not None
+    assert flap.misses == 0
+    assert flap.slow == 3
+    assert flap.affected == 3
+
+
+def test_a_printer_that_is_simply_slow_is_not_called_lossy():
+    """A device that always takes three seconds is a slow device. Calling it
+    lossy every hour of every day is how an alarm gets ignored — so slow
+    probes only count for a printer that has also answered quickly."""
+    _, flap = _observe([SLOW] * 20)
+
+    assert flap is None
+
+
+def test_slow_probes_and_misses_add_up_together():
+    _, flap = _observe([True, False, SLOW, True, False, True])
+
+    assert flap is not None
+    assert (flap.misses, flap.slow) == (2, 1)
+
+
+def test_an_entry_written_before_timing_existed_still_reads():
+    """Rows already in the database have two-element entries, and a deploy must
+    not throw away the history it was just given a column to keep."""
+    legacy = [[T0.isoformat(), True], [T0.isoformat(), False]]
+    log, _ = network_health.observe(legacy, False, seconds=FAST, now=T0)
+
+    assert len(log) == 3
+    assert log[0][2] is None
+
+
 def test_the_loss_rate_is_reported_from_what_was_seen():
     _, flap = _observe([True, False] * 10)
     assert flap is not None
@@ -82,7 +131,7 @@ def test_the_message_says_what_was_seen_and_where_to_look():
     _, flap = _observe([True, False, True, False, True, False, True])
     assert flap is not None
     reason = network_health.flap_reason(flap)
-    assert "4 of 7" in reason
+    assert "3 of 7" in reason
     assert "43%" in reason
     assert "switch port" in reason
     # Says what it is *not*, so nobody goes hunting in the printer.
@@ -122,7 +171,7 @@ def _printer(**kwargs):
 
 
 def _flap():
-    return network_health.NetworkFlap(misses=7, probes=60, window=timedelta(hours=1))
+    return network_health.NetworkFlap(misses=3, slow=4, probes=60, window=timedelta(hours=1))
 
 
 def test_a_flapping_printer_is_flagged_but_stays_online():
