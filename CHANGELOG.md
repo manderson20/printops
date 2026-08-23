@@ -5,6 +5,35 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.60.0] - 2026-08-23
+
+- **New: PrintOps now warns when a printer is hard to reach.** Every health
+  signal PrintOps has comes from the printer itself, so a printer that answers
+  whenever it is reached looks healthy — even when a large share of what is
+  sent to it never arrives. That is what a bad switch port, a damaged cable or
+  a reused wall port looks like, and it was invisible: the printer reports
+  itself fine, because it is fine. A printer that misses several status checks
+  in an hour while still answering in between is now marked with an amber
+  "Network" badge on the printer list, and its page says what was seen and
+  suggests checking the switch port and cable. It is deliberately not shown as
+  an error — the printer is working, and it is the path to it that isn't.
+  Found on the LCACTC RM 502 after it was moved to a port that hadn't been used
+  in a long time.
+- **Fixed: a test page could be held with nothing saying so.** A test page is
+  sent through the printer's normal queue on purpose, so that it proves the
+  same path a real job takes — which means a printer set to hold jobs for
+  release holds the test page too. PrintOps reported the submission as a
+  success, so an admin would stand at a printer waiting for a page that was
+  never going to come out. It now says the page is being held and what will
+  release it.
+- **New: admins can release any held job, not just quota holds.** Quota Holds
+  has become **Held Jobs** and lists everything PrintOps is holding, with a
+  badge for why. Previously only quota holds could be released from here, and
+  everything else relied on the person who sent the job releasing it at the
+  printer with their PIN — which cannot work for anyone who has no PIN yet, or
+  for a job sent by the server itself. A Follow-Me job asks which printer to
+  release it at, since it was never addressed to a particular one.
+
 ## [0.59.8] - 2026-08-23
 
 - **Fixed: a printer that missed one check could have its queue restarted
