@@ -18,7 +18,9 @@ schedules an update.
   suggests checking the switch port and cable. It is deliberately not shown as
   an error — the printer is working, and it is the path to it that isn't.
   Found on the LCACTC RM 502 after it was moved to a port that hadn't been used
-  in a long time.
+  in a long time. The recent history behind the warning is kept with the
+  printer, so updating PrintOps doesn't wipe it and give a struggling printer a
+  clean slate.
 - **Fixed: a test page could be held with nothing saying so.** A test page is
   sent through the printer's normal queue on purpose, so that it proves the
   same path a real job takes — which means a printer set to hold jobs for
