@@ -33,6 +33,15 @@ class ServerSettings(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
 
     hostname: Mapped[str] = mapped_column(default="", server_default="")
+    # The district's own timezone, as an IANA name. Timestamps are stored in
+    # UTC and stay that way; this is what the reports are *read* in — the day a
+    # job belongs to, the hour it lands in, and the times written into an
+    # exported spreadsheet. Without it those were all UTC, which put the
+    # busiest hour five hours out and moved every evening's printing into the
+    # next day's total (app/reports/aggregation.py).
+    timezone: Mapped[str] = mapped_column(
+        default="America/Chicago", server_default="America/Chicago"
+    )
     require_encryption: Mapped[bool] = mapped_column(default=False, server_default="false")
     advertise_ipps: Mapped[bool] = mapped_column(default=False, server_default="false")
     # Non-fatal — set when scripts/sync_server_settings.sh fails, same

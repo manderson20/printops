@@ -14,8 +14,9 @@ Two aggregation styles are used deliberately:
 import math
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +30,10 @@ from app.models.mosyle import MosyleDevice
 from app.models.printer import Printer
 
 TERMINAL_STATUSES = ("forwarded", "failed", "cancelled")
+
+# Used where a caller has not supplied one, so behaviour is unchanged rather
+# than guessed at; every real report path passes the district's zone.
+UTC_ZONE = ZoneInfo("UTC")
 Granularity = str  # "day" | "week" | "month"
 
 
@@ -176,8 +181,23 @@ async def _fetch_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[_Raw
     ]
 
 
-def _bucket_key(dt: datetime, granularity: Granularity) -> date:
-    d = dt.date()
+def local(dt: datetime, tz: ZoneInfo) -> datetime:
+    """The same instant, read in the district's own timezone.
+
+    Every timestamp in this database is UTC, which is right for storage and
+    wrong for every question a report answers. "How many pages on Tuesday" and
+    "when is the copier busiest" are questions about the hours people were at
+    work, so the instant has to be converted before the day or the hour is
+    taken off it. Reading them straight off the stored value put the busiest
+    hour five hours out and counted an evening's printing against the next
+    day (see migration 0065)."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(tz)
+
+
+def _bucket_key(dt: datetime, granularity: Granularity, tz: ZoneInfo) -> date:
+    d = local(dt, tz).date()
     if granularity == "day":
         return d
     if granularity == "week":
@@ -199,12 +219,15 @@ class TimelineBucket:
 
 
 async def get_timeline(
-    db: AsyncSession, filters: ReportFilters, granularity: Granularity = "day"
+    db: AsyncSession,
+    filters: ReportFilters,
+    granularity: Granularity = "day",
+    tz: ZoneInfo = UTC_ZONE,
 ) -> list[TimelineBucket]:
     rows = await _fetch_raw_rows(db, filters)
     buckets: dict[date, TimelineBucket] = {}
     for r in rows:
-        key = _bucket_key(r.created_at, granularity)
+        key = _bucket_key(r.created_at, granularity, tz)
         bucket = buckets.setdefault(key, TimelineBucket(bucket_start=key))
         bucket.job_count += 1
         bucket.total_pages += r.page_count
@@ -340,13 +363,18 @@ class PeakTimes:
     by_hour: dict[int, int] = field(default_factory=dict)  # 0..23
 
 
-async def get_peak_times(db: AsyncSession, filters: ReportFilters) -> PeakTimes:
+async def get_peak_times(
+    db: AsyncSession, filters: ReportFilters, tz: ZoneInfo = UTC_ZONE
+) -> PeakTimes:
+    """Busiest day and hour, counted in the district's own time — the whole
+    point of the chart is which part of the working day is busy."""
     rows = await _fetch_raw_rows(db, filters)
     by_day = Counter()
     by_hour = Counter()
     for r in rows:
-        by_day[r.created_at.weekday()] += r.page_count
-        by_hour[r.created_at.hour] += r.page_count
+        when = local(r.created_at, tz)
+        by_day[when.weekday()] += r.page_count
+        by_hour[when.hour] += r.page_count
     return PeakTimes(by_day_of_week=dict(by_day), by_hour=dict(by_hour))
 
 

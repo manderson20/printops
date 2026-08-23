@@ -8,6 +8,7 @@ non-http(s) scheme) that would otherwise reach `httpx` unexamined, which is
 what CodeQL's py/partial-ssrf check flags on these integrations."""
 
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 _ALLOWED_SCHEMES = {"http", "https"}
 
@@ -45,3 +46,23 @@ def validate_safe_identifier(value: str | None) -> str | None:
     if not all(c.isalnum() or c in "_-" for c in value):
         raise ValueError("must contain only letters, digits, underscores, and hyphens")
     return value
+
+
+def validate_timezone(value: str | None) -> str | None:
+    """An IANA zone name the server can actually resolve.
+
+    Checked rather than trusted because the failure is silent: an unknown name
+    would fall back to UTC somewhere downstream and the reports would go back
+    to being five hours out, looking exactly as correct as they do now."""
+    if value is None:
+        return value
+    name = value.strip()
+    if not name:
+        raise ValueError("must be a timezone name, e.g. America/Chicago")
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(
+            f"{name!r} is not a timezone this server knows — use an IANA name like America/Chicago"
+        ) from exc
+    return name

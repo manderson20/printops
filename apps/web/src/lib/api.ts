@@ -2663,6 +2663,9 @@ export type TlsCertificateStatus = {
 
 export type ServerSettings = {
   hostname: string;
+  // IANA zone name. The reports are read in this, though timestamps are always
+  // stored in UTC — see the API's migration 0065.
+  timezone: string;
   require_encryption: boolean;
   advertise_ipps: boolean;
   sync_error: string | null;
@@ -2673,6 +2676,7 @@ export type ServerSettings = {
 
 export type ServerSettingsInput = {
   hostname?: string;
+  timezone?: string;
   require_encryption?: boolean;
   advertise_ipps?: boolean;
 };

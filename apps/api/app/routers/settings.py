@@ -752,6 +752,7 @@ def _server_settings_to_out(settings: ServerSettings) -> ServerSettingsOut:
     cert = read_certificate_status()
     return ServerSettingsOut(
         hostname=settings.hostname,
+        timezone=settings.timezone,
         require_encryption=settings.require_encryption,
         advertise_ipps=settings.advertise_ipps,
         sync_error=settings.sync_error,
@@ -798,6 +799,8 @@ async def update_server_settings(payload: ServerSettingsUpdate, db: AsyncSession
         settings.require_encryption = updates["require_encryption"]
     if updates.get("advertise_ipps") is not None:
         settings.advertise_ipps = updates["advertise_ipps"]
+    if updates.get("timezone") is not None:
+        settings.timezone = updates["timezone"]
 
     # Committed *before* the sync runs — the sync script reads this row
     # back over HTTP (a separate request/DB session), so it would still

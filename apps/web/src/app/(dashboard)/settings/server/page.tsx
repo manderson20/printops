@@ -26,9 +26,26 @@ type LoadState =
   | { phase: "ok"; settings: ServerSettings }
   | { phase: "error"; message: string };
 
+// The zones a US school district plausibly sits in. Not the full IANA list:
+// this is a district-wide setting someone changes once, and 600 options is a
+// worse way to find "America/Chicago" than nine. A value already stored that
+// isn't here is kept and shown, so an API-set zone is never silently replaced.
+const TIME_ZONES = [
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Phoenix",
+  "America/Los_Angeles",
+  "America/Anchorage",
+  "Pacific/Honolulu",
+  "America/Puerto_Rico",
+  "UTC",
+];
+
 export default function ServerSettingsPage() {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [hostname, setHostname] = useState("");
+  const [timezone, setTimezone] = useState("");
   const [requireEncryption, setRequireEncryption] = useState(false);
   const [advertiseIpps, setAdvertiseIpps] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -43,13 +60,17 @@ export default function ServerSettingsPage() {
       .then((settings) => {
         setState({ phase: "ok", settings });
         setHostname(settings.hostname);
+        setTimezone(settings.timezone);
         setRequireEncryption(settings.require_encryption);
         setAdvertiseIpps(settings.advertise_ipps);
       })
       .catch((error: unknown) =>
         setState({
           phase: "error",
-          message: error instanceof Error ? error.message : "Failed to load server settings",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to load server settings",
         }),
       );
   }
@@ -86,6 +107,7 @@ export default function ServerSettingsPage() {
     try {
       const settings = await updateServerSettings({
         hostname,
+        timezone,
         require_encryption: requireEncryption,
         advertise_ipps: advertiseIpps,
       });
@@ -97,7 +119,11 @@ export default function ServerSettingsPage() {
         setTimeout(() => setSaveSuccess(false), SUCCESS_MESSAGE_MS);
       }
     } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : "Failed to save server settings");
+      setSaveError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to save server settings",
+      );
     } finally {
       setSaving(false);
     }
@@ -110,10 +136,11 @@ export default function ServerSettingsPage() {
         <WikiHelpLink page="Settings-Server" />
       </div>
       <p className="mb-4 text-xs text-zinc-500">
-        The print server&rsquo;s own client-facing hostname and TLS configuration —
-        distinct from a printer&rsquo;s own &quot;Connect via TLS&quot; setting (Printers &gt; a
-        printer &gt; Overview), which is the connection from PrintOps to that one real device.
-        This is the connection from client devices (Macs, iPads, Chromebooks) to PrintOps itself.
+        The print server&rsquo;s own client-facing hostname and TLS
+        configuration — distinct from a printer&rsquo;s own &quot;Connect via
+        TLS&quot; setting (Printers &gt; a printer &gt; Overview), which is the
+        connection from PrintOps to that one real device. This is the connection
+        from client devices (Macs, iPads, Chromebooks) to PrintOps itself.
       </p>
 
       {state.phase === "loading" && <Spinner label="Loading…" />}
@@ -128,16 +155,43 @@ export default function ServerSettingsPage() {
               placeholder="print.example.org"
             />
             <span className="mt-1 text-xs text-zinc-500">
-              Baked into MDM connection info for newly-configured printer queues going
-              forward — doesn&rsquo;t retroactively change anything already set up on client
-              devices. Must have a DNS record pointing at this server, or CUPS will reject
-              requests for it.
+              Baked into MDM connection info for newly-configured printer queues
+              going forward — doesn&rsquo;t retroactively change anything
+              already set up on client devices. Must have a DNS record pointing
+              at this server, or CUPS will reject requests for it.
+            </span>
+          </Field>
+
+          <Field label="District time zone">
+            <select
+              className="w-full rounded-md border border-black/[.08] bg-transparent px-3 py-2 text-sm dark:border-white/[.145]"
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
+            >
+              {(TIME_ZONES.includes(timezone) || timezone === ""
+                ? TIME_ZONES
+                : [timezone, ...TIME_ZONES]
+              ).map((zone) => (
+                <option key={zone} value={zone}>
+                  {zone}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 text-xs text-zinc-500">
+              The hours the reports are read in. Print times are recorded in UTC
+              and always will be; this is what decides which day a job counts
+              toward, which hour the busiest-time chart puts it in, and the
+              times written into an exported spreadsheet. Set this wrong and an
+              evening&rsquo;s printing lands on the next day&rsquo;s total,
+              which looks perfectly normal on screen.
             </span>
           </Field>
 
           <div>
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-zinc-500">Certificate</span>
+              <span className="text-xs font-medium text-zinc-500">
+                Certificate
+              </span>
               <Button
                 variant="secondary"
                 className="!px-3 !py-1 text-xs"
@@ -151,23 +205,27 @@ export default function ServerSettingsPage() {
               <div className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">
                 <p>Issued by {state.settings.certificate.issuer}</p>
                 <p className="text-xs text-zinc-500">
-                  Expires {new Date(state.settings.certificate.expires_at).toLocaleDateString()}
-                  {" "}({state.settings.certificate.days_remaining} days) — renews automatically
-                  via Caddy; PrintOps picks up the new one on save, by a daily background
-                  check, or immediately if you hit Sync Now (e.g. right after changing the
-                  hostname, or after Caddy just renewed).
+                  Expires{" "}
+                  {new Date(
+                    state.settings.certificate.expires_at,
+                  ).toLocaleDateString()}{" "}
+                  ({state.settings.certificate.days_remaining} days) — renews
+                  automatically via Caddy; PrintOps picks up the new one on
+                  save, by a daily background check, or immediately if you hit
+                  Sync Now (e.g. right after changing the hostname, or after
+                  Caddy just renewed).
                 </p>
               </div>
             ) : (
               <p className="mt-1 text-xs text-zinc-500">
-                Not synced yet — save below, or hit Sync Now, to sync a certificate if one is
-                available for this hostname.
+                Not synced yet — save below, or hit Sync Now, to sync a
+                certificate if one is available for this hostname.
               </p>
             )}
             <p className="mt-1 text-xs text-zinc-500">
-              Syncing briefly restarts the CUPS service on the print server (a few seconds) —
-              CUPS only picks up a new certificate on a real restart, not a lighter config
-              reload.
+              Syncing briefly restarts the CUPS service on the print server (a
+              few seconds) — CUPS only picks up a new certificate on a real
+              restart, not a lighter config reload.
             </p>
           </div>
 
@@ -188,10 +246,11 @@ export default function ServerSettingsPage() {
               Require encrypted client connections
               <br />
               <span className="text-xs text-zinc-500">
-                Off by default. Getting a real certificate synced above is a pure improvement
-                with no effect on existing plaintext clients — this is the separate, riskier
-                lever that can actually break an unusual client&rsquo;s printing if it doesn&rsquo;t
-                handle IPPS well. Test against a real device before turning this on.
+                Off by default. Getting a real certificate synced above is a
+                pure improvement with no effect on existing plaintext clients —
+                this is the separate, riskier lever that can actually break an
+                unusual client&rsquo;s printing if it doesn&rsquo;t handle IPPS
+                well. Test against a real device before turning this on.
               </span>
             </span>
           </label>
@@ -207,9 +266,9 @@ export default function ServerSettingsPage() {
               Advertise encrypted printing via AirPrint (Bonjour)
               <br />
               <span className="text-xs text-zinc-500">
-                Off by default. Publishes a second, secure discovery entry alongside the
-                existing one for every AirPrint-discoverable printer — additive, doesn&rsquo;t
-                remove the plaintext entry.
+                Off by default. Publishes a second, secure discovery entry
+                alongside the existing one for every AirPrint-discoverable
+                printer — additive, doesn&rsquo;t remove the plaintext entry.
               </span>
             </span>
           </label>

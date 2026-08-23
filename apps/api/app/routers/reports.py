@@ -1,8 +1,10 @@
 import csv
 import io
+import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
@@ -28,6 +30,7 @@ from app.reports.aggregation import (
     get_summary,
     get_timeline,
     get_user_leaderboard,
+    local,
     resolve_device_names,
     resolve_display_names,
     resolve_ou_scoped_emails,
@@ -67,6 +70,9 @@ from app.schemas.untracked_copies import (
     UntrackedCopyPrinterEntryOut,
     UntrackedCopySummaryOut,
 )
+from app.server_settings.service import get_or_create_server_settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -385,6 +391,36 @@ async def report_summary(
     return await _summary_out(db, filters)
 
 
+def _csv_time(value, tz: ZoneInfo) -> str:
+    """A timestamp for a person opening a spreadsheet.
+
+    Written in the district's timezone with the offset kept, rather than the
+    raw UTC the column stores: an export is read by someone who knows when
+    they were at work, and "2026-08-23T21:56:21+00:00" is not that. The offset
+    stays so the value is still unambiguous to anything that parses it."""
+    if value is None:
+        return ""
+    return local(value, tz).isoformat(sep=" ", timespec="seconds")
+
+
+async def _district_zone(db: AsyncSession) -> ZoneInfo:
+    """The timezone the reports are read in — see migration 0065.
+
+    Falls back to UTC only if the stored name has somehow stopped resolving
+    (a zone dropped by a tzdata update, say). Reports five hours out are
+    better than reports that 500, and the settings page still shows what is
+    configured."""
+    settings = await get_or_create_server_settings(db)
+    try:
+        return ZoneInfo(settings.timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning(
+            "Server timezone %r could not be resolved — reading reports in UTC.",
+            settings.timezone,
+        )
+        return ZoneInfo("UTC")
+
+
 @router.get("/timeline", response_model=list[TimelineBucketOut])
 async def report_timeline(
     granularity: str = "day",
@@ -396,7 +432,7 @@ async def report_timeline(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="granularity must be one of: day, week, month",
         )
-    buckets = await get_timeline(db, filters, granularity=granularity)
+    buckets = await get_timeline(db, filters, granularity=granularity, tz=await _district_zone(db))
     return [TimelineBucketOut(**vars(b)) for b in buckets]
 
 
@@ -691,7 +727,7 @@ async def report_cost_breakdown(
 async def report_peak_times(
     filters: ReportFilters = Depends(_report_filters), db: AsyncSession = Depends(get_db)
 ):
-    peak = await get_peak_times(db, filters)
+    peak = await get_peak_times(db, filters, tz=await _district_zone(db))
     return PeakTimesOut(by_day_of_week=peak.by_day_of_week, by_hour=peak.by_hour)
 
 
@@ -783,8 +819,9 @@ async def report_fun_facts(
     db: AsyncSession = Depends(get_db),
 ):
     summary = await get_summary(db, filters)
-    timeline = await get_timeline(db, filters, granularity="day")
-    peak_times = await get_peak_times(db, filters)
+    zone = await _district_zone(db)
+    timeline = await get_timeline(db, filters, granularity="day", tz=zone)
+    peak_times = await get_peak_times(db, filters, tz=zone)
     printer_leaderboard = await get_printer_leaderboard(db, filters)
     formulas = _formula_values(await _get_or_create_formula_settings(db))
     environmental = compute_environmental_impact(summary, formulas)
@@ -809,6 +846,7 @@ async def export_csv(
     filters: ReportFilters = Depends(_report_filters), db: AsyncSession = Depends(get_db)
 ):
     rows = await get_raw_rows_for_export(db, filters)
+    zone = await _district_zone(db)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(
@@ -842,8 +880,8 @@ async def export_csv(
                 job.duplex if job.duplex is not None else "",
                 job.paper_size or "",
                 job.file_size_bytes if job.file_size_bytes is not None else "",
-                job.created_at.isoformat(),
-                job.completed_at.isoformat() if job.completed_at else "",
+                _csv_time(job.created_at, zone),
+                _csv_time(job.completed_at, zone),
             ]
         )
     return Response(
