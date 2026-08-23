@@ -360,7 +360,7 @@ reading the device's own screen JS instead.
 
 ### 3.9.4 Enabling Account Track can silently kill all printing — **observed in production**
 
-On the 750i (Monica), Account Track was enabled on 2026-08-19 and
+On a 750i, Account Track was enabled on 2026-08-19 and
 `NoAuthPrintOn` came out `false`. The device then **accepted every print
 job and deleted it at the panel**, because a job arriving without an
 account code is unauthenticated and nothing exempts printing any more.
