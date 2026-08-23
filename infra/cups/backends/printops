@@ -246,6 +246,12 @@ def _report_signalled_exit(signum: int) -> None:
             timeout=SIGNAL_REPORT_TIMEOUT_SECONDS,
         )
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+        # Swallowed on purpose. This runs while cupsd is killing the backend,
+        # and the report is best-effort by design (see the docstring): raising
+        # here would trade an ordinary cancellation for a traceback in the CUPS
+        # error log, and delay an exit cupsd is already waiting on. A row this
+        # fails to report is not lost — reconcile_stuck_jobs closes it out by
+        # asking cupsd directly (app/printers/job_reconcile.py).
         pass
 
 
