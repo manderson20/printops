@@ -490,12 +490,20 @@ async def get_raw_rows_for_export(db: AsyncSession, filters: ReportFilters):
 # the two here is Python dict merging by that shared string, not a SQL
 # join, so neither table needs a schema change to support this.
 #
-# Only start/end/building/submitted_by from ReportFilters apply to the
-# copier side — printer_id/status/color_mode/duplex are IPP-job-specific
-# concepts with no CopierUsageRecord equivalent, and are silently ignored
-# here rather than erroring (a combined report with, say, a color_mode
-# filter still shows unfiltered copy totals; this is a known Stage 1
-# simplification, not a bug). Date filtering uses created_at (when the
+# start/end/building/submitted_by/printer_id/department from ReportFilters
+# all apply to the copier side. printer_id and department get there through
+# the copier's own device row — CopierUsageRecord -> MfpDevice.printer_id ->
+# Printer — which is what ties a walk-up copier to the Printer it also is in
+# PrintOps (app/models/mfp_device.py). A printer with no copier linked to it
+# contributes no copies at all under a printer filter, which is the right
+# answer for a plain laser printer.
+#
+# They used to be dropped here, on the reasoning that they were IPP-job
+# concepts with no copier equivalent. That is true of status and color_mode,
+# which are still ignored, and was never true of printer_id: filtering
+# Insights to one printer narrowed the print half of every combined number
+# and left the copy half fleet-wide, so a leaderboard ranked people by
+# one-printer prints plus whole-district copies. Date filtering uses created_at (when the
 # usage was recorded in PrintOps — via import or a future direct
 # connector), not occurred_at/period_start/period_end, since not every
 # row has occurred_at populated (period-based rows don't) and created_at
@@ -503,6 +511,14 @@ async def get_raw_rows_for_export(db: AsyncSession, filters: ReportFilters):
 
 
 def _apply_copier_filters(stmt: Select, filters: ReportFilters) -> Select:
+    """The copier-side mirror of _apply_filters, so both halves of a combined
+    report agree on what a given filter set means."""
+    # Joined unconditionally, and for every caller rather than only the ones
+    # that filter on it: mfp_device_id is NOT NULL behind a foreign key, so
+    # this can neither drop a row nor multiply one, and a join that is
+    # sometimes there is a join every caller has to reason about before
+    # adding its own.
+    stmt = stmt.join(MfpDevice, MfpDevice.id == CopierUsageRecord.mfp_device_id)
     if filters.start is not None:
         stmt = stmt.where(CopierUsageRecord.created_at >= filters.start)
     if filters.end is not None:
@@ -511,6 +527,15 @@ def _apply_copier_filters(stmt: Select, filters: ReportFilters) -> Select:
         stmt = stmt.where(CopierUsageRecord.location_building == filters.building)
     if filters.submitted_by is not None:
         stmt = stmt.where(CopierUsageRecord.staff_email == filters.submitted_by)
+    if filters.printer_id is not None:
+        stmt = stmt.where(MfpDevice.printer_id == filters.printer_id)
+    if filters.department is not None:
+        # Inner join on a nullable column on purpose: a copier that isn't
+        # linked to a Printer has no department to match, so it belongs
+        # outside a department-filtered report rather than in every one.
+        stmt = stmt.join(Printer, Printer.id == MfpDevice.printer_id).where(
+            Printer.department == filters.department
+        )
     return stmt
 
 
@@ -613,7 +638,7 @@ async def get_copy_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> li
             CopierUsageRecord.duplex,
         ).where(CopierUsageRecord.activity_type == "copy"),
         filters,
-    ).join(MfpDevice, MfpDevice.id == CopierUsageRecord.mfp_device_id)
+    )
     rows = (await db.execute(stmt)).all()
     return [
         CopyCostRawRow(
@@ -667,23 +692,19 @@ async def get_copier_activity_by_device(
     person by setting ReportFilters.submitted_by, which _apply_copier_filters
     maps onto staff_email."""
     pages = func.coalesce(CopierUsageRecord.page_count, 0)
-    stmt = (
-        _apply_copier_filters(
-            select(
-                CopierUsageRecord.mfp_device_id,
-                MfpDevice.name,
-                func.sum(pages).filter(CopierUsageRecord.activity_type == "copy"),
-                func.sum(pages).filter(CopierUsageRecord.activity_type == "scan"),
-                func.sum(pages).filter(CopierUsageRecord.activity_type == "fax"),
-                func.count(CopierUsageRecord.id).filter(
-                    CopierUsageRecord.source_connector == "device_default_owner"
-                ),
+    stmt = _apply_copier_filters(
+        select(
+            CopierUsageRecord.mfp_device_id,
+            MfpDevice.name,
+            func.sum(pages).filter(CopierUsageRecord.activity_type == "copy"),
+            func.sum(pages).filter(CopierUsageRecord.activity_type == "scan"),
+            func.sum(pages).filter(CopierUsageRecord.activity_type == "fax"),
+            func.count(CopierUsageRecord.id).filter(
+                CopierUsageRecord.source_connector == "device_default_owner"
             ),
-            filters,
-        )
-        .join(MfpDevice, MfpDevice.id == CopierUsageRecord.mfp_device_id)
-        .group_by(CopierUsageRecord.mfp_device_id, MfpDevice.name)
-    )
+        ),
+        filters,
+    ).group_by(CopierUsageRecord.mfp_device_id, MfpDevice.name)
     return [
         CopierActivityByDevice(
             device_id=r[0],

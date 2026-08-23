@@ -725,6 +725,131 @@ async def test_combined_leaderboard_ranks_by_combined_total(
     assert response.json()[0]["key"] == "jane.smith@district.org"
 
 
+async def _make_printer(db_session_factory, name, ip, department=None):
+    async with db_session_factory() as session:
+        printer = Printer(name=name, ip_address=ip, department=department)
+        session.add(printer)
+        await session.commit()
+        await session.refresh(printer)
+        return str(printer.id)
+
+
+async def _make_linked_device(db_session_factory, name, printer_id):
+    """An MfpDevice standing for the copier side of a Printer PrintOps
+    already knows — the link the printer/department filters travel down."""
+    async with db_session_factory() as session:
+        device = MfpDevice(
+            name=name,
+            vendor="canon",
+            connector_type="generic_csv",
+            printer_id=uuid.UUID(printer_id),
+        )
+        session.add(device)
+        await session.commit()
+        await session.refresh(device)
+        return str(device.id)
+
+
+async def test_combined_leaderboard_printer_filter_scopes_the_copy_side(
+    client, backend_headers, admin_headers, db_session_factory
+):
+    """Filtering to one printer used to narrow the print half of every
+    combined number and leave the copy half fleet-wide, so someone who had
+    never touched that printer still ranked on it."""
+    printer_a = await _make_printer(db_session_factory, "Copier A Printer", "10.0.0.21")
+    printer_b = await _make_printer(db_session_factory, "Copier B Printer", "10.0.0.22")
+    device_a = await _make_linked_device(db_session_factory, "Copier A", printer_a)
+    device_b = await _make_linked_device(db_session_factory, "Copier B", printer_b)
+
+    _make_job(client, printer_a, backend_headers, "jane.smith@district.org", 100)
+    await _make_copier_usage(db_session_factory, device_a, "jane.smith@district.org", 20)
+    await _make_copier_usage(db_session_factory, device_b, "jane.smith@district.org", 300)
+    await _make_copier_usage(db_session_factory, device_b, "copies.only@district.org", 500)
+
+    response = client.get(
+        "/api/v1/reports/combined-leaderboard",
+        params={"printer_id": printer_a},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+    entries = {e["key"]: e for e in response.json()}
+    assert entries["jane.smith@district.org"]["print_pages"] == 100
+    assert entries["jane.smith@district.org"]["copy_pages"] == 20
+    assert entries["jane.smith@district.org"]["total_pages"] == 120
+    # Copier B is a different printer: nobody whose only activity is there
+    # belongs in this report at all.
+    assert "copies.only@district.org" not in entries
+
+
+async def test_combined_summary_printer_filter_on_a_printer_with_no_copier(
+    client, printer_id, backend_headers, admin_headers, mfp_device_id, db_session_factory
+):
+    """A plain laser printer has no walk-up copies, so filtering to one
+    reports none — rather than every copier's."""
+    _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 40)
+    await _make_copier_usage(db_session_factory, mfp_device_id, "jane.smith@district.org", 700)
+
+    response = client.get(
+        "/api/v1/reports/combined-summary",
+        params={"printer_id": printer_id},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["print_pages"] == 40
+    assert body["copy_pages"] == 0
+    assert body["total_pages"] == 40
+
+
+async def test_combined_leaderboard_department_filter_scopes_the_copy_side(
+    client, backend_headers, admin_headers, db_session_factory
+):
+    art = await _make_printer(db_session_factory, "Art Copier Printer", "10.0.0.23", "Art")
+    math = await _make_printer(db_session_factory, "Math Copier Printer", "10.0.0.24", "Math")
+    art_device = await _make_linked_device(db_session_factory, "Art Copier", art)
+    math_device = await _make_linked_device(db_session_factory, "Math Copier", math)
+
+    _make_job(client, art, backend_headers, "art.teacher@district.org", 10)
+    await _make_copier_usage(db_session_factory, art_device, "art.teacher@district.org", 60)
+    await _make_copier_usage(db_session_factory, math_device, "math.teacher@district.org", 900)
+
+    response = client.get(
+        "/api/v1/reports/combined-leaderboard",
+        params={"department": "Art"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+    entries = {e["key"]: e for e in response.json()}
+    assert entries["art.teacher@district.org"]["copy_pages"] == 60
+    assert "math.teacher@district.org" not in entries
+
+
+async def test_combined_summary_unfiltered_still_counts_every_copier(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """The MfpDevice join the printer/department filters need is applied to
+    every copier query, filtered or not, so it must not drop the copiers
+    that aren't linked to a Printer at all."""
+    linked_printer = await _make_printer(db_session_factory, "Linked Copier Printer", "10.0.0.25")
+    linked = await _make_linked_device(db_session_factory, "Linked Copier", linked_printer)
+    async with db_session_factory() as session:
+        unlinked_device = MfpDevice(
+            name="Unlinked Copier", vendor="canon", connector_type="generic_csv"
+        )
+        session.add(unlinked_device)
+        await session.commit()
+        await session.refresh(unlinked_device)
+        unlinked = str(unlinked_device.id)
+
+    _make_job(client, printer_id, backend_headers, "jane.smith@district.org", 5)
+    await _make_copier_usage(db_session_factory, linked, "jane.smith@district.org", 30)
+    await _make_copier_usage(db_session_factory, unlinked, "jane.smith@district.org", 70)
+
+    response = client.get("/api/v1/reports/combined-summary", headers=admin_headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["copy_pages"] == 100
+
+
 async def test_combined_leaderboard_label_uses_roster_name_or_local_part(
     client, printer_id, backend_headers, admin_headers, db_session_factory
 ):
