@@ -106,10 +106,10 @@ async def test_the_new_address_must_answer_before_it_is_adopted():
 
 
 @pytest.mark.asyncio
-async def test_a_redirect_to_the_same_transport_is_not_retried():
-    """Guards against a redirect loop: retrying the identical address just
-    redirects again."""
-    printer = _printer(port=443, use_tls=True)
+async def test_a_redirect_to_the_very_same_address_is_not_retried():
+    """Guards against a redirect loop: retrying an address identical in port,
+    scheme *and* path would just redirect again."""
+    printer = _printer(port=443, use_tls=True, ipp_path="/other")
     probe = AsyncMock(side_effect=[_redirect_error("https://10.50.1.37:443/other")])
 
     with patch("app.printers.discovery.probe_printer", probe):
@@ -117,6 +117,27 @@ async def test_a_redirect_to_the_same_transport_is_not_retried():
 
     assert probe.await_count == 1
     assert printer.capabilities_error is not None
+
+
+@pytest.mark.asyncio
+async def test_a_redirect_that_changes_only_the_path_is_followed():
+    """The path is part of the address. A device that keeps its port and
+    scheme but names a different resource path is pointing somewhere new, and
+    comparing port and TLS alone read that as "the identical address" and gave
+    up on a printer that would have answered."""
+    printer = _printer(port=631, use_tls=False, ipp_path=None)
+    probe = AsyncMock(
+        side_effect=[_redirect_error("ipp://10.50.1.37:631/ipp/print"), _ok("/ipp/print")]
+    )
+
+    with patch("app.printers.discovery.probe_printer", probe):
+        await refresh_printer_capabilities(printer)
+
+    assert probe.await_count == 2
+    assert probe.await_args.kwargs["ipp_path"] == "/ipp/print"
+    assert probe.await_args.kwargs["port"] == 631
+    assert printer.capabilities_error is None
+    assert printer.ipp_path_detected == "/ipp/print"
 
 
 @pytest.mark.asyncio

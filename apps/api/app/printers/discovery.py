@@ -71,15 +71,24 @@ async def _probe_following_redirect(printer: Printer) -> ProbeResult:
         if transport is None:
             raise
         port, tls, path = transport
-        if (port, tls) == (printer.port, printer.use_tls):
-            raise  # would retry the identical address and redirect again
-
         # Falsy rather than None: an empty path from the redirect target means
         # "it didn't say", so keep whatever the printer already had and let the
         # candidate-path walk settle it if that is blank too.
-        result = await probe_printer(
-            printer.ip_address, port=port, tls=tls, ipp_path=path or printer.effective_ipp_path
-        )
+        retry_path = path or printer.effective_ipp_path
+        # The path is part of the address, so it belongs in this comparison: a
+        # device that redirects only its resource path (ipp://host:631/ ->
+        # ipp://host:631/ipp/print) is naming somewhere new to try, and
+        # comparing port and TLS alone read that as "the same address" and gave
+        # up on a printer that would have answered. Only a target identical in
+        # all three would redirect again.
+        if (port, tls, retry_path) == (
+            printer.port,
+            printer.use_tls,
+            printer.effective_ipp_path,
+        ):
+            raise
+
+        result = await probe_printer(printer.ip_address, port=port, tls=tls, ipp_path=retry_path)
         logger.info(
             "%s redirected to %s; adopting port=%s tls=%s path=%s after verifying it answers.",
             printer.name,
