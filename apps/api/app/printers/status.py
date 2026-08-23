@@ -7,6 +7,7 @@ POST /printers/{id}/check-status endpoint (app/routers/printers.py).
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 
 from app.models.printer import Printer
@@ -126,6 +127,11 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
     over the same 5 seconds, and a person clicking it deserves the same
     standard of evidence, not a faster wrong answer.
     """
+    # Timed, because how long a probe took is the more sensitive half of the
+    # network-path signal: TCP retransmits a lost SYN and the probe succeeds a
+    # second or three later, so a lossy path shows up in the duration long
+    # before it shows up as a failure (app/printers/network_health.py).
+    started = time.monotonic()
     try:
         result: PrinterStateResult = await probe_printer_state(
             printer.ip_address,
@@ -152,7 +158,9 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
     # offline threshold above. Those are exactly the evidence the debounce
     # exists to stop acting on, and exactly what says the path to a printer is
     # dropping traffic (app/printers/network_health.py).
-    printer.network_probe_log, flap = network_health.observe(printer.network_probe_log, answered)
+    printer.network_probe_log, flap = network_health.observe(
+        printer.network_probe_log, answered, seconds=time.monotonic() - started
+    )
     # Both of the steps below used to read `status` as "what the probe just
     # found", which it no longer is: the debounce lets it lag a cycle behind.
     # They are told what this probe actually did instead, or the first missed

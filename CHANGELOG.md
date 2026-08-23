@@ -7,6 +7,15 @@ schedules an update.
 
 ## [0.60.1] - 2026-08-23
 
+- **Fixed: the new "hard to reach" warning could not see the printer it was
+  written for.** PrintOps checks each printer by opening a connection to it,
+  and a connection survives a brief network outage by retrying — so on the
+  printer this warning was built for, almost every check succeeded a second or
+  two late and was recorded as perfectly healthy, while a fifth of the traffic
+  to it was being dropped. PrintOps now also notices how *long* each check
+  took: one that answers only after retrying is counted as evidence too. A
+  printer that is simply slow is not affected — the comparison is against that
+  same printer's own quick answers, not a fixed number.
 - **Fixed: one print job could be reported as dozens of failures.** When the
   print server retries a job, it starts delivery again from the beginning, and
   PrintOps recorded each attempt as a separate job — every one of them a
