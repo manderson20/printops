@@ -513,14 +513,18 @@ async def check_status(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     which as of the queue-sync fix below can also re-run the CUPS queue
     sync) as the 60s background loop (app/main.py), just triggered
     immediately instead of waiting for the next cycle. Open to any
-    logged-in user (not admin-gated) like GET, same as before."""
+    logged-in user (not admin-gated) like GET, same as before.
+
+    Passes manual=True so that a person who has just walked a printer back
+    online is not told to wait out a cooldown before its stopped CUPS queue
+    is restarted (app/printers/queue_recovery.py:resume_due)."""
     printer = await _get_printer_or_404(printer_id, db)
     if printer.is_virtual:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A virtual queue has no real device to check the status of.",
         )
-    await refresh_printer_status_and_rediscover(printer)
+    await refresh_printer_status_and_rediscover(printer, manual=True)
     await db.commit()
     await db.refresh(printer)
     return printer
