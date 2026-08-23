@@ -152,7 +152,7 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
     # offline threshold above. Those are exactly the evidence the debounce
     # exists to stop acting on, and exactly what says the path to a printer is
     # dropping traffic (app/printers/network_health.py).
-    flap = network_health.observe(str(printer.id), answered)
+    printer.network_probe_log, flap = network_health.observe(printer.network_probe_log, answered)
     # Both of the steps below used to read `status` as "what the probe just
     # found", which it no longer is: the debounce lets it lag a cycle behind.
     # They are told what this probe actually did instead, or the first missed

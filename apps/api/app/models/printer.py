@@ -148,6 +148,13 @@ class Printer(Base, TimestampMixin):
     # refresh_printer_status for why one 5-second timeout isn't evidence of
     # an absent printer.
     status_probe_failures: Mapped[int] = mapped_column(default=0, server_default="0")
+    # The last hour of status-probe outcomes, as [timestamp, answered] pairs —
+    # the evidence behind the network-path warning
+    # (app/printers/network_health.py), pruned to the window every time it is
+    # touched. Persisted rather than held in memory because a probe that went
+    # unanswered stays unanswered across an API restart, and a deploy must not
+    # hand a lossy printer a fresh hour of looking healthy.
+    network_probe_log: Mapped[list | None] = mapped_column(JSON, default=None)
 
     # Print-and-release. When true, the CUPS backend script
     # (infra/cups/backends/printops) holds every job sent to this printer's

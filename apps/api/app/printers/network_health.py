@@ -24,14 +24,21 @@ dropping traffic — a different fault, with a different owner, that no signal
 PrintOps collects from the device will ever show. Printers get moved, ports get
 reused, and the next instance of this will not announce itself either.
 
-State is in-process and resets on restart, the same as
-app/printers/queue_stall.py and for the same reason: a flap this process did
-not observe is not one it can honestly report, and inventing history across a
-deploy would be worse than saying nothing.
+The history lives on the printer row (Printer.network_probe_log), not in this
+module. app/printers/queue_stall.py keeps its state in memory on the reasoning
+that a verdict this process did not observe is not one it can honestly report,
+and that is right for a stall: it measures a duration that is still running, so
+a restart genuinely breaks the observation. It is wrong for a loss count. These
+are probes that were actually made and actually went unanswered; restarting the
+API does not make them un-happen, and keeping them in memory meant every deploy
+handed a lossy printer a fresh hour of looking healthy.
+
+The functions here are pure — they take a log and return a new one — so the
+router layer owns reading and writing the row, and nothing in this module needs
+a session.
 """
 
 import logging
-from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -73,40 +80,50 @@ class NetworkFlap:
         return round(100 * self.misses / self.probes) if self.probes else 0
 
 
-_probes: dict[str, deque[tuple[datetime, bool]]] = {}
+ProbeLog = list[list]
+"""[[iso timestamp, answered], ...] — JSON-native, so it round-trips through
+the column without a converter."""
 
 
-def reset() -> None:
-    """Drops all remembered state. For tests, and for callers that know the
-    world has changed underneath them."""
-    _probes.clear()
+def _prune(log: ProbeLog | None, cutoff: datetime) -> ProbeLog:
+    """Drops entries that have aged out of the window, and anything unparseable.
+
+    Tolerant on purpose: this is a rolling diagnostic, and a row that somehow
+    holds a malformed entry should lose that entry, not take the status poll
+    down with it."""
+    kept: ProbeLog = []
+    for entry in log or []:
+        try:
+            stamp, answered = entry
+            when = datetime.fromisoformat(stamp)
+        except (TypeError, ValueError):
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        if when >= cutoff:
+            kept.append([stamp, bool(answered)])
+    return kept
 
 
-def forget(printer_id: str) -> None:
-    _probes.pop(printer_id, None)
-
-
-def observe(printer_id: str, answered: bool, now: datetime | None = None) -> NetworkFlap | None:
-    """Records the outcome of one status probe and returns the flap verdict if
-    this printer's recent history now warrants one.
+def observe(
+    log: ProbeLog | None, answered: bool, now: datetime | None = None
+) -> tuple[ProbeLog, NetworkFlap | None]:
+    """Records one probe outcome against a printer's log, returning the log to
+    store and the flap verdict if the recent history now warrants one.
 
     Returning the evidence rather than a bool keeps "is this worth reporting"
-    with the caller and lets the message say what was actually seen — the
+    with the caller, and lets the message say what was actually seen — the
     difference between an alert someone acts on and one they learn to dismiss.
     """
     now = now or datetime.now(UTC)
-    history = _probes.setdefault(printer_id, deque())
-    history.append((now, answered))
-
-    cutoff = now - WINDOW
-    while history and history[0][0] < cutoff:
-        history.popleft()
+    history = _prune(log, now - WINDOW)
+    history.append([now.isoformat(), answered])
 
     misses = sum(1 for _, ok in history if not ok)
     successes = len(history) - misses
     if misses < MISS_THRESHOLD or successes < MIN_SUCCESSES:
-        return None
-    return NetworkFlap(misses=misses, probes=len(history), window=WINDOW)
+        return history, None
+    return history, NetworkFlap(misses=misses, probes=len(history), window=WINDOW)
 
 
 def flap_reason(flap: NetworkFlap) -> str:

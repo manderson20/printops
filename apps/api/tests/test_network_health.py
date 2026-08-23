@@ -12,6 +12,7 @@ over it, which was right and which also meant nobody would ever be told. This
 is what tells them.
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -23,28 +24,30 @@ PRINTER = "2ea028f4-abc2-423b-9204-aaf47c6a9be2"
 T0 = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
 
-def _observe(outcomes, start=T0, every=timedelta(minutes=1)):
+def _observe(outcomes, start=T0, every=timedelta(minutes=1), log=None):
+    """Runs a sequence of probe outcomes through the log the way the status
+    poll does — read the row, observe, write it back."""
     verdict = None
     for i, answered in enumerate(outcomes):
-        verdict = network_health.observe(PRINTER, answered, now=start + every * i)
-    return verdict
+        log, verdict = network_health.observe(log, answered, now=start + every * i)
+    return log, verdict
 
 
 def test_a_healthy_printer_never_raises_anything():
-    assert _observe([True] * 60) is None
+    assert _observe([True] * 60)[1] is None
 
 
 def test_one_missed_probe_is_not_an_alarm():
     """Ordinary. The whole reason the offline debounce exists."""
-    assert _observe([True, False, True, True]) is None
+    assert _observe([True, False, True, True])[1] is None
 
 
 def test_two_missed_probes_are_still_not():
-    assert _observe([True, False, True, False, True]) is None
+    assert _observe([True, False, True, False, True])[1] is None
 
 
 def test_three_misses_with_answers_in_between_are():
-    flap = _observe([True, False, True, False, True, False, True])
+    _, flap = _observe([True, False, True, False, True, False, True])
     assert flap is not None
     assert flap.misses == 3
     assert flap.probes == 7
@@ -53,20 +56,22 @@ def test_three_misses_with_answers_in_between_are():
 def test_a_printer_that_is_simply_gone_is_not_reported_as_lossy():
     """It misses every probe and answers none. "Offline" says that better than
     any loss rate, and this must not talk over it."""
-    assert _observe([False] * 20) is None
+    assert _observe([False] * 20)[1] is None
 
 
 def test_misses_outside_the_window_stop_counting():
     """A path that was lossy this morning and is fine now is not lossy."""
-    old = _observe([False, False, False, True], every=timedelta(minutes=1))
+    log, old = _observe([False, False, False, True], every=timedelta(minutes=1))
     assert old is not None
-    # An hour later, all of those have aged out.
-    later = network_health.observe(PRINTER, True, now=T0 + timedelta(hours=2))
+    # Two hours later, all of those have aged out — and are dropped from the
+    # stored log rather than accumulating forever.
+    log, later = network_health.observe(log, True, now=T0 + timedelta(hours=2))
     assert later is None
+    assert len(log) == 1
 
 
 def test_the_loss_rate_is_reported_from_what_was_seen():
-    flap = _observe([True, False] * 10)
+    _, flap = _observe([True, False] * 10)
     assert flap is not None
     assert flap.probes == 20
     assert flap.misses == 10
@@ -74,7 +79,7 @@ def test_the_loss_rate_is_reported_from_what_was_seen():
 
 
 def test_the_message_says_what_was_seen_and_where_to_look():
-    flap = _observe([True, False, True, False, True, False, True])
+    _, flap = _observe([True, False, True, False, True, False, True])
     assert flap is not None
     reason = network_health.flap_reason(flap)
     assert "4 of 7" in reason
@@ -84,10 +89,25 @@ def test_the_message_says_what_was_seen_and_where_to_look():
     assert "rather than a fault on the printer" in reason
 
 
-def test_forgetting_a_printer_drops_its_history():
-    _observe([False, False, False, True])
-    network_health.forget(PRINTER)
-    assert network_health.observe(PRINTER, True, now=T0) is None
+def test_a_log_survives_a_restart_because_it_is_not_in_memory():
+    """The reason this moved onto the printer row (migration 0063): a probe
+    that went unanswered stays unanswered across an API restart, and a deploy
+    must not hand a lossy printer a fresh hour of looking healthy."""
+    log, _ = _observe([True, False, True, False, True])
+    # Round-trip it the way the JSON column does, then carry on.
+    restarted = json.loads(json.dumps(log))
+    _, flap = network_health.observe(restarted, False, now=T0 + timedelta(minutes=5))
+    assert flap is not None
+    assert flap.misses == 3
+
+
+def test_a_malformed_entry_is_dropped_rather_than_raising():
+    """A rolling diagnostic must not be able to take the status poll down."""
+    log, flap = network_health.observe(
+        [["not-a-timestamp", True], "nonsense", [T0.isoformat(), False]], False, now=T0
+    )
+    assert [entry[1] for entry in log] == [False, False]
+    assert flap is None
 
 
 # ---- how it reaches the printer row ----
