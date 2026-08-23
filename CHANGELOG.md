@@ -5,6 +5,38 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.59.3] - 2026-08-23
+
+- **Fixed: a printer that was taken away for service never printed again
+  after it came back.** When a job fails badly enough mid-delivery — the
+  usual cause being that someone unplugged, switched off or wheeled away the
+  printer — CUPS switches that printer's queue off on the print server.
+  Nothing switched it back on. The queue kept *accepting* jobs the whole
+  time, so staff saw no error, work piled up behind it, and the only fix was
+  someone running a command on the server by hand. The ES elementary copier
+  spent 31 hours like this after a service call, with 19 teachers' jobs
+  waiting, while PrintOps and the copier's own panel both said it was fine —
+  because the copier genuinely was fine. PrintOps now notices a switched-off
+  queue and switches it back on as soon as the printer is answering
+  normally, on the next status check. Both the 60-second background check
+  and the "Check Status" button do it, so a printer walked back online can
+  be fixed on the spot instead of waiting for the next cycle.
+- **Fixed: the wrong advice when a queue had stopped moving.** A printer in
+  this state was reported as "queue has not moved... check the printer's
+  connection settings (port/TLS/IPP path)" — the diagnosis from a different
+  fault, and the wrong place to send someone whose printer had simply been
+  away. It now says the queue was stopped, quotes the reason CUPS gave, and
+  says whether PrintOps has already restarted it.
+- **Fixed: PIN-release printers could fail silently in the same way.** The
+  internal queue that delivers a job after someone releases it at the panel
+  can be switched off by the identical failure, and when it is, releases fail
+  with nothing to see. It is now checked and restarted alongside the main
+  queue.
+- A printer that is still offline or in error is deliberately left alone —
+  restarting its queue would only feed CUPS one more job to fail. Repeated
+  restarts that don't hold back off, up to four hours, so a genuinely sick
+  printer isn't fed a job a minute.
+
 ## [0.59.2] - 2026-08-21
 
 - **Fixed: toner levels were being read off some printers and then thrown
