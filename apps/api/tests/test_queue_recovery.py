@@ -15,6 +15,7 @@ import pytest
 
 from app.models.printer import Printer
 from app.printers import queue_recovery, status
+from app.printers.ipp_client import PrinterProbeError
 from app.printers.queue_recovery import (
     QUEUE_PAUSED_REASON,
     RESUME_COOLDOWN,
@@ -395,6 +396,65 @@ async def test_a_person_checking_the_status_is_never_made_to_wait(monkeypatch):
 
     await status._apply_queue_recovery(_printer(status="online"), manual=True)
     assert resumed == [PRINTER]
+
+
+@pytest.mark.asyncio
+async def test_a_queue_is_not_resumed_on_a_probe_that_did_not_answer(monkeypatch):
+    """Since the offline debounce, `status` can still read "online" for one
+    missed probe after the device stopped answering. Resuming a queue on the
+    strength of that stale value hands cupsd a job for a printer that has
+    just failed to respond — the exact case the "only when the device reads
+    healthy" rule exists to prevent."""
+    _queue(monkeypatch, STOPPED)
+    monkeypatch.setattr(queue_recovery, "resume_due", lambda _pid: True)
+    resumed = _record_resumes(monkeypatch)
+    printer = _printer(status="online")
+
+    handled = await status._apply_queue_recovery(printer, device_answered=False)
+
+    assert handled is False
+    assert resumed == []
+    assert QUEUE_PAUSED_REASON in (printer.status_reasons or [])
+
+
+@pytest.mark.asyncio
+async def test_not_even_a_manual_check_resumes_on_a_probe_that_did_not_answer(monkeypatch):
+    """Pressing Check Status skips the cooldown, not the evidence."""
+    _queue(monkeypatch, STOPPED)
+    monkeypatch.setattr(queue_recovery, "resume_due", lambda _pid: True)
+    resumed = _record_resumes(monkeypatch)
+
+    await status._apply_queue_recovery(
+        _printer(status="online"), manual=True, device_answered=False
+    )
+
+    assert resumed == []
+
+
+@pytest.mark.asyncio
+async def test_a_missed_probe_leaves_the_queue_alone_end_to_end(monkeypatch):
+    """At the level the 60-second poll works at: the queue is stopped, the
+    printer row still says online because only one probe has been missed, and
+    that probe raised. Nothing should be resumed and no stall clock started."""
+    _queue(monkeypatch, STOPPED)
+    monkeypatch.setattr(queue_recovery, "resume_due", lambda _pid: True)
+    resumed = _record_resumes(monkeypatch)
+    stalls = []
+    monkeypatch.setattr(status, "_apply_queue_stall", lambda printer: stalls.append(printer))
+
+    async def _unreachable(*_a, **_k):
+        raise PrinterProbeError("Could not reach an IPP printer at 10.10.3.36:631: timed out")
+
+    monkeypatch.setattr(status, "probe_printer_state", _unreachable)
+    printer = _printer(status="online")
+
+    await status.refresh_printer_status(printer)
+
+    assert resumed == []
+    assert stalls == []
+    # One miss: still shown as online, and the failure is counted toward the
+    # second one that would change that.
+    assert printer.status_probe_failures == 1
 
 
 @pytest.mark.asyncio
