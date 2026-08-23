@@ -575,7 +575,9 @@ def _build_test_page(info: TestPageInfo, username: str, timezone: str | None = N
     footer_y = PAGE_H - MARGIN - 30
     y = _section(draw, y, "Print quality")
     y = _quality_targets(draw, y, info.color_supported)
-    y = _checklist(draw, y + 14, footer_y, info.color_supported)
+    # Nothing below reads `y` again: the footer is pinned to footer_y, so the
+    # checklist's return is deliberately dropped rather than assigned.
+    _checklist(draw, y + 14, footer_y, info.color_supported)
 
     # Footer ---------------------------------------------------------------
     # No rule above the footer: the footer is pinned to the bottom of the
