@@ -5,6 +5,21 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.61.0] - 2026-08-23
+
+- **Reports now read in the district's own time, not UTC.** Print times have
+  always been recorded in UTC — that is correct and unchanged — but the reports
+  were also being *read* that way, and nothing about it looked wrong. The
+  busiest-hour chart was five or six hours out, so a mid-morning rush showed up
+  as an afternoon one. Anything printed after 7pm was counted toward the next
+  day, and toward the next weekday, so every evening's printing quietly moved
+  into the following day's total. Exported spreadsheets carried UTC timestamps
+  that no one could reconcile with when they were at work. All of that now
+  follows the district's time zone, set under **Settings → Server** and
+  defaulting to America/Chicago. Daylight saving is handled properly, so the
+  numbers stay right on both sides of the changeover. The Jobs page was already
+  showing local time and is unaffected.
+
 ## [0.60.1] - 2026-08-23
 
 - **Fixed: the new "hard to reach" warning could not see the printer it was

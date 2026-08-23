@@ -9,6 +9,7 @@ from app.models.base import Base
 from app.models.job import Job
 from app.models.printer import Printer
 from app.reports.aggregation import (
+    UTC_ZONE,
     ReportFilters,
     get_cost_raw_rows,
     get_peak_times,
@@ -129,14 +130,18 @@ async def test_summary_filters_by_submitted_by(session, sample_jobs):
 
 
 async def test_timeline_buckets_by_day(session, sample_jobs):
-    buckets = await get_timeline(session, ReportFilters(), granularity="day")
+    # UTC on purpose: these fixtures describe bucketing mechanics, and the
+    # district-timezone behaviour has its own file (test_report_timezone.py).
+    # The zone is a required argument precisely so a caller cannot end up on
+    # UTC without saying so — which is what create_snapshot did.
+    buckets = await get_timeline(session, ReportFilters(), granularity="day", tz=UTC_ZONE)
     assert [b.bucket_start.isoformat() for b in buckets] == ["2026-03-03", "2026-03-05"]
     assert buckets[0].total_pages == 30
     assert buckets[1].total_pages == 12
 
 
 async def test_peak_times_by_hour(session, sample_jobs):
-    peak = await get_peak_times(session, ReportFilters())
+    peak = await get_peak_times(session, ReportFilters(), tz=UTC_ZONE)
     assert peak.by_hour[8] == 10
     assert peak.by_hour[9] == 20
     assert peak.by_hour[14] == 12
