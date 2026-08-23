@@ -731,15 +731,22 @@ async def _test_print_message(
     if hold_reason == "quota":
         return (
             f"{lp_output} — but it is being held, because {submitted_by} is over the page "
-            "quota for this printer. An admin can release it from Quota Holds; it will not "
-            "print until then."
+            "quota for this printer. Release it from Held Jobs; nothing will print until "
+            "you do."
         )
 
     where = "at this printer" if hold_reason == "pin_release" else "at any Follow-Me printer"
+    # Held Jobs is named first, and the PIN second. A test page is submitted by
+    # whoever is logged into PrintOps, and that is often an account the kiosk
+    # cannot help: the break-glass admin has no Workspace identity at all, and
+    # a new admin may have no PIN yet. Sending them to a kiosk that will not
+    # recognise them is the same unhelpful confidence this message exists to
+    # remove — releasing it from Held Jobs always works.
     return (
         f"{lp_output} — but this printer holds jobs for release, so the page is waiting "
-        f"rather than printing. Release it {where} with your PIN, as {submitted_by}. "
-        "Nothing will come out of the printer until you do."
+        f"rather than printing. Release it from Held Jobs, or {where} with the PIN for "
+        f"{submitted_by} if that account has one. Nothing will come out of the printer "
+        "until you do."
     )
 
 

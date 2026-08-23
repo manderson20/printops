@@ -97,7 +97,13 @@ type LoadState =
   | { phase: "error"; message: string };
 
 type TestPrintState =
-  { phase: "sending" } | { phase: "ok" } | { phase: "error"; message: string };
+  | { phase: "sending" }
+  // The API's message is carried through rather than replaced with a fixed
+  // one: on a printer that holds jobs for release it says the page is waiting
+  // and what releases it, which is the difference between "sent" and "sent,
+  // and no paper is coming until you act".
+  | { phase: "ok"; message: string }
+  | { phase: "error"; message: string };
 
 // Multifunction copiers can report a dozen+ finishing options (staple,
 // punch-top-left, punch-dual-right, ...) — showing all of them inline blows
@@ -140,11 +146,23 @@ export default function PrintersPage() {
     return () => clearInterval(interval);
   }, [showArchived]);
 
+  // The API appends its explanation after an em dash when the page is held,
+  // and returns `lp`'s bare "request id is ..." line when it is not.
+  function isHeldMessage(message: string) {
+    return (
+      message.includes("being held") ||
+      message.includes("holds jobs for release")
+    );
+  }
+
   async function handleTestPrint(printerId: string) {
     setTestPrints((prev) => ({ ...prev, [printerId]: { phase: "sending" } }));
     try {
-      await testPrintPrinter(printerId);
-      setTestPrints((prev) => ({ ...prev, [printerId]: { phase: "ok" } }));
+      const result = await testPrintPrinter(printerId);
+      setTestPrints((prev) => ({
+        ...prev,
+        [printerId]: { phase: "ok", message: result.message },
+      }));
     } catch (err) {
       setTestPrints((prev) => ({
         ...prev,
@@ -394,11 +412,18 @@ export default function PrintersPage() {
                                 : "Test Print"}
                             </Button>
                           )}
-                          {testPrint?.phase === "ok" && (
-                            <span className="text-xs text-emerald-700 dark:text-emerald-400">
-                              Sent — check Jobs
-                            </span>
-                          )}
+                          {testPrint?.phase === "ok" &&
+                            (isHeldMessage(testPrint.message) ? (
+                              // Amber, not green: the submission succeeded, but
+                              // nothing is going to print until someone acts.
+                              <span className="max-w-[22rem] text-xs text-amber-700 dark:text-amber-400">
+                                {testPrint.message}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-emerald-700 dark:text-emerald-400">
+                                Sent — check Jobs
+                              </span>
+                            ))}
                           {testPrint?.phase === "error" && (
                             <span className="max-w-[16rem] text-xs text-red-600 dark:text-red-400">
                               {testPrint.message}
