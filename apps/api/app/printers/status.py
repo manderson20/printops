@@ -134,29 +134,50 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
             ipp_path=printer.effective_ipp_path,
         )
     except PrinterProbeError as exc:
+        answered = False
         printer.status_probe_failures = (printer.status_probe_failures or 0) + 1
         if printer.status_probe_failures >= CONSECUTIVE_PROBE_FAILURES_BEFORE_OFFLINE:
             printer.status = "offline"
             printer.status_reasons = None
             printer.status_message = str(exc)
     else:
+        answered = True
         printer.status_probe_failures = 0
         status, message = derive_status(result.printer_state, result.state_reasons)
         printer.status = status
         printer.status_reasons = [r for r in result.state_reasons if r != "none"] or None
         printer.status_message = result.state_message or message
     printer.status_checked_at = datetime.now(UTC)
-    if await _apply_queue_recovery(printer, manual=manual):
+    # Both of the steps below used to read `status` as "what the probe just
+    # found", which it no longer is: the debounce lets it lag a cycle behind.
+    # They are told what this probe actually did instead, or the first missed
+    # probe on a still-"online" row would resume a stopped queue and start
+    # timing a stall for a device that had just failed to answer.
+    if await _apply_queue_recovery(printer, manual=manual, device_answered=answered):
         # A queue that cupsd had stopped explains everything the stall
         # detector would otherwise report, and says it more usefully. Running
         # both would bury the real diagnosis under "check the port/TLS/IPP
         # path", which is precisely the wrong place to send someone whose
         # printer was simply away being serviced.
         return
+    if not answered:
+        # The stall clock still has to be cleared, which _apply_queue_stall
+        # used to do on this path: before the debounce a failed probe set the
+        # status to offline, and its first act for a non-online printer is to
+        # forget the head-job observation. Returning without that left the
+        # observation standing for the whole outage, so the first successful
+        # probe after 30 minutes away reported the unchanged head job as a
+        # stalled queue — on a printer that had just come back, and with an
+        # "error" status that stops refresh_printer_status_and_rediscover
+        # doing the reconnect discovery and resync that would get it moving.
+        queue_stall.forget(str(printer.id))
+        return
     await _apply_queue_stall(printer)
 
 
-async def _apply_queue_recovery(printer: Printer, *, manual: bool = False) -> bool:
+async def _apply_queue_recovery(
+    printer: Printer, *, manual: bool = False, device_answered: bool = True
+) -> bool:
     """Starts this printer's CUPS queue again if cupsd had stopped it, and
     reports the fact either way. Returns whether the queue was found stopped
     — i.e. whether this is now the printer's diagnosis.
@@ -171,7 +192,14 @@ async def _apply_queue_recovery(printer: Printer, *, manual: bool = False) -> bo
     the printer is still offline or in error, resuming would hand cupsd one
     more job to fail and get the queue stopped again; the device's own
     message is the better diagnosis, so it is kept and the paused queue is
-    recorded alongside it as a reason."""
+    recorded alongside it as a reason.
+
+    `device_answered` is that same rule applied to the probe this cycle rather
+    than to the stored status, which since the offline debounce can still read
+    "online" one missed probe after the device stopped answering. A printer
+    that did not answer is not reporting healthy whatever the row says, and
+    resuming its queue on the strength of a stale value is the exact thing the
+    rule above exists to prevent."""
     printer_id = str(printer.id)
 
     # Same cupsd-slot reasoning as _apply_queue_stall below: this adds one
@@ -196,14 +224,22 @@ async def _apply_queue_recovery(printer: Printer, *, manual: bool = False) -> bo
     # with the port/TLS/IPP-path advice attached. Restart the clock instead.
     queue_stall.forget(printer_id)
 
-    if printer.status != "online":
+    if not device_answered or printer.status != "online":
         # Deliberately still checked every cycle, and deliberately not
         # resumed. A stopped queue keeps *accepting* jobs, so they queue up
         # behind it and print when it starts again — which is the behaviour
         # wanted while a printer is away, rather than handing cupsd one more
         # job to fail every minute.
-        queue_recovery.note_device_away(printer_id)
-        queue_recovery.note_still_stopped(printer_id)
+        if printer.status != "online":
+            # Only a printer the debounce has actually called offline counts
+            # as away. One missed probe blocks this cycle's resume, but must
+            # not arm this bookkeeping: note_device_away pairs with
+            # note_device_back, which discards the whole backoff once the
+            # device reads online for five minutes. A lossy printer that never
+            # left would otherwise clear its four-hour cooldown every time it
+            # dropped a single probe, and be handed another job to fail.
+            queue_recovery.note_device_away(printer_id)
+            queue_recovery.note_still_stopped(printer_id)
         printer.status_reasons = [
             *(printer.status_reasons or []),
             queue_recovery.QUEUE_PAUSED_REASON,

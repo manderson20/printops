@@ -14,7 +14,7 @@ resync when it flipped back.
 import pytest
 
 from app.models.printer import Printer
-from app.printers import status
+from app.printers import queue_stall, status
 from app.printers.ipp_client import PrinterProbeError, PrinterStateResult
 
 PRINTER = "2ea028f4-abc2-423b-9204-aaf47c6a9be2"
@@ -145,6 +145,24 @@ async def test_a_manual_check_is_held_to_the_same_standard(monkeypatch):
 
     assert printer.status == "online"
     assert printer.status_probe_failures == 1
+
+
+@pytest.mark.asyncio
+async def test_a_missed_probe_clears_the_stall_clock(monkeypatch):
+    """Before the debounce, a failed probe set the status to offline and
+    _apply_queue_stall forgot the head-job observation on its way out. The
+    early return skipped that, so an observation survived the whole outage and
+    the first probe after 30 minutes away reported a stalled queue against a
+    printer that had only just come back."""
+    printer = _printer(status="online")
+    queue_stall.reset()
+    forgotten = []
+    monkeypatch.setattr(queue_stall, "forget", lambda pid: forgotten.append(pid))
+    _times_out(monkeypatch)
+
+    await status.refresh_printer_status(printer)
+
+    assert forgotten == [PRINTER]
 
 
 @pytest.mark.asyncio
