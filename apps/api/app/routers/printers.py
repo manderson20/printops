@@ -554,6 +554,23 @@ async def confirm_redirect(printer_id: UUID, db: AsyncSession = Depends(get_db))
     printer.port = port
     printer.use_tls = tls
     printer.ipp_path_detected = result.resolved_path
+    # An explicit ipp_path override was a deliberate choice about the *old*
+    # machine, and effective_ipp_path prefers it over anything discovered
+    # (app/models/printer.py). Left in place across a host move it would win
+    # over the path just verified on the new host, and the queue would be
+    # rebuilt against a path nobody has confirmed answers there — a printer
+    # that reads as moved and cannot print. The verified path is the better
+    # evidence, so the override goes.
+    if printer.ipp_path and printer.ipp_path != result.resolved_path:
+        logger.warning(
+            "%s: dropping the ipp_path override %r, which was set for %s; the new host "
+            "answered on %r.",
+            printer.name,
+            printer.ipp_path,
+            previous,
+            result.resolved_path,
+        )
+        printer.ipp_path = None
     printer.pending_redirect = None
     await db.commit()
     await db.refresh(printer)

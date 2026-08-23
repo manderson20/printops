@@ -149,3 +149,58 @@ async def test_confirming_nothing_is_not_a_silent_success(client, auth_headers, 
 async def test_only_an_admin_can_move_a_printer(client, printer_id):
     response = client.post(f"/api/v1/printers/{printer_id}/redirect/confirm")
     assert response.status_code in (401, 403)
+
+
+async def test_a_stale_path_override_is_dropped_when_the_host_changes(
+    client, auth_headers, db_session_factory
+):
+    """effective_ipp_path prefers an explicit override over anything
+    discovered. Left standing across a host move, it would beat the path just
+    verified on the new machine, and the queue would be rebuilt against a path
+    nobody has confirmed answers there — a printer that reads as moved and
+    cannot print."""
+    async with db_session_factory() as session:
+        printer = Printer(
+            id=uuid.uuid4(),
+            name="Overridden Printer",
+            ip_address="10.50.1.37",
+            port=631,
+            use_tls=False,
+            ipp_path="/printers/old-choice",
+            pending_redirect=PENDING,
+        )
+        session.add(printer)
+        await session.commit()
+        pid = str(printer.id)
+
+    with patch("app.routers.printers.probe_printer", return_value=_answers("/ipp/print")):
+        response = client.post(f"/api/v1/printers/{pid}/redirect/confirm", headers=auth_headers)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ipp_path"] is None, "the override was chosen for the old machine"
+    assert body["ipp_path_detected"] == "/ipp/print"
+
+
+async def test_an_override_that_already_matches_is_left_alone(
+    client, auth_headers, db_session_factory
+):
+    """Nothing to correct: the admin's choice and the verified path agree."""
+    async with db_session_factory() as session:
+        printer = Printer(
+            id=uuid.uuid4(),
+            name="Agreeing Printer",
+            ip_address="10.50.1.37",
+            port=631,
+            use_tls=False,
+            ipp_path="/ipp/print",
+            pending_redirect=PENDING,
+        )
+        session.add(printer)
+        await session.commit()
+        pid = str(printer.id)
+
+    with patch("app.routers.printers.probe_printer", return_value=_answers("/ipp/print")):
+        response = client.post(f"/api/v1/printers/{pid}/redirect/confirm", headers=auth_headers)
+
+    assert response.json()["ipp_path"] == "/ipp/print"

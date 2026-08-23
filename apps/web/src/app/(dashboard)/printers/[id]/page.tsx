@@ -166,6 +166,22 @@ export default function PrinterOverviewTab() {
         ? await confirmPrinterRedirect(printer.id)
         : await dismissPrinterRedirect(printer.id);
       setPrinter(updated);
+      // The edit form was initialised from the printer as it was. Left alone,
+      // the next Save would submit the *old* address over the move that was
+      // just confirmed and rebuild the CUPS queue against it — undoing the
+      // move without anyone touching the connection fields.
+      // Rebuilt exactly the way the form is initialised, so the two cannot
+      // drift as fields are added.
+      setForm(
+        Object.fromEntries(
+          [...editableFields, ...connectionFields].map((entry) => [
+            entry[0],
+            String((updated as never)[entry[0]] ?? ""),
+          ]),
+        ),
+      );
+      setUseTls(updated.use_tls);
+      setAirprintEnabled(updated.airprint_enabled);
     } catch (err) {
       setActionError(
         err instanceof ApiError ? err.message : "Failed to update this printer",
