@@ -5,6 +5,42 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.59.4] - 2026-08-23
+
+- **Fixed: jobs that stayed "printing" forever.** A job's record was written
+  the moment it started printing and only completed when the print server
+  reported back — and there were several ordinary ways it never did. CUPS
+  signals the delivery process whenever it cancels, holds or restarts a job,
+  and restarts happen on their own whenever a printer's queue is rebuilt,
+  which PrintOps itself does routinely. The record was then left saying the
+  job was still printing, for good. 107 of them had built up since July —
+  around one job in forty. They sat on the Jobs page looking like work in
+  progress, they were left out of every report, and where CUPS had restarted a
+  job the pages it eventually printed were counted against a different record,
+  so people's totals came out short. PrintOps now closes these out: the print
+  server is asked what actually became of each one, and jobs it can account
+  for are recorded as printed — with their page counts — cancelled, or failed,
+  as the case may be. The 107 existing ones have been resolved too.
+- **A job PrintOps is unsure about is never guessed at.** One still printing
+  is left alone however long it has been going — a large job from graphic arts
+  genuinely takes hours. One the print server no longer remembers, which is
+  most of the older backlog, is recorded as cancelled with "outcome unknown"
+  written on it rather than as a failure nobody observed, so the failure count
+  on the reports stays a number worth acting on.
+- **Fixed: a printer could stay switched off for hours after it came back.**
+  The queue restart added in 0.59.3 waits longer between attempts each time
+  one doesn't hold, up to four hours, so that a printer that is genuinely sick
+  isn't fed a job a minute. But the wait was a plain clock: a printer that had
+  been away long enough to run it up to four hours would then sit there, red
+  and not printing, for up to four more hours after being wheeled back and
+  plugged in — with its users' jobs waiting behind it. PrintOps now watches for
+  the printer coming back: once it has been answering normally for five
+  minutes, the wait is dropped and the queue starts on the next check. A
+  printer that never went away keeps its backoff, which is the case it was
+  written for. While a printer is away its queue is deliberately left off and
+  still accepting, so jobs sent to it queue up and print when it returns
+  rather than failing one at a time.
+
 ## [0.59.3] - 2026-08-23
 
 - **Fixed: a printer that was taken away for service never printed again
