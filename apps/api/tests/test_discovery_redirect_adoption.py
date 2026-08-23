@@ -166,3 +166,45 @@ async def test_an_explicit_path_survives_a_transport_change():
     assert printer.ipp_path == "/"  # the override survives the transport change
     assert printer.effective_ipp_path == "/"
     assert (printer.port, printer.use_tls) == (443, True)
+
+
+# ---- a redirect that names a different machine ----
+
+
+@pytest.mark.asyncio
+async def test_a_redirect_to_another_host_is_recorded_not_adopted():
+    """Port and scheme are how a printer is reached; the host is which printer
+    it is. A device does not get to reassign PrintOps to a different box — it
+    could be a misconfigured unit or a recycled DHCP address, and documents
+    would come out somewhere nobody chose while everything looked healthy."""
+    printer = _printer(port=631, use_tls=False)
+    probe = AsyncMock(side_effect=[_redirect_error("https://10.50.1.99:443/ipp/print")])
+
+    with patch("app.printers.discovery.probe_printer", probe):
+        await refresh_printer_capabilities(printer)
+
+    assert probe.await_count == 1, "the new host must not be probed behind an admin's back"
+    assert printer.ip_address == "10.50.1.37", "the printer has not been moved"
+    assert printer.pending_redirect["host"] == "10.50.1.99"
+    assert printer.pending_redirect["port"] == 443
+    assert printer.pending_redirect["tls"] is True
+    assert printer.pending_redirect["path"] == "/ipp/print"
+    # The probe still failed, because it did: nothing about this printer's
+    # state is invented to make the suggestion look tidy.
+    assert printer.capabilities_error is not None
+
+
+@pytest.mark.asyncio
+async def test_a_redirect_to_the_same_host_is_still_adopted_outright():
+    """The ordinary TLS-only case. Same machine, different port — routing, not
+    identity, and it needs no one's permission."""
+    printer = _printer(port=631, use_tls=False)
+    probe = AsyncMock(
+        side_effect=[_redirect_error("https://10.50.1.37:443/ipp/print"), _ok("/ipp/print")]
+    )
+
+    with patch("app.printers.discovery.probe_printer", probe):
+        await refresh_printer_capabilities(printer)
+
+    assert (printer.port, printer.use_tls) == (443, True)
+    assert printer.pending_redirect is None

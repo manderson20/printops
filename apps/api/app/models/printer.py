@@ -52,6 +52,12 @@ class Printer(Base, TimestampMixin):
     # chosen and which were guessed, so a guess could never be safely revisited:
     # the LCACTC Kyocera stayed on a '/' detected back when it answered plain
     # IPP, long after the device had moved to TLS-only.
+    # Where the device says it now lives, when that is a different host —
+    # {"host", "port", "tls", "path", "seen_at"}. Recorded and surfaced for an
+    # admin to confirm rather than adopted: port and scheme are how you reach a
+    # printer, but the host is which printer it is, and a device does not get
+    # to move itself (migration 0066).
+    pending_redirect: Mapped[dict | None] = mapped_column(JSON, default=None)
     ipp_path_detected: Mapped[str | None] = mapped_column(default=None)
 
     @property

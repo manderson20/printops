@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import {
   ApiError,
   checkPrinterStatus,
+  confirmPrinterRedirect,
+  dismissPrinterRedirect,
   getCupsQueueDefaults,
   rediscoverPrinter,
   updatePrinter,
@@ -148,8 +150,30 @@ export default function PrinterOverviewTab() {
   const [rediscovering, setRediscovering] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [redirectBusy, setRedirectBusy] = useState(false);
 
   const caps = printer.capabilities;
+
+  // A device that redirects to a *different host* is claiming to be somewhere
+  // else entirely. PrintOps records that rather than acting on it, because
+  // moving a printer means every job after it — including held ones — goes to
+  // the new machine. This is where a person decides.
+  async function handleRedirect(accept: boolean) {
+    setRedirectBusy(true);
+    setActionError(null);
+    try {
+      const updated = accept
+        ? await confirmPrinterRedirect(printer.id)
+        : await dismissPrinterRedirect(printer.id);
+      setPrinter(updated);
+    } catch (err) {
+      setActionError(
+        err instanceof ApiError ? err.message : "Failed to update this printer",
+      );
+    } finally {
+      setRedirectBusy(false);
+    }
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -252,6 +276,44 @@ export default function PrinterOverviewTab() {
                     Checked {formatRelativeTime(printer.status_checked_at)}
                   </span>
                 </div>
+                {printer.pending_redirect && (
+                  <div className="rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/40">
+                    <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
+                      This printer says it has moved to{" "}
+                      {printer.pending_redirect.tls ? "ipps" : "ipp"}://
+                      {printer.pending_redirect.host}:
+                      {printer.pending_redirect.port}
+                      {printer.pending_redirect.path}
+                    </p>
+                    <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
+                      A printer that answers on a different port or over TLS is
+                      moved automatically — that is the same machine, reached
+                      differently. This names a different address entirely,
+                      which PrintOps will not act on by itself: every job sent
+                      here afterwards, including any waiting for release, would
+                      go to whatever is at that address. Confirm only if you
+                      know this printer was moved or replaced. The new address
+                      is checked before anything changes.
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      <Button
+                        className="!px-3 !py-1 text-xs"
+                        disabled={redirectBusy}
+                        onClick={() => handleRedirect(true)}
+                      >
+                        {redirectBusy ? "Checking…" : "Confirm move"}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        className="!px-3 !py-1 text-xs"
+                        disabled={redirectBusy}
+                        onClick={() => handleRedirect(false)}
+                      >
+                        Dismiss
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 {printer.status_message && (
                   <p className="text-zinc-600 dark:text-zinc-400">
                     {printer.status_message}

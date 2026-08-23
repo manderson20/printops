@@ -204,6 +204,9 @@ class PrinterOut(BaseModel):
     ipp_path: str | None
     # What probing last found, shown in the UI as the greyed default behind an
     # empty IPP Path box so an override is visibly distinct from a detection.
+    # Where the device says it has moved, when that is a different host. Shown
+    # for an admin to confirm rather than acted on — see migration 0066.
+    pending_redirect: dict | None = None
     ipp_path_detected: str | None = None
     airprint_enabled: bool
 
