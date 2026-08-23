@@ -35,6 +35,12 @@ const SELECT_CLASS =
 // A "forwarding" job stuck this long probably means the backend crashed or
 // the printer is jammed/unreachable — flagged in the UI as a nudge to check
 // the printer and consider cancelling, not an automatic timeout.
+//
+// The server does resolve these now, but not on this timescale and not on a
+// guess: app/printers/job_reconcile.py waits half an hour before it asks CUPS
+// about a job at all, and leaves alone any job CUPS says is still printing —
+// which a big job legitimately is, for hours. The badge stays as the earlier,
+// weaker signal it always was, hence the question mark.
 const STUCK_THRESHOLD_MS = 10 * 60 * 1000;
 
 function JobsList() {

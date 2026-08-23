@@ -163,12 +163,24 @@ async def _apply_queue_recovery(printer: Printer, *, manual: bool = False) -> bo
     queue_stall.forget(printer_id)
 
     if printer.status != "online":
+        # Deliberately still checked every cycle, and deliberately not
+        # resumed. A stopped queue keeps *accepting* jobs, so they queue up
+        # behind it and print when it starts again — which is the behaviour
+        # wanted while a printer is away, rather than handing cupsd one more
+        # job to fail every minute.
+        queue_recovery.note_device_away(printer_id)
         queue_recovery.note_still_stopped(printer_id)
         printer.status_reasons = [
             *(printer.status_reasons or []),
             queue_recovery.QUEUE_PAUSED_REASON,
         ]
         return False
+
+    # Before the cooldown check, not after: a device that has come back and
+    # stayed back clears the backoff it earned while it was away, so a printer
+    # returning from service is resumed on the next poll instead of waiting
+    # out a timer of up to four hours with its users' jobs behind it.
+    queue_recovery.note_device_back(printer_id)
 
     if not (manual or queue_recovery.resume_due(printer_id)):
         queue_recovery.note_still_stopped(printer_id)

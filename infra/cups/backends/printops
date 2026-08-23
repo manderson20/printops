@@ -174,13 +174,15 @@ def spool_held_file(job_record_id: str, filename: str | None) -> str:
     return dest
 
 
-def api_request(token: str, method: str, path: str, body: dict | None = None) -> dict:
+def api_request(
+    token: str, method: str, path: str, body: dict | None = None, timeout: int = 10
+) -> dict:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(f"{API_BASE}{path}", data=data, method=method)
     req.add_header("X-Backend-Token", token)
     if data is not None:
         req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
 
 
@@ -188,6 +190,63 @@ def api_request(token: str, method: str, path: str, body: dict | None = None) ->
 # handler installed below can reap it. Module-level because a signal handler
 # has no other way to reach it.
 _CHILD_PROC: subprocess.Popen | None = None
+
+# The job this script is delivering, so the same handler can report what
+# became of it before the process goes away. Module-level for the same reason.
+_JOB_RECORD_ID: str | None = None
+_API_TOKEN: str | None = None
+_REPORTED = False
+
+# The signalled-exit report gets far less time than a normal API call: cupsd
+# has already decided this job is over and follows SIGTERM with SIGKILL. A
+# report that doesn't fit in the gap is not worth delaying the teardown for —
+# app/printers/job_reconcile.py resolves whatever this misses.
+SIGNAL_REPORT_TIMEOUT_SECONDS = 3
+
+
+def _report_signalled_exit(signum: int) -> None:
+    """Records that this job ended because cupsd signalled its backend.
+
+    Without this the job's row keeps saying "forwarding" for the rest of time.
+    cupsd signals a backend whenever it cancels, holds or restarts a job — the
+    restart path is triggered by any `lpadmin` against the queue, which is to
+    say by every queue resync PrintOps itself runs — so this is an ordinary
+    event, not an exotic one, and it accounted for most of the stranded rows
+    found in August (app/printers/job_reconcile.py).
+
+    "cancelled" rather than "failed": nothing failed. Either an admin or cupsd
+    ended this attempt deliberately, or it is about to be restarted, in which
+    case the *next* attempt gets its own row and is the one that carries what
+    was printed. Recording a failure here would put a fault in the reports
+    that nobody can act on and that never happened.
+
+    Best-effort and quick, like the normal completion report — a print that
+    already happened must not be undone by a status update that didn't.
+    """
+    global _REPORTED
+    if _REPORTED or _JOB_RECORD_ID is None or _API_TOKEN is None:
+        return
+    # Set before the call, not after: SIGTERM can arrive again while this one
+    # is in flight, and a second report would only overwrite the first with
+    # the same thing.
+    _REPORTED = True
+    try:
+        api_request(
+            _API_TOKEN,
+            "PATCH",
+            f"/api/v1/jobs/{_JOB_RECORD_ID}",
+            {
+                "status": "cancelled",
+                "error_message": (
+                    f"Ended at the print server — CUPS signalled delivery to stop "
+                    f"({signal.Signals(signum).name}), which it does when a job is "
+                    "cancelled, held or restarted."
+                ),
+            },
+            timeout=SIGNAL_REPORT_TIMEOUT_SECONDS,
+        )
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+        pass
 
 
 def _install_child_signal_forwarding() -> None:
@@ -226,6 +285,10 @@ def _install_child_signal_forwarding() -> None:
                 # with.
                 child.kill()
                 child.wait()
+        # Only after the child is dead. Reaping it is what stops a leaked
+        # backend hammering the device, and that matters more than a status
+        # line — the report is best-effort and this is not.
+        _report_signalled_exit(signum)
         # 128+signum is the shell convention for "died on this signal", and
         # what cupsd already expects from a backend that was signalled.
         sys.exit(128 + signum)
@@ -252,6 +315,8 @@ def _run_real_backend(argv: list[str], env: dict, stdin=None) -> subprocess.Pope
 
 
 def main() -> int:
+    global _JOB_RECORD_ID, _API_TOKEN
+
     if len(sys.argv) == 1:
         # Discovery mode (e.g. `lpinfo -v`) — queues are created explicitly
         # with a printops:// device-uri, nothing to auto-advertise here.
@@ -365,7 +430,10 @@ def main() -> int:
     # Registered only now, immediately before the first child can exist:
     # everything above this point is API bookkeeping with nothing to reap, and
     # a handler installed earlier would only change how this script dies while
-    # it is still the sole process.
+    # it is still the sole process. The job record and token go with it so the
+    # handler can also report the job's fate — see _report_signalled_exit.
+    _JOB_RECORD_ID = job_record_id
+    _API_TOKEN = token
     _install_child_signal_forwarding()
 
     if filename:
@@ -397,6 +465,13 @@ def main() -> int:
     if exit_code == 0:
         queue_name = os.environ.get("PRINTER") or f"printops-{printer_id}"
         completion_attrs = get_job_completion_attributes(queue_name, job_id)
+
+    if _REPORTED:
+        # Belt and braces: the signal handler exits the process itself, so
+        # this is not normally reachable. It exists so that reporting the job
+        # twice — once as cancelled, once as whatever the reaped child's exit
+        # code looked like — can never become the behaviour by accident.
+        return exit_code
 
     try:
         api_request(

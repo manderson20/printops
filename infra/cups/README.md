@@ -46,6 +46,19 @@ with no backoff, at several hundred connections a second. Anything spawning the
 real backend must go through `_run_real_backend` for that reason; a plain
 `subprocess.run` leaves no handle to kill.
 
+The same handler also reports the job as cancelled on its way out
+(`_report_signalled_exit`), because step 4 otherwise never happens for a
+signalled job and its row says "printing" for the rest of time. That is not a
+rare path: cupsd restarts a job whenever its queue is modified, which is to say
+on every `scripts/sync_cups_queue.sh` run, and each restart runs this backend
+again and creates a *second* job row. 107 rows had been stranded that way by
+August 2026.
+
+The report is best-effort and can't cover a SIGKILL or a crash, so it is only
+half the fix — `app/printers/job_reconcile.py` sweeps up whatever it misses by
+asking cupsd's own job record what became of each stranded job. Between them,
+a `jobs` row should never be left non-terminal.
+
 ## SNMP page/copy counter polling
 
 `app/printers/snmp_counters.py` polls each printer's page/copy/print counters

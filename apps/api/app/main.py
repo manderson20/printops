@@ -30,6 +30,7 @@ from app.models.report import PrinterTonerReading
 from app.models.snmp import PrinterCounterReading
 from app.models.syslog import PrinterSyslogEvent
 from app.printers.discovery import refresh_printer_capabilities
+from app.printers.job_reconcile import reconcile_stuck_jobs
 from app.printers.snmp_counters import (
     SnmpProbeError,
     get_or_create_snmp_defaults,
@@ -380,6 +381,28 @@ async def _failed_job_purge_loop() -> None:
         await asyncio.sleep(FAILED_JOB_PURGE_INTERVAL_SECONDS)
 
 
+STUCK_JOB_RECONCILE_INTERVAL_SECONDS = 10 * 60
+
+
+async def _stuck_job_reconcile_loop() -> None:
+    """Resolves job records left saying "forwarding" by a CUPS backend that
+    died without reporting an outcome — see app/printers/job_reconcile.py for
+    how one gets that way and why cupsd's own job record is the only witness.
+
+    Ten minutes rather than the 60-second status cadence: nothing here is
+    urgent (the printing already happened or already didn't), each row costs
+    an ipptool round trip, and the module will not touch a row until it is
+    half an hour old anyway. Same tolerant per-cycle error handling as the
+    other background loops."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                await reconcile_stuck_jobs(db)
+        except Exception:
+            logger.exception("Unexpected error in stuck job reconcile loop")
+        await asyncio.sleep(STUCK_JOB_RECONCILE_INTERVAL_SECONDS)
+
+
 COPIER_USER_SYNC_INTERVAL_SECONDS = 6 * 60 * 60
 
 
@@ -526,6 +549,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_syslog_event_purge_loop()),
         asyncio.create_task(_held_job_purge_loop()),
         asyncio.create_task(_failed_job_purge_loop()),
+        asyncio.create_task(_stuck_job_reconcile_loop()),
         asyncio.create_task(_copier_user_sync_loop()),
         asyncio.create_task(_copier_counter_poll_loop()),
     ]
