@@ -29,6 +29,7 @@ from app.models.printer import Printer
 from app.models.report import PrinterTonerReading
 from app.models.snmp import PrinterCounterReading
 from app.models.syslog import PrinterSyslogEvent
+from app.printers import offline_holds
 from app.printers.discovery import refresh_printer_capabilities
 from app.printers.job_reconcile import reconcile_stuck_jobs
 from app.printers.snmp_counters import (
@@ -124,9 +125,33 @@ async def _printer_status_poll_loop() -> None:
                 )
 
                 async def _refresh_one(printer: Printer) -> None:
-                    await refresh_printer_status_and_rediscover(printer, db)
+                    await refresh_printer_status_and_rediscover(printer)
 
                 await asyncio.gather(*(_refresh_one(p) for p in printers), return_exceptions=True)
+                await db.commit()
+
+                # Sequentially, and on this loop's own session: the refreshes
+                # above run concurrently, and SQLAlchemy will not have several
+                # of them issuing queries on one session at once. gather() is
+                # holding return_exceptions=True, so such a failure would be
+                # swallowed while the printer was still committed as online —
+                # and the jobs that release missed would never be looked at
+                # again.
+                #
+                # Every online printer, not only the ones that just came back:
+                # the backend registers a job and only PATCHes it to "held" a
+                # moment later, so a job arriving in that gap would be missed
+                # by a transition-triggered release and stranded, the printer
+                # having already been recorded as online. One indexed query per
+                # online printer per cycle is worth not depending on catching
+                # an instant.
+                for printer in printers:
+                    if printer.status != "online":
+                        continue
+                    try:
+                        await offline_holds.release_jobs_waiting_for(db, printer)
+                    except Exception:
+                        logger.exception("Could not release jobs waiting for %s", printer.name)
                 await db.commit()
         except Exception:
             logger.exception("Unexpected error in printer status poll loop")

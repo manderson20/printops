@@ -10,17 +10,8 @@ import logging
 import time
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models.printer import Printer
-from app.printers import (
-    cups_health,
-    job_control,
-    network_health,
-    offline_holds,
-    queue_recovery,
-    queue_stall,
-)
+from app.printers import cups_health, job_control, network_health, queue_recovery, queue_stall
 from app.printers.discovery import refresh_printer_capabilities
 from app.printers.ipp_client import PrinterProbeError, PrinterStateResult, probe_printer_state
 from app.printers.queue_sync import QueueSyncError, sync_queue
@@ -376,9 +367,7 @@ def _apply_network_flap(printer: Printer, flap: network_health.NetworkFlap | Non
     logger.warning("%s: %s", printer.name, reason)
 
 
-async def refresh_printer_status_and_rediscover(
-    printer: Printer, db: AsyncSession, *, manual: bool = False
-) -> None:
+async def refresh_printer_status_and_rediscover(printer: Printer, *, manual: bool = False) -> None:
     """Refreshes status, then re-runs capability discovery
     (app/printers/discovery.py) and retries the CUPS queue sync
     (app/printers/queue_sync.py) if the printer just came back online — a
@@ -398,11 +387,6 @@ async def refresh_printer_status_and_rediscover(
     # the queue resync behind it that has to be rationed.
     await refresh_printer_capabilities(printer)
     await run_automatic_queue_sync(printer)
-    # Anything that was waiting for this printer goes now. Ordered after the
-    # queue resync deliberately: the release queue is what delivers a held job
-    # (app/printers/release.py), and sending work through a queue that has just
-    # been rebuilt is the point at which it is most likely to succeed.
-    await offline_holds.release_jobs_waiting_for(db, printer)
 
 
 async def run_automatic_queue_sync(printer: Printer) -> bool:

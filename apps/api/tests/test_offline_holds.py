@@ -207,3 +207,62 @@ async def test_every_waiting_job_is_accounted_for(session):
 
     rows = (await session.execute(select(Job).where(Job.printer_id == printer.id))).scalars().all()
     assert {row.status for row in rows} == {"forwarded"}
+
+
+# ---- the clock that would have eaten the weekend ----
+
+
+async def test_a_job_waiting_for_a_printer_is_given_no_expiry(session):
+    """The release-hold expiry exists so uncollected printing does not sit on
+    the server forever. Nobody has failed to collect this one — and at the
+    48-hour default it would be deleted on Sunday, for a printer switched off
+    on Friday, which is precisely the weekend this feature exists to survive."""
+    from app.routers.jobs import update_job
+    from app.schemas.job import JobUpdate
+
+    printer = await _printer(session)
+    job = Job(
+        id=uuid.uuid4(),
+        printer_id=printer.id,
+        status="forwarding",
+        hold_reason=offline_holds.HOLD_REASON,
+        submitted_by="sayers@brookfieldr3.org",
+    )
+    session.add(job)
+    await session.commit()
+
+    await update_job(
+        job.id,
+        JobUpdate(status="held", held_file_path="/var/spool/printops-held/y"),
+        db=session,
+    )
+
+    await session.refresh(job)
+    assert job.status == "held"
+    assert job.held_expires_at is None
+
+
+async def test_an_ordinary_release_hold_still_expires(session):
+    """Unchanged for the case the expiry was written for."""
+    from app.routers.jobs import update_job
+    from app.schemas.job import JobUpdate
+
+    printer = await _printer(session, status="online")
+    job = Job(
+        id=uuid.uuid4(),
+        printer_id=printer.id,
+        status="forwarding",
+        hold_reason="pin_release",
+        submitted_by="someone@brookfieldr3.org",
+    )
+    session.add(job)
+    await session.commit()
+
+    await update_job(
+        job.id,
+        JobUpdate(status="held", held_file_path="/var/spool/printops-held/z"),
+        db=session,
+    )
+
+    await session.refresh(job)
+    assert job.held_expires_at is not None

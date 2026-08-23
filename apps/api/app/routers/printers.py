@@ -20,6 +20,7 @@ from app.models.printer_ou_access import PrinterAllowedOu
 from app.models.quota import PrinterUserQuota
 from app.models.release_bypass import PrinterReleaseBypass
 from app.models.report import PrinterTonerCartridge
+from app.printers import offline_holds
 from app.printers.counter_history import get_daily_deltas
 from app.printers.cups_ppd_info import get_cups_queue_default_page_size
 from app.printers.discovery import refresh_printer_capabilities
@@ -524,7 +525,11 @@ async def check_status(printer_id: UUID, db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A virtual queue has no real device to check the status of.",
         )
-    await refresh_printer_status_and_rediscover(printer, db, manual=True)
+    await refresh_printer_status_and_rediscover(printer, manual=True)
+    if printer.status == "online":
+        # Someone has just walked over and switched it on; their jobs should
+        # not wait for the next poll.
+        await offline_holds.release_jobs_waiting_for(db, printer)
     await db.commit()
     await db.refresh(printer)
     return printer
