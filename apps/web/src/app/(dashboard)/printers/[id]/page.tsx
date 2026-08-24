@@ -25,7 +25,6 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { usePrinterDetail } from "./PrinterDetailContext";
-import { CopierCard } from "./Copier";
 import { RollMediaCard } from "./RollMedia";
 import { SnmpCountersCard } from "./SnmpCounters";
 import { UsageHistoryCard } from "./UsageHistory";
@@ -636,10 +635,6 @@ export default function PrinterOverviewTab() {
             </div>
           )}
         </Card>
-      )}
-
-      {!printer.is_virtual && (
-        <CopierCard printer={printer} onUpdate={setPrinter} />
       )}
 
       {!printer.is_virtual && (

@@ -41,6 +41,7 @@ const ALL_TABS = [
   { href: "", label: "Overview" },
   { href: "/connection", label: "Connection" },
   { href: "/release", label: "Release & Quotas" },
+  { href: "/copier", label: "Copier" },
   { href: "/toner", label: "Toner" },
   { href: "/syslog", label: "Syslog" },
   { href: "/credentials", label: "Credentials" },
@@ -49,9 +50,15 @@ const ALL_TABS = [
 
 // A virtual Follow-Me queue has no real device — Toner/Syslog/Credentials
 // are all meaningless for one (no cartridges, no device forwarding logs, no
-// web login to store). Connection is kept: it's the MDM push info clients
+// web login to store), and a queue that forwards to other printers has no
+// glass of its own to copy from. Connection is kept: it's the MDM push info clients
 // need to add this queue, which is the whole point of a virtual queue.
-const VIRTUAL_HIDDEN_TABS = new Set(["/toner", "/syslog", "/credentials"]);
+const VIRTUAL_HIDDEN_TABS = new Set([
+  "/toner",
+  "/syslog",
+  "/credentials",
+  "/copier",
+]);
 
 function tabsFor(printer: Printer) {
   return printer.is_virtual
