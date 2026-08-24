@@ -46,7 +46,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job import Job
+from app.models.printer import Printer
 from app.printers import job_control
+from app.printers.capabilities import recorded_color_mode
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +141,12 @@ async def _superseding_job_ids(db: AsyncSession, candidates: list[Job]) -> set:
     return superseded
 
 
-def _resolve(job: Job, outcome: job_control.CupsJobOutcome, now: datetime) -> bool:
+def _resolve(
+    job: Job,
+    outcome: job_control.CupsJobOutcome,
+    now: datetime,
+    capabilities: dict | None = None,
+) -> bool:
     """Applies cupsd's verdict to one row. Returns whether it was resolved."""
     if outcome.in_flight:
         return False
@@ -151,7 +158,7 @@ def _resolve(job: Job, outcome: job_control.CupsJobOutcome, now: datetime) -> bo
         # backend script would have reported, read from the same record, and
         # without it the job is in the reports with no pages against it.
         job.page_count = outcome.page_count
-        job.color_mode = outcome.color_mode
+        job.color_mode = recorded_color_mode(capabilities, outcome.color_mode)
         job.duplex = outcome.duplex
         job.paper_size = outcome.paper_size
     elif outcome.state == job_control.JOB_STATE_ABORTED:
@@ -210,6 +217,19 @@ async def reconcile_stuck_jobs(
         return result
 
     superseded = await _superseding_job_ids(db, list(candidates))
+    # One lookup for the whole batch: _resolve needs to know whether each
+    # job's printer can print colour at all before believing what CUPS says
+    # the job's colour mode was (see recorded_color_mode).
+    capabilities_by_printer = {
+        row.id: row.capabilities
+        for row in (
+            await db.execute(
+                select(Printer.id, Printer.capabilities).where(
+                    Printer.id.in_({job.printer_id for job in candidates})
+                )
+            )
+        ).all()
+    }
 
     for job in candidates:
         if job.id in superseded:
@@ -233,7 +253,7 @@ async def reconcile_stuck_jobs(
         if outcome is None:
             result.unasked += 1
             continue
-        if _resolve(job, outcome, now):
+        if _resolve(job, outcome, now, capabilities_by_printer.get(job.printer_id)):
             result.resolved += 1
         elif outcome.state is None:
             result.unresolvable_kept += 1

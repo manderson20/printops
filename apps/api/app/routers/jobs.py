@@ -16,6 +16,7 @@ from app.models.printer import Printer
 from app.models.release import PrintReleaseSettings
 from app.models.report import ReportFormulaSettings
 from app.printers import offline_holds
+from app.printers.capabilities import recorded_color_mode
 from app.printers.job_control import JobControlError, cancel_cups_job
 from app.quotas.service import resolve_hold_reason
 from app.reports.aggregation import (
@@ -227,7 +228,12 @@ async def update_job(job_id: UUID, payload: JobUpdate, db: AsyncSession = Depend
     if payload.file_size_bytes is not None:
         job.file_size_bytes = payload.file_size_bytes
     job.page_count = payload.page_count
-    job.color_mode = payload.color_mode
+    # CUPS reports the mode the job asked for; a mono printer prints a colour
+    # job in grey and says nothing. See recorded_color_mode's docstring.
+    printer = await db.get(Printer, job.printer_id)
+    job.color_mode = recorded_color_mode(
+        printer.capabilities if printer else None, payload.color_mode
+    )
     job.duplex = payload.duplex
     job.paper_size = payload.paper_size
 
