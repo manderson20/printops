@@ -5,6 +5,20 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.64.0] - 2026-08-24
+
+- **The Printers list no longer scrolls sideways.** Ten columns did not fit on
+  screen, which pushed the buttons off the right-hand edge — reaching **Test
+  Print** meant scrolling to find it. Each row now shows what you actually scan
+  down the list for: name, status, location and page count. Click the arrow at
+  the start of a row to open everything else underneath it — model, IP address,
+  queue, AirPrint, the full capability list, and the Test Print button.
+- Warnings stay visible without opening anything. **Jobs waiting**, **Network**
+  and **Sync Failed** all show on the collapsed row, since a warning you have
+  to expand a row to find is a warning nobody sees.
+- The capability list is no longer cut off at four with a "+4 more" link; the
+  opened row has room to show all of them.
+
 ## [0.63.0] - 2026-08-24
 
 - **A copier is now part of its printer.** Copiers had their own top-level
