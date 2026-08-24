@@ -6,6 +6,7 @@ swapped, or gain/lose a module like a finisher or extra tray, while it was
 unreachable; re-probing on reconnect picks that up without waiting for
 someone to notice and click Rediscover)."""
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
@@ -13,6 +14,7 @@ from urllib.parse import urlsplit
 from app.models.printer import Printer
 from app.printers.capabilities import parse_capabilities, sanitize_raw_attributes
 from app.printers.ipp_client import PrinterProbeError, ProbeResult, probe_printer
+from app.printers.media_col_probe import detect_media_col_broken, probe_uri
 
 logger = logging.getLogger(__name__)
 
@@ -151,5 +153,18 @@ async def refresh_printer_capabilities(printer: Printer) -> None:
         detected_model = printer.capabilities.get("make_model")
         if not printer.manufacturer and not printer.model and detected_model:
             printer.model = detected_model
+        # Two more Validate-Jobs against a device we have just established is
+        # answering — see app/printers/media_col_probe.py for what they ask and
+        # why the answer can't be read off the attribute list above. Off the
+        # event loop: ipptool is a subprocess.
+        printer.capabilities["media_col_broken"] = await asyncio.to_thread(
+            detect_media_col_broken,
+            probe_uri(
+                printer.ip_address,
+                printer.port,
+                result.resolved_tls or printer.use_tls,
+                result.resolved_path or printer.effective_ipp_path,
+            ),
+        )
     except PrinterProbeError as exc:
         printer.capabilities_error = str(exc)

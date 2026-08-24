@@ -44,6 +44,12 @@ class CapabilitiesOut(BaseModel):
     airprint_supported: bool | None = None
     # The name the printer advertises itself under over Bonjour, when it says.
     dns_sd_name: str | None = None
+    # True when the device advertises media-col and then stops answering IPP
+    # the moment a job carries one — a firmware fault that stops the printer's
+    # whole CUPS queue, so the backend drops the page size from jobs sent to
+    # it. None means the check couldn't be completed, which is not the same as
+    # a clean bill of health; see app/printers/media_col_probe.py.
+    media_col_broken: bool | None = None
 
 
 class CupsQueueDefaultsOut(BaseModel):

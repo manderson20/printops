@@ -112,6 +112,9 @@ export type Capabilities = {
    *  add it directly and print around PrintOps. null = the device answered
    *  neither marker, which is "unknown", not "off". */
   airprint_supported: boolean | null;
+  // True when the printer stops answering IPP if a job names a page size
+  // — see apps/api/app/printers/media_col_probe.py. Null when unchecked.
+  media_col_broken: boolean | null;
   dns_sd_name: string | null;
 };
 

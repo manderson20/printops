@@ -453,6 +453,22 @@ export default function PrintersPage() {
                                     )}
                                   </dd>
                                 </div>
+                                {printer.capabilities?.media_col_broken === true && (
+                                  <div>
+                                    {/* Only shown when it's true. On every
+                                        healthy printer this row would be a
+                                        line of jargon explaining nothing. */}
+                                    <dt className="text-xs text-zinc-500">Page size over IPP</dt>
+                                    <dd>
+                                      <Badge tone="warning">Not accepted</Badge>
+                                      <p className="mt-1 text-xs text-zinc-500">
+                                        This printer stops answering when a job names a page
+                                        size, so PrintOps leaves it off and the printer reads
+                                        the size from the document instead.
+                                      </p>
+                                    </dd>
+                                  </div>
+                                )}
                               </dl>
 
                               <div>

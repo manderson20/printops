@@ -5,6 +5,28 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.68.0] - 2026-08-24
+
+- **A printer that can't accept a page size no longer stops its own queue.**
+  The Graphic Arts Kyocera took itself off the air every time someone printed
+  from Acrobat: any job naming a page size made the printer stop answering,
+  which stops the whole CUPS queue with everyone else's work behind it. The
+  capability check now asks each printer whether it can accept a page size over
+  IPP, and for one that can't, PrintOps leaves the page size off — the printer
+  reads the size from the document instead, which is what it was going to do
+  anyway.
+- This is detected, not configured. Nothing to tick, it applies to any printer
+  with the same firmware fault, and it switches itself off again if a firmware
+  update fixes the device. A printer that couldn't be asked is left alone
+  rather than assumed broken. When it does apply, the printer's expanded row on
+  the **Printers** page says so, under **Page size over IPP**.
+- **You can now cancel a failed job.** A job PrintOps has marked failed is often
+  still sitting on the print server being retried — and being retried is how
+  one bad job stops a printer over and over. **Cancel** is now on those rows
+  too, and on anything else that hasn't printed yet. A job that already printed
+  still can't be cancelled, because there is nothing left to cancel, and held
+  jobs keep **Discard**.
+
 ## [0.67.0] - 2026-08-24
 
 - **You can now see which printers speak AirPrint.** A printer with AirPrint on

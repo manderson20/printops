@@ -275,18 +275,35 @@ async def cancel_job(
     db: AsyncSession = Depends(get_db),
     current_user: UserOut = Depends(get_current_user),
 ):
-    """Cancels a single in-flight job — only valid while it's still
-    "forwarding" (see Job.status): forwarded/failed/cancelled are already
-    terminal, and cancelling something that never started makes no sense.
-    For a printer backed up with jobs PrintOps can't individually see yet,
-    see POST /printers/{id}/purge-jobs instead."""
+    """Cancels a job's CUPS job — valid for anything that hasn't printed.
+
+    Not just "forwarding", which is what this accepted until 0.68.0. PrintOps
+    marks a job `failed` the moment its backend exits non-zero, but cupsd keeps
+    the job on the queue and retries it: on 2026-08-24 the Graphic Arts Kyocera
+    had a job that was `failed` in PrintOps and still on the queue eight hours
+    later, stopping the printer every time cupsd tried it again. Terminal in our
+    record is not the same as gone from the print server, and the admin looking
+    at that row needs to be able to get rid of it.
+
+    `forwarded` is the one status that is genuinely finished — the pages exist,
+    there is nothing left to cancel. Held jobs are spooled by PrintOps rather
+    than queued in CUPS and have their own Discard (see
+    app/routers/held_jobs.py).
+
+    For a printer backed up with jobs PrintOps can't individually see yet, see
+    POST /printers/{id}/purge-jobs instead."""
     job = await db.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    if job.status != "forwarding":
+    if job.status == "forwarded":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Job is already {job.status} — only in-flight jobs can be cancelled.",
+            detail="Job has already printed — there is nothing left to cancel.",
+        )
+    if job.status == "held":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Held jobs are discarded rather than cancelled.",
         )
     if job.cups_job_id is None:
         raise HTTPException(
@@ -300,6 +317,11 @@ async def cancel_job(
 
     job.status = "cancelled"
     job.error_message = f"Cancelled by {current_user.username}"
+    # scripts/cancel_cups_job.sh treats "already gone" as success, so this is
+    # reached whether the job was still on the queue or had finished retrying
+    # in between. Either way the admin's goal — this job is not coming back —
+    # now holds, and saying so is more use than a 400 about which of the two
+    # it was.
     job.completed_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(job)
