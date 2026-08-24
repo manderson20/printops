@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ApiError,
+  adminDiscardHeldJob,
+  adminReleaseHeldJob,
   cancelJob,
   listJobs,
   listPrinters,
@@ -29,6 +31,26 @@ type LoadState =
 
 type SortKey = "printer" | "status" | "submitted";
 
+// Why a job is waiting, in the words an admin would use. Quota is the one
+// that is deliberately theirs to release; the others are ordinarily released
+// by the person who sent them, at the printer.
+const HOLD_LABEL: Record<string, string> = {
+  quota: "Over quota",
+  pin_release: "Release at printer",
+  follow_me: "Follow-Me",
+  printer_offline: "Waiting for printer",
+};
+
+const HOLD_TONE: Record<string, "warning" | "info" | "neutral"> = {
+  quota: "warning",
+  pin_release: "info",
+  follow_me: "info",
+  // Not a warning: nothing is wrong with the job, and it goes on its own as
+  // soon as the printer answers. Releasing it by hand is possible but not
+  // something anyone needs to do.
+  printer_offline: "neutral",
+};
+
 const SELECT_CLASS =
   "rounded-lg border border-black/[.15] bg-white px-2 py-1 text-sm dark:border-white/[.2] dark:bg-black dark:text-zinc-50";
 
@@ -47,17 +69,33 @@ function JobsList() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const printerId = searchParams.get("printer_id") ?? "";
+  // Seeded from the URL so the retired /held-jobs route can redirect here
+  // with ?status=held and land on the same list it used to be.
+  const [statusFilter, setStatusFilter] = useState<JobStatus | "">(
+    (searchParams.get("status") as JobStatus | "") ?? "",
+  );
   const isAdmin = useCurrentUser()?.role === "admin";
 
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [printers, setPrinters] = useState<Printer[]>([]);
-  const [statusFilter, setStatusFilter] = useState<JobStatus | "">("");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
     key: "submitted",
     dir: "desc",
   });
   const [cancelling, setCancelling] = useState<Record<string, boolean>>({});
   const [cancelErrors, setCancelErrors] = useState<Record<string, string>>({});
+  // Held-job state, from the Held Jobs page this absorbs.
+  const [busyHold, setBusyHold] = useState<Record<string, string>>({});
+  const [holdErrors, setHoldErrors] = useState<Record<string, string>>({});
+  const [target, setTarget] = useState<Record<string, string>>({});
+
+  // A Follow-Me job was addressed to a virtual queue with no device behind
+  // it. The kiosk resolves that to whichever printer the person is standing
+  // at; an admin is not standing anywhere, so they have to say.
+  const followMePrinters = useMemo(
+    () => printers.filter((p) => p.follow_me_enabled && !p.is_virtual),
+    [printers],
+  );
 
   useEffect(() => {
     listPrinters({ includeArchived: true })
@@ -76,6 +114,57 @@ function JobsList() {
         }),
       );
   }, [printerId]);
+
+  function reload() {
+    listJobs({ printer_id: printerId || undefined, limit: 200 })
+      .then((jobs) => setState({ phase: "ok", jobs }))
+      .catch(() => undefined);
+  }
+
+  async function handleRelease(job: Job) {
+    setBusyHold((prev) => ({ ...prev, [job.id]: "releasing" }));
+    setHoldErrors((prev) => ({ ...prev, [job.id]: "" }));
+    try {
+      await adminReleaseHeldJob(job.id, target[job.id] || undefined);
+      reload();
+    } catch (err) {
+      setHoldErrors((prev) => ({
+        ...prev,
+        [job.id]: err instanceof ApiError ? err.message : "Failed to release job",
+      }));
+    } finally {
+      setBusyHold((prev) => ({ ...prev, [job.id]: "" }));
+    }
+  }
+
+  async function handleDiscard(job: Job) {
+    // Named, not a bare "are you sure": this destroys someone's queued
+    // document, and the person confirming is not the person who sent it.
+    const who = job.submitted_by ?? "someone";
+    const what = job.document_name ?? "this document";
+    if (
+      !confirm(
+        `Discard "${what}" from ${who} without printing it?\n\n` +
+          "The document is deleted and cannot be recovered. The job stays in " +
+          "the history and reports, marked cancelled.",
+      )
+    ) {
+      return;
+    }
+    setBusyHold((prev) => ({ ...prev, [job.id]: "discarding" }));
+    setHoldErrors((prev) => ({ ...prev, [job.id]: "" }));
+    try {
+      await adminDiscardHeldJob(job.id);
+      reload();
+    } catch (err) {
+      setHoldErrors((prev) => ({
+        ...prev,
+        [job.id]: err instanceof ApiError ? err.message : "Failed to discard job",
+      }));
+    } finally {
+      setBusyHold((prev) => ({ ...prev, [job.id]: "" }));
+    }
+  }
 
   function handlePrinterFilterChange(value: string) {
     const params = new URLSearchParams(searchParams);
@@ -179,6 +268,7 @@ function JobsList() {
             <option value="forwarding">Forwarding</option>
             <option value="forwarded">Forwarded</option>
             <option value="failed">Failed</option>
+            <option value="held">Held</option>
             <option value="cancelled">Cancelled</option>
           </select>
         </label>
@@ -191,6 +281,20 @@ function JobsList() {
           </button>
         )}
       </div>
+
+      {statusFilter === "held" && isAdmin && (
+        <p className="mb-4 max-w-4xl text-sm text-zinc-500">
+          A quota hold has always been an admin&rsquo;s to release — the
+          submitter&rsquo;s own PIN can&rsquo;t. A print-release hold is
+          normally released by whoever sent it, at the printer; releasing it
+          here is for when they can&rsquo;t, because their PIN isn&rsquo;t set
+          up yet or the address on the job doesn&rsquo;t match a person — which
+          is the case for a test page sent from this server. Releasing hands the
+          job to the printer as-is; it doesn&rsquo;t change or reset
+          anyone&rsquo;s quota. Discarding deletes the document for good, but
+          keeps the job in the history and reports.
+        </p>
+      )}
 
       {state.phase === "loading" && <Spinner label="Loading jobs…" />}
       {state.phase === "error" && <ErrorState>{state.message}</ErrorState>}
@@ -257,6 +361,16 @@ function JobsList() {
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-2">
                           <Badge tone={info.tone}>{info.label}</Badge>
+                          {/* "Held" on its own does not say what for, and the
+                              answer changes who is expected to act: a quota
+                              hold is an admin's to release, a print-release
+                              hold is the submitter's, and an offline hold
+                              needs nobody at all. */}
+                          {job.status === "held" && job.hold_reason && (
+                            <Badge tone={HOLD_TONE[job.hold_reason] ?? "neutral"}>
+                              {HOLD_LABEL[job.hold_reason] ?? "Held"}
+                            </Badge>
+                          )}
                           {isStuck && <Badge tone="warning">Stuck?</Badge>}
                         </div>
                         {job.status === "failed" && job.error_message && (
@@ -293,6 +407,58 @@ function JobsList() {
                             {cancelErrors[job.id] && (
                               <span className="max-w-[16rem] text-xs text-red-600 dark:text-red-400">
                                 {cancelErrors[job.id]}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {job.status === "held" && (
+                          <div className="flex flex-col items-start gap-1">
+                            <div className="flex items-center gap-2">
+                              {job.hold_reason === "follow_me" && (
+                                <select
+                                  className="rounded-md border border-black/[.08] bg-transparent px-2 py-1 text-xs dark:border-white/[.145]"
+                                  value={target[job.id] ?? ""}
+                                  onChange={(e) =>
+                                    setTarget((prev) => ({
+                                      ...prev,
+                                      [job.id]: e.target.value,
+                                    }))
+                                  }
+                                >
+                                  <option value="">Release at…</option>
+                                  {followMePrinters.map((printer) => (
+                                    <option key={printer.id} value={printer.id}>
+                                      {printer.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                              <Button
+                                variant="secondary"
+                                className="!px-3 !py-1 text-xs"
+                                disabled={
+                                  !!busyHold[job.id] ||
+                                  (job.hold_reason === "follow_me" && !target[job.id])
+                                }
+                                onClick={() => handleRelease(job)}
+                              >
+                                {busyHold[job.id] === "releasing" ? "Releasing…" : "Release"}
+                              </Button>
+                              {/* Destroys the document. Kept visually quieter
+                                  than Release so the printing action stays the
+                                  obvious one. */}
+                              <Button
+                                variant="danger"
+                                className="!px-3 !py-1 text-xs"
+                                disabled={!!busyHold[job.id]}
+                                onClick={() => handleDiscard(job)}
+                              >
+                                {busyHold[job.id] === "discarding" ? "Discarding…" : "Discard"}
+                              </Button>
+                            </div>
+                            {holdErrors[job.id] && (
+                              <span className="max-w-[16rem] text-xs text-red-600 dark:text-red-400">
+                                {holdErrors[job.id]}
                               </span>
                             )}
                           </div>

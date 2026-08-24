@@ -111,3 +111,34 @@ async def release_held_job(
     await db.commit()
     await db.refresh(job)
     return job
+
+
+@router.post("/{job_id}/discard", response_model=JobOut)
+async def discard_held_job(job_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Throws one held job away without printing it.
+
+    The deliberate counterpart to release. A hold otherwise sits until someone
+    releases it or Job.held_expires_at passes and the sweep in app/main.py
+    clears it — which is the right default, but leaves an admin no way to clear
+    a job nobody is coming back for (a duplicate sent three times, a document
+    submitted to the wrong printer) without waiting out the expiry.
+
+    Disposes of it exactly as that sweep does, so there is one meaning of a
+    discarded hold rather than two: the spool file is deleted, the row is kept
+    and marked cancelled. The job stays in history and in the reports — what is
+    destroyed is the document, not the record of it. That asymmetry is the
+    whole point, and it is why this cannot be a DELETE.
+    """
+    job = await db.get(Job, job_id)
+    if job is None or job.status != "held":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Held job not found.")
+
+    if job.held_file_path:
+        Path(job.held_file_path).unlink(missing_ok=True)
+    job.status = "cancelled"
+    job.error_message = "Discarded without printing"
+    job.completed_at = datetime.now(UTC)
+    job.held_file_path = None
+    await db.commit()
+    await db.refresh(job)
+    return job

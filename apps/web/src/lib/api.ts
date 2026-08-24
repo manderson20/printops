@@ -1200,6 +1200,13 @@ export async function adminReleaseHeldJob(
   return response.json();
 }
 
+export async function adminDiscardHeldJob(jobId: string): Promise<Job> {
+  const response = await authorizedFetch(`/api/v1/held-jobs/${jobId}/discard`, {
+    method: "POST",
+  });
+  return response.json();
+}
+
 export type UserUsage = {
   email: string | null;
   name: string | null;

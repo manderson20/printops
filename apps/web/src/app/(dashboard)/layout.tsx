@@ -56,7 +56,6 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           ...ADMIN_ONLY_NAV_LINKS,
           { href: "/usage", label: "Usage" },
           { href: "/devices", label: "Devices" },
-          { href: "/held-jobs", label: "Held Jobs" },
           { href: "/settings", label: "Settings" },
           { href: "/updates", label: "Updates" },
         ]
