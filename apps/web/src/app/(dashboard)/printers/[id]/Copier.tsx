@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import {
   ApiError,
   disablePrinterCopier,
@@ -10,6 +9,7 @@ import {
   type MfpDevice,
   type Printer,
 } from "@/lib/api";
+import { CopierPanel } from "./CopierPanel";
 import { formatRelativeTime } from "@/lib/format";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -80,74 +80,76 @@ export function CopierCard({
   }
 
   return (
-    <Card>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <CardTitle className="mb-1">Copier</CardTitle>
-          <p className="text-sm text-zinc-500">
-            {printer.copier_enabled
-              ? "This machine is tracked as a copier: walk-up copying, per-account counters and staff codes."
-              : "Turn this on if people also walk up to this machine and copy. PrintOps will then track copies per person alongside their printing."}
-          </p>
-        </div>
-        <Button
-          variant={printer.copier_enabled ? "secondary" : "primary"}
-          disabled={busy}
-          onClick={() => toggle(!printer.copier_enabled)}
-        >
-          {busy
-            ? "Saving…"
-            : printer.copier_enabled
-              ? "Stop tracking copies"
-              : "Track copies"}
-        </Button>
-      </div>
-
-      {error && (
-        <div className="mt-3">
-          <ErrorState>{error}</ErrorState>
-        </div>
-      )}
-
-      {printer.copier_enabled && device && (
-        <div className="mt-4 flex flex-col gap-3 border-t border-black/[.08] pt-4 dark:border-white/[.145]">
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <Badge tone="info">{device.connector_type}</Badge>
-            {device.serial_number && (
-              <span className="text-zinc-500">
-                Serial {device.serial_number}
-              </span>
-            )}
-            {device.page_count_total != null && (
-              <span className="text-zinc-500">
-                Meter {device.page_count_total.toLocaleString()}
-                {device.page_count_checked_at &&
-                  ` · read ${formatRelativeTime(device.page_count_checked_at)}`}
-              </span>
-            )}
-          </div>
+    <div className="flex flex-col gap-6">
+      <Card>
+        <div className="flex items-start justify-between gap-4">
           <div>
-            <Link
-              href={`/mfp-devices/${device.id}`}
-              className="text-sm text-blue-700 underline dark:text-blue-400"
-            >
-              Copy tracking, staff accounts and counters →
-            </Link>
+            <CardTitle className="mb-1">Copier</CardTitle>
+            <p className="text-sm text-zinc-500">
+              {printer.copier_enabled
+                ? "This machine is tracked as a copier: walk-up copying, per-account counters and staff codes."
+                : "Turn this on if people also walk up to this machine and copy. PrintOps will then track copies per person alongside their printing."}
+            </p>
           </div>
+          <Button
+            variant={printer.copier_enabled ? "secondary" : "primary"}
+            disabled={busy}
+            onClick={() => toggle(!printer.copier_enabled)}
+          >
+            {busy
+              ? "Saving…"
+              : printer.copier_enabled
+                ? "Stop tracking copies"
+                : "Track copies"}
+          </Button>
         </div>
-      )}
 
-      {printer.copier_enabled && !device && !loaded && (
-        <p className="mt-3 text-sm text-zinc-500">Loading copier details…</p>
-      )}
+        {error && (
+          <div className="mt-3">
+            <ErrorState>{error}</ErrorState>
+          </div>
+        )}
 
-      {printer.copier_enabled && !device && loaded && (
-        <p className="mt-3 text-sm text-zinc-500">
-          This printer is marked as a copier, but its copier record is missing.
-          Turning copy tracking off and on again will create a fresh one — any
-          previous accounting stayed with the record that was removed.
-        </p>
+        {printer.copier_enabled && device && (
+          <div className="mt-4 flex flex-col gap-3 border-t border-black/[.08] pt-4 dark:border-white/[.145]">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Badge tone="info">{device.connector_type}</Badge>
+              {device.serial_number && (
+                <span className="text-zinc-500">
+                  Serial {device.serial_number}
+                </span>
+              )}
+              {device.page_count_total != null && (
+                <span className="text-zinc-500">
+                  Meter {device.page_count_total.toLocaleString()}
+                  {device.page_count_checked_at &&
+                    ` · read ${formatRelativeTime(device.page_count_checked_at)}`}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {printer.copier_enabled && !device && !loaded && (
+          <p className="mt-3 text-sm text-zinc-500">Loading copier details…</p>
+        )}
+
+        {printer.copier_enabled && !device && loaded && (
+          <p className="mt-3 text-sm text-zinc-500">
+            This printer is marked as a copier, but its copier record is missing.
+            Turning copy tracking off and on again will create a fresh one — any
+            previous accounting stayed with the record that was removed.
+          </p>
+        )}
+      </Card>
+
+      {/* The copier's own settings live below the switch rather than a
+          click away: copy tracking, staff accounts, counters and owner
+          attribution. Kept outside the card above so these read as the
+          machine's settings, not as detail nested under a toggle. */}
+      {printer.copier_enabled && device && (
+        <CopierPanel deviceId={device.id} printer={printer} />
       )}
-    </Card>
+    </div>
   );
 }

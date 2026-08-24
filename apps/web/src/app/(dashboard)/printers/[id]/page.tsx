@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import {
   ApiError,
   checkPrinterStatus,
-  testPrintPrinter,
   confirmPrinterRedirect,
   dismissPrinterRedirect,
   getCupsQueueDefaults,
@@ -25,7 +24,6 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { usePrinterDetail } from "./PrinterDetailContext";
-import { CopierCard } from "./Copier";
 import { RollMediaCard } from "./RollMedia";
 import { SnmpCountersCard } from "./SnmpCounters";
 import { UsageHistoryCard } from "./UsageHistory";
@@ -130,14 +128,6 @@ function CupsQueueDefaultCheck({
   );
 }
 
-// The API appends its explanation after an em dash when a test page is held
-// rather than printed — see _test_print_message in app/routers/printers.py.
-function isHeldTestPrint(message: string) {
-  return (
-    message.includes("being held") || message.includes("holds jobs for release")
-  );
-}
-
 export default function PrinterOverviewTab() {
   const { printer, setPrinter } = usePrinterDetail();
   const isAdmin = useCurrentUser()?.role === "admin";
@@ -162,11 +152,6 @@ export default function PrinterOverviewTab() {
   const [checkingStatus, setCheckingStatus] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [redirectBusy, setRedirectBusy] = useState(false);
-  const [testPrint, setTestPrint] = useState<
-    | { phase: "idle" }
-    | { phase: "sending" }
-    | { phase: "done"; message: string }
-  >({ phase: "idle" });
 
   const caps = printer.capabilities;
 
@@ -243,23 +228,6 @@ export default function PrinterOverviewTab() {
     }
   }
 
-  // The same endpoint the printers list uses, on the page you are already
-  // looking at — the answer to "does this machine actually print" should not
-  // require going back to the list to find its row.
-  async function handleTestPrint() {
-    setTestPrint({ phase: "sending" });
-    setActionError(null);
-    try {
-      const result = await testPrintPrinter(printer.id);
-      setTestPrint({ phase: "done", message: result.message });
-    } catch (err) {
-      setTestPrint({ phase: "idle" });
-      setActionError(
-        err instanceof ApiError ? err.message : "Test print failed",
-      );
-    }
-  }
-
   async function handleRediscover() {
     setRediscovering(true);
     setActionError(null);
@@ -310,13 +278,6 @@ export default function PrinterOverviewTab() {
             <div className="flex items-center gap-2">
               <Button
                 variant="secondary"
-                onClick={handleTestPrint}
-                disabled={testPrint.phase === "sending"}
-              >
-                {testPrint.phase === "sending" ? "Sending…" : "Print Test Page"}
-              </Button>
-              <Button
-                variant="secondary"
                 onClick={handleCheckStatus}
                 disabled={checkingStatus}
               >
@@ -334,21 +295,6 @@ export default function PrinterOverviewTab() {
                     Checked {formatRelativeTime(printer.status_checked_at)}
                   </span>
                 </div>
-                {testPrint.phase === "done" && (
-                  // The API says more than "sent" when the page is being held
-                  // rather than printed — on a release printer nothing comes
-                  // out until someone releases it, and that is the whole
-                  // question a test print asks.
-                  <p
-                    className={
-                      isHeldTestPrint(testPrint.message)
-                        ? "text-xs text-amber-700 dark:text-amber-400"
-                        : "text-xs text-emerald-700 dark:text-emerald-400"
-                    }
-                  >
-                    {testPrint.message}
-                  </p>
-                )}
                 {printer.pending_redirect && (
                   <div className="rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/40">
                     <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
@@ -636,10 +582,6 @@ export default function PrinterOverviewTab() {
             </div>
           )}
         </Card>
-      )}
-
-      {!printer.is_virtual && (
-        <CopierCard printer={printer} onUpdate={setPrinter} />
       )}
 
       {!printer.is_virtual && (

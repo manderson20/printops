@@ -8,6 +8,7 @@ import {
   archivePrinter,
   deletePrinter,
   getPrinter,
+  testPrintPrinter,
   unarchivePrinter,
   type Printer,
 } from "@/lib/api";
@@ -26,6 +27,7 @@ const TAB_WIKI_ANCHORS: Record<string, string> = {
   "": "overview-tab",
   "/connection": "connection-tab",
   "/release": "release-and-quotas-tab",
+  "/copier": "copier-tab",
   "/toner": "toner-tab",
   "/syslog": "syslog-tab",
   "/credentials": "credentials-tab",
@@ -41,6 +43,7 @@ const ALL_TABS = [
   { href: "", label: "Overview" },
   { href: "/connection", label: "Connection" },
   { href: "/release", label: "Release & Quotas" },
+  { href: "/copier", label: "Copier" },
   { href: "/toner", label: "Toner" },
   { href: "/syslog", label: "Syslog" },
   { href: "/credentials", label: "Credentials" },
@@ -49,9 +52,15 @@ const ALL_TABS = [
 
 // A virtual Follow-Me queue has no real device — Toner/Syslog/Credentials
 // are all meaningless for one (no cartridges, no device forwarding logs, no
-// web login to store). Connection is kept: it's the MDM push info clients
+// web login to store), and a queue that forwards to other printers has no
+// glass of its own to copy from. Connection is kept: it's the MDM push info clients
 // need to add this queue, which is the whole point of a virtual queue.
-const VIRTUAL_HIDDEN_TABS = new Set(["/toner", "/syslog", "/credentials"]);
+const VIRTUAL_HIDDEN_TABS = new Set([
+  "/toner",
+  "/syslog",
+  "/credentials",
+  "/copier",
+]);
 
 function tabsFor(printer: Printer) {
   return printer.is_virtual
@@ -59,11 +68,44 @@ function tabsFor(printer: Printer) {
     : ALL_TABS;
 }
 
+// The API appends its explanation after an em dash when a test page is held
+// rather than printed — see _test_print_message in app/routers/printers.py.
+function isHeldTestPrint(message: string) {
+  return (
+    message.includes("being held") || message.includes("holds jobs for release")
+  );
+}
+
 export default function PrinterDetailLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useParams<{ id: string }>();
   const isAdmin = useCurrentUser()?.role === "admin";
+
+  // "Does this machine actually print?" is the question an admin has on every
+  // tab, not just Overview — it is as likely to be asked while looking at the
+  // toner levels or the copier's counters as at the status card. So the button
+  // lives in the tab bar, which is the one thing on screen no matter which tab
+  // is open.
+  const [testPrint, setTestPrint] = useState<
+    | { phase: "idle" }
+    | { phase: "sending" }
+    | { phase: "done"; message: string }
+    | { phase: "error"; message: string }
+  >({ phase: "idle" });
+
+  async function handleTestPrint(printerId: string) {
+    setTestPrint({ phase: "sending" });
+    try {
+      const result = await testPrintPrinter(printerId);
+      setTestPrint({ phase: "done", message: result.message });
+    } catch (err) {
+      setTestPrint({
+        phase: "error",
+        message: err instanceof ApiError ? err.message : "Test print failed",
+      });
+    }
+  }
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [archiving, setArchiving] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
@@ -197,7 +239,55 @@ export default function PrinterDetailLayout({ children }: { children: ReactNode 
               </Link>
             );
           })}
+
+          {/* Sits at the end of the tab row, pushed right, so it reads as an
+              action on this machine rather than another place to navigate to.
+              Hidden for a virtual Follow-Me queue: there is no device at the
+              other end to put a page out. */}
+          {!state.printer.is_virtual && (
+            <div className="ml-auto flex shrink-0 items-center gap-2 pb-2 pl-4">
+              {testPrint.phase === "done" && (
+                <span
+                  className={
+                    isHeldTestPrint(testPrint.message)
+                      ? "hidden text-xs text-amber-700 sm:inline dark:text-amber-400"
+                      : "hidden text-xs text-emerald-700 sm:inline dark:text-emerald-400"
+                  }
+                >
+                  {testPrint.message}
+                </span>
+              )}
+              {testPrint.phase === "error" && (
+                <span className="hidden text-xs text-red-700 sm:inline dark:text-red-400">
+                  {testPrint.message}
+                </span>
+              )}
+              <Button
+                variant="secondary"
+                onClick={() => handleTestPrint(state.printer.id)}
+                disabled={testPrint.phase === "sending"}
+              >
+                {testPrint.phase === "sending" ? "Sending…" : "Print Test Page"}
+              </Button>
+            </div>
+          )}
         </nav>
+
+        {/* On a narrow screen the message cannot sit beside the button, so it
+            gets its own line rather than being dropped. */}
+        {(testPrint.phase === "done" || testPrint.phase === "error") && (
+          <p
+            className={`mb-4 text-xs sm:hidden ${
+              testPrint.phase === "error"
+                ? "text-red-700 dark:text-red-400"
+                : isHeldTestPrint(testPrint.message)
+                  ? "text-amber-700 dark:text-amber-400"
+                  : "text-emerald-700 dark:text-emerald-400"
+            }`}
+          >
+            {testPrint.message}
+          </p>
+        )}
 
         <div className="min-w-0 flex-1">{children}</div>
       </div>
