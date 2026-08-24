@@ -26,6 +26,7 @@ import {
   type DefaultOwnerAttributionResult,
   type DeviceCapabilities,
   type MfpDevice,
+  type Printer,
   type DeviceUser,
   type ProvisionedAccount,
   type ProvisioningPreview,
@@ -47,7 +48,13 @@ type LoadState =
   | { phase: "ok"; device: MfpDevice }
   | { phase: "error"; message: string };
 
-const EDITABLE_FIELDS = [
+// What the machine is and where it lives belongs to the printer, not to the
+// copier half of it. Editing these here would PATCH only the copier record,
+// so the same machine could end up with two addresses from what is supposed
+// to be one page — the copier connector talking to one, printing going to the
+// other. Shown read-only, sourced from the printer, with the Connection tab as
+// the one place they change (app/routers/printers.py mirrors an edit across).
+const SHARED_FIELDS = [
   ["name", "Name"],
   ["model", "Model"],
   ["serial_number", "Serial Number"],
@@ -56,8 +63,14 @@ const EDITABLE_FIELDS = [
   ["building", "Building"],
   ["room", "Room"],
   ["department", "Department"],
-  ["notes", "Notes"],
 ] as const;
+
+// Notes are the copier's own — nothing on the printer duplicates them.
+const COPIER_FIELDS = [["notes", "Notes"]] as const;
+
+// A copier record with no printer still has to be editable somewhere: it owns
+// these fields outright, because there is no printer to take them from.
+const EDITABLE_FIELDS = [...SHARED_FIELDS, ...COPIER_FIELDS] as const;
 
 const CAPABILITY_LABELS: [keyof DeviceCapabilities, string][] = [
   ["walkup_copy_accounting", "Walk-up copy accounting"],
@@ -90,7 +103,15 @@ function capabilityTone(value: boolean | null): "success" | "danger" | "neutral"
  * — provisioning, counter polls, owner attribution — is the behaviour that was
  * already working.
  */
-export function CopierPanel({ deviceId }: { deviceId: string }) {
+export function CopierPanel({
+  deviceId,
+  printer,
+}: {
+  deviceId: string;
+  /** The machine this copier is half of. Omitted only for a legacy copier
+   *  record with no printer linked, which still owns its own fields. */
+  printer?: Printer;
+}) {
   const isAdmin = useCurrentUser()?.role === "admin";
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [form, setForm] = useState<Record<string, string>>({});
@@ -401,7 +422,24 @@ export function CopierPanel({ deviceId }: { deviceId: string }) {
       <Card>
         <CardTitle className="mb-4">Details</CardTitle>
         <div className="grid grid-cols-2 gap-4">
-          {EDITABLE_FIELDS.map(([field, label]) => (
+          {printer
+            ? SHARED_FIELDS.map(([field, label]) => (
+                <Field key={field} label={label}>
+                  <Input value={printer[field] ?? ""} disabled readOnly />
+                </Field>
+              ))
+            : SHARED_FIELDS.map(([field, label]) => (
+                <Field key={field} label={label}>
+                  <Input
+                    value={form[field] ?? ""}
+                    disabled={!isAdmin}
+                    onChange={(e) =>
+                      setForm((prev) => ({ ...prev, [field]: e.target.value }))
+                    }
+                  />
+                </Field>
+              ))}
+          {COPIER_FIELDS.map(([field, label]) => (
             <Field key={field} label={label}>
               <Input
                 value={form[field] ?? ""}
@@ -411,6 +449,19 @@ export function CopierPanel({ deviceId }: { deviceId: string }) {
             </Field>
           ))}
         </div>
+        {printer && (
+          <p className="mt-3 text-xs text-zinc-500">
+            Name, model, serial, address and location belong to the machine
+            itself — change them on the{" "}
+            <Link
+              href={`/printers/${printer.id}/connection`}
+              className="text-accent underline"
+            >
+              Connection
+            </Link>{" "}
+            tab and the copier follows.
+          </p>
+        )}
         {actionError && <ErrorState>{actionError}</ErrorState>}
         {isAdmin && (
           <Button onClick={handleSave} disabled={saving} className="mt-4">

@@ -251,3 +251,44 @@ async def test_moving_a_copier_clears_the_flag_on_the_printer_it_left(
     joined = client.get(f"/api/v1/printers/{other_id}", headers=auth_headers).json()
     assert left["copier_enabled"] is False, "the printer it left is no longer a copier"
     assert joined["copier_enabled"] is True
+
+
+async def test_moving_the_printer_moves_the_copier_with_it(
+    client, auth_headers, printer_id, db_session_factory
+):
+    """One machine cannot be at two addresses.
+
+    The copier keeps its own address column, and the copier connector dials
+    that one while printing goes to the printer's. Before this, re-addressing a
+    printer left the copier talking to where the machine used to be — and the
+    machine's page showed both numbers without saying which was real. The
+    copier panel now shows these as the printer's values, which is only honest
+    if an edit actually reaches the copier row.
+    """
+    client.post(f"/api/v1/printers/{printer_id}/copier/enable", headers=auth_headers)
+
+    response = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        json={"ip_address": "10.10.3.99", "room": "Library", "model": "bizhub C750i"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200, response.text
+
+    device = await _device_for(db_session_factory, printer_id)
+    assert device is not None
+    assert device.ip_address == "10.10.3.99"
+    assert device.room == "Library"
+    assert device.model == "bizhub C750i"
+
+
+async def test_a_printer_with_no_copier_is_left_alone(client, auth_headers, printer_id):
+    """The mirror must not conjure a copier for a printer that isn't one."""
+    response = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        json={"ip_address": "10.10.3.98"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200, response.text
+
+    copier = client.get(f"/api/v1/printers/{printer_id}/copier", headers=auth_headers)
+    assert copier.json() is None

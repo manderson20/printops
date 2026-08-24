@@ -148,7 +148,7 @@ export function CopierCard({
           attribution. Kept outside the card above so these read as the
           machine's settings, not as detail nested under a toggle. */}
       {printer.copier_enabled && device && (
-        <CopierPanel deviceId={device.id} />
+        <CopierPanel deviceId={device.id} printer={printer} />
       )}
     </div>
   );

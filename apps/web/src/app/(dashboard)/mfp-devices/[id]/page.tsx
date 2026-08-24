@@ -2,41 +2,67 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getMfpDevice } from "@/lib/api";
+import { getMfpDevice, type MfpDevice } from "@/lib/api";
+import { CopierPanel } from "../../printers/[id]/CopierPanel";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
 
-/** A copier is part of its printer now, so this sends you to the printer.
+/** Copiers are no longer a place of their own — see ../page.tsx.
  *
- * Kept as a redirect rather than deleted: these links are in people's
- * bookmarks and in the address bar of anyone who was on this page when the
- * change shipped, and a 404 would tell them their copier had been removed —
- * which, given what an admin knows about how much history hangs off a copier,
- * is an alarming thing to be told incorrectly.
+ * A copier that belongs to a printer is managed on that printer's Copier tab,
+ * so this route forwards there and old links keep working.
  *
- * The lookup is needed because the URL knows the copier's id and not the
- * printer's.
+ * A copier record with no printer linked is a different case. Nothing forwards
+ * it anywhere, and with the copier list gone this URL is the only way back to
+ * it, so it is rendered here in full rather than turned into a dead end. New
+ * ones can no longer be made — a copier is created by switching one on for a
+ * printer — but any that predate that still have to be manageable.
  */
-export default function CopierMoved() {
+export default function MfpDeviceRedirectPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<
+    | { phase: "loading" }
+    | { phase: "unlinked"; device: MfpDevice }
+    | { phase: "error"; message: string }
+  >({ phase: "loading" });
 
   useEffect(() => {
+    let active = true;
     getMfpDevice(params.id)
       .then((device) => {
+        if (!active) return;
         if (device.printer_id) {
           router.replace(`/printers/${device.printer_id}`);
         } else {
-          setError(
-            "This copier is not linked to a printer, so it has no page to go to. " +
-              "Link it to one from the printer's page, under Copier.",
-          );
+          setState({ phase: "unlinked", device });
         }
       })
-      .catch(() => setError("That copier could not be found."));
+      .catch(() =>
+        active
+          ? setState({ phase: "error", message: "That copier could not be found." })
+          : undefined,
+      );
+    return () => {
+      active = false;
+    };
   }, [params.id, router]);
 
-  if (error) return <ErrorState>{error}</ErrorState>;
-  return <Spinner label="Taking you to this printer…" />;
+  if (state.phase === "error") {
+    return <ErrorState>{state.message}</ErrorState>;
+  }
+
+  if (state.phase === "unlinked") {
+    return (
+      <div className="flex w-full flex-col gap-6">
+        <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          This copier is not linked to a printer, so it has no machine page of
+          its own. Its settings are below.
+        </div>
+        <CopierPanel deviceId={state.device.id} />
+      </div>
+    );
+  }
+
+  return <Spinner />;
 }

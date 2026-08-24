@@ -327,6 +327,39 @@ async def get_printer(
     return out
 
 
+# A copier and its printer are one machine, so the fields that describe where
+# that machine is and what it is must not be allowed to disagree. The copier
+# record keeps its own columns (it predates the merge, and an unlinked record
+# still relies on them), so an edit to the printer is mirrored across rather
+# than read through a join. Without this, changing a printer's address on the
+# Connection tab left the copier connector talking to the old one — the copier
+# panel shows these as the printer's values, and this is what makes that true.
+SHARED_WITH_COPIER = {
+    "name": "name",
+    "model": "model",
+    "serial_number": "serial_number",
+    "ip_address": "ip_address",
+    "hostname": "hostname",
+    "building": "building",
+    "room": "room",
+    "department": "department",
+}
+
+
+async def _mirror_to_copier(db: AsyncSession, printer: Printer, changed: set[str]) -> None:
+    shared = changed & SHARED_WITH_COPIER.keys()
+    if not shared:
+        return
+    device = (
+        await db.execute(select(MfpDevice).where(MfpDevice.printer_id == printer.id))
+    ).scalars().first()
+    if device is None:
+        return
+    for field in shared:
+        setattr(device, SHARED_WITH_COPIER[field], getattr(printer, field))
+
+
+
 @router.patch(
     "/{printer_id}", response_model=PrinterOut, dependencies=[Depends(require_role("admin"))]
 )
@@ -393,6 +426,7 @@ async def update_printer(
     # lost/reissued kiosk) is POST /{id}/regenerate-release-token.
     if (printer.release_required or printer.follow_me_enabled) and not printer.release_token:
         printer.release_token = secrets.token_urlsafe(16)
+    await _mirror_to_copier(db, printer, set(updates.keys()))
     await db.commit()
     await db.refresh(printer)
     if QUEUE_AFFECTING_FIELDS & updates.keys():
