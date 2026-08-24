@@ -5,6 +5,25 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.65.0] - 2026-08-24
+
+- **Held jobs are now part of Jobs.** The separate **Held Jobs** menu item is
+  gone. A held job is an ordinary job that hasn't printed yet, so it now sits
+  in the Jobs list with everything else — choose **Held** in the status filter
+  to see just those. Each one shows why it is waiting: over quota, waiting to
+  be released at the printer, Follow-Me, or waiting for a printer that is
+  switched off.
+- **Release** is on the job's own row, in the Actions column, exactly as it was
+  before. Follow-Me jobs still ask which printer to release at.
+- **Discard** is new. It throws a held job away without printing it, for the
+  duplicate sent three times or the document sent to the wrong printer that
+  nobody is coming back for. It deletes the document and cannot be undone, so
+  it asks first and names the document and who sent it. **The job itself stays
+  in the history and in the reports** — what is deleted is the document, not
+  the record of it.
+- Old **Held Jobs** links and bookmarks now open the Jobs list filtered to
+  held, so nothing anyone wrote down stops working.
+
 ## [0.64.2] - 2026-08-24
 
 - **Grey pages are no longer counted, or charged, as colour.** A colour job
