@@ -189,8 +189,10 @@ async def test_an_existing_copier_is_adopted_rather_than_duplicated(
 
 
 async def test_only_an_admin_can_change_what_a_machine_is(client, printer_id):
-    assert client.post(f"/api/v1/printers/{printer_id}/copier/enable").status_code in (401, 403)
-    assert client.post(f"/api/v1/printers/{printer_id}/copier/disable").status_code in (401, 403)
+    enable = client.post(f"/api/v1/printers/{printer_id}/copier/enable")
+    disable = client.post(f"/api/v1/printers/{printer_id}/copier/disable")
+    assert enable.status_code in (401, 403)
+    assert disable.status_code in (401, 403)
 
 
 async def test_deleting_the_copier_clears_the_flag(
@@ -202,10 +204,8 @@ async def test_deleting_the_copier_clears_the_flag(
         f"/api/v1/printers/{printer_id}/copier/enable", headers=auth_headers
     ).json()
 
-    assert (
-        client.delete(f"/api/v1/mfp-devices/{device['id']}", headers=auth_headers).status_code
-        == 204
-    )
+    deleted = client.delete(f"/api/v1/mfp-devices/{device['id']}", headers=auth_headers)
+    assert deleted.status_code == 204
 
     printer = client.get(f"/api/v1/printers/{printer_id}", headers=auth_headers).json()
     assert printer["copier_enabled"] is False

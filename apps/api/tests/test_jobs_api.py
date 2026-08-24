@@ -544,14 +544,12 @@ async def test_include_mode_ignores_a_blanket_quota_row(
     """A blanket row left over from a stint in exclude mode must not cap
     anyone once the printer is back in include mode — otherwise flipping the
     toggle back wouldn't actually let the school print again."""
-    assert (
-        client.post(
-            f"/api/v1/printers/{printer_id}/quotas",
-            headers=auth_headers,
-            json={"user_email": None, "period": "monthly", "page_limit": 10},
-        ).status_code
-        == 201
+    blanket = client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": None, "period": "monthly", "page_limit": 10},
     )
+    assert blanket.status_code == 201
     client.put("/api/v1/settings/quotas", headers=auth_headers, json={"enabled": True})
 
     _use_up_quota(client, backend_headers, printer_id, "matt@example.org", 50)
@@ -569,30 +567,24 @@ async def test_exclude_mode_holds_unlisted_user_and_lets_exempt_user_through(
 ):
     """The whole point of the feature: one blanket limit, and the people
     named on the printer are the ones who get out of it."""
-    assert (
-        client.patch(
-            f"/api/v1/printers/{printer_id}",
-            headers=auth_headers,
-            json={"quota_mode": "exclude"},
-        ).status_code
-        == 200
+    mode = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"quota_mode": "exclude"},
     )
-    assert (
-        client.post(
-            f"/api/v1/printers/{printer_id}/quotas",
-            headers=auth_headers,
-            json={"user_email": None, "period": "monthly", "page_limit": 10},
-        ).status_code
-        == 201
+    assert mode.status_code == 200
+    blanket = client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": None, "period": "monthly", "page_limit": 10},
     )
-    assert (
-        client.post(
-            f"/api/v1/printers/{printer_id}/quotas",
-            headers=auth_headers,
-            json={"user_email": "matt@example.org", "period": "monthly", "page_limit": None},
-        ).status_code
-        == 201
+    assert blanket.status_code == 201
+    exemption = client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        headers=auth_headers,
+        json={"user_email": "matt@example.org", "period": "monthly", "page_limit": None},
     )
+    assert exemption.status_code == 201
     client.put("/api/v1/settings/quotas", headers=auth_headers, json={"enabled": True})
 
     # Both are well past the blanket limit; only the un-exempt one is held.
