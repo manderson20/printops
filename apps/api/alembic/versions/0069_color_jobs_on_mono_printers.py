@@ -15,6 +15,17 @@ its rows untouched, because rewriting a real colour printer's history to
 monochrome would be the same mistake pointing the other way. Not reversible in
 the strict sense — the downgrade cannot know which rows it changed — so the
 downgrade is a no-op rather than a guess that would corrupt good data.
+
+The limit worth naming: a job row records which printer *entry* it went to,
+not which physical machine. If colour hardware were swapped for mono hardware
+under one entry, this would rewrite the old machine's genuine colour jobs.
+Nothing distinguishes those rows, so the bound below is the honest one — a job
+cannot predate the entry it belongs to. On this server the question is settled
+by operation rather than by data: every printer entry was created 2026-07-02/04
+when PrintOps was installed, every affected job postdates that, and the district
+confirms no printer has been swapped since — the one hardware change was RM 502,
+replaced with an identical model, and that printer is colour, so it is not in
+the set this touches at all.
 """
 
 from collections.abc import Sequence
@@ -36,6 +47,7 @@ def upgrade() -> None:
          WHERE jobs.printer_id = printers.id
            AND jobs.color_mode = 'color'
            AND printers.capabilities ->> 'color_supported' = 'false'
+           AND jobs.created_at >= printers.created_at
         """
     )
 
