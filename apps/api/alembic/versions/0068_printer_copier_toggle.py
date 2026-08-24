@@ -47,8 +47,23 @@ def upgrade() -> None:
         WHERE id IN (SELECT printer_id FROM mfp_devices WHERE printer_id IS NOT NULL)
         """
     )
+    # One copier per printer, enforced in the database rather than assumed by
+    # the code that reads it. The printer page fetches "the copier for this
+    # printer" with scalar_one_or_none(), which raises on a second row — so a
+    # duplicate link, whether left by the older create/update API or by two
+    # enable requests racing, would turn both the copier panel and the enable
+    # button into a 500. Unique on a nullable column, so printers with no
+    # copier are unaffected: SQL lets NULLs repeat.
+    op.create_index(
+        "uq_mfp_devices_printer_id",
+        "mfp_devices",
+        ["printer_id"],
+        unique=True,
+        postgresql_where=sa.text("printer_id IS NOT NULL"),
+    )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
+    op.drop_index("uq_mfp_devices_printer_id", table_name="mfp_devices")
     op.drop_column("printers", "copier_enabled")

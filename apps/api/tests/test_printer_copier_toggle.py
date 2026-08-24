@@ -191,3 +191,63 @@ async def test_an_existing_copier_is_adopted_rather_than_duplicated(
 async def test_only_an_admin_can_change_what_a_machine_is(client, printer_id):
     assert client.post(f"/api/v1/printers/{printer_id}/copier/enable").status_code in (401, 403)
     assert client.post(f"/api/v1/printers/{printer_id}/copier/disable").status_code in (401, 403)
+
+
+async def test_deleting_the_copier_clears_the_flag(
+    client, auth_headers, printer_id, db_session_factory
+):
+    """The old copier API can still remove a link. Left saying true, the
+    printer page asks for a copier that no longer exists."""
+    device = client.post(
+        f"/api/v1/printers/{printer_id}/copier/enable", headers=auth_headers
+    ).json()
+
+    assert (
+        client.delete(f"/api/v1/mfp-devices/{device['id']}", headers=auth_headers).status_code
+        == 204
+    )
+
+    printer = client.get(f"/api/v1/printers/{printer_id}", headers=auth_headers).json()
+    assert printer["copier_enabled"] is False
+
+
+async def test_creating_a_copier_against_a_printer_sets_the_flag(client, auth_headers, printer_id):
+    response = client.post(
+        "/api/v1/mfp-devices",
+        headers=auth_headers,
+        json={
+            "name": "Added the old way",
+            "printer_id": printer_id,
+            "connector_type": "generic_csv",
+        },
+    )
+    assert response.status_code == 201, response.text
+
+    printer = client.get(f"/api/v1/printers/{printer_id}", headers=auth_headers).json()
+    assert printer["copier_enabled"] is True
+
+
+async def test_moving_a_copier_clears_the_flag_on_the_printer_it_left(
+    client, auth_headers, printer_id, db_session_factory
+):
+    async with db_session_factory() as session:
+        other = Printer(id=uuid.uuid4(), name="Another Printer", ip_address="10.0.0.77")
+        session.add(other)
+        await session.commit()
+        other_id = str(other.id)
+
+    device = client.post(
+        f"/api/v1/printers/{printer_id}/copier/enable", headers=auth_headers
+    ).json()
+
+    moved = client.patch(
+        f"/api/v1/mfp-devices/{device['id']}",
+        headers=auth_headers,
+        json={"printer_id": other_id},
+    )
+    assert moved.status_code == 200, moved.text
+
+    left = client.get(f"/api/v1/printers/{printer_id}", headers=auth_headers).json()
+    joined = client.get(f"/api/v1/printers/{other_id}", headers=auth_headers).json()
+    assert left["copier_enabled"] is False, "the printer it left is no longer a copier"
+    assert joined["copier_enabled"] is True

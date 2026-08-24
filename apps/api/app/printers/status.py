@@ -153,11 +153,13 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
         printer.status = status
         printer.status_reasons = [r for r in result.state_reasons if r != "none"] or None
         printer.status_message = result.state_message or message
-        if status == "online":
-            # Last *reachable*, not last checked. Without it, a printer that
-            # has never answered at the address on record is indistinguishable
-            # from one switched off ten minutes ago — see migration 0067.
-            printer.last_online_at = printer.status_checked_at or datetime.now(UTC)
+        # Last *reachable* — not last checked, and not last healthy. A printer
+        # that answers IPP and reports a jam has still been reached, and
+        # derive_status calls that "error". Keying this off the derived status
+        # made a jammed printer look like one that had never answered, so
+        # waiting_alert would later report a wrong address for a machine
+        # somebody had been talking to all afternoon (migration 0067).
+        printer.last_online_at = printer.status_checked_at or datetime.now(UTC)
     printer.status_checked_at = datetime.now(UTC)
     # Recorded for every probe, including the misses that never reach the
     # offline threshold above. Those are exactly the evidence the debounce

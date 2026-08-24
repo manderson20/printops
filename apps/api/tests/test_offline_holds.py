@@ -335,3 +335,39 @@ async def test_one_job_is_not_described_as_jobs(session):
     await _held(session, printer)
 
     assert "1 job waiting" in await offline_holds.waiting_alert(session, printer)
+
+
+async def test_a_printer_that_answers_but_is_jammed_still_counts_as_reached(session):
+    """derive_status calls a printer that answers and reports a jam "error".
+    Recording reachability only for "online" made such a printer look like one
+    that had never answered — so a wrong-address alert for a machine somebody
+    had been talking to all afternoon."""
+    from unittest.mock import patch
+
+    from app.printers import status as status_module
+    from app.printers.ipp_client import PrinterStateResult
+
+    printer = await _printer(session, status="online")
+
+    async def _jammed(*_a, **_k):
+        return PrinterStateResult(
+            printer_state=3, state_reasons=["media-jam-error"], state_message=None
+        )
+
+    with (
+        patch.object(status_module, "probe_printer_state", _jammed),
+        patch.object(status_module, "_apply_queue_recovery", _false),
+        patch.object(status_module, "_apply_queue_stall", _none),
+    ):
+        await status_module.refresh_printer_status(printer)
+
+    assert printer.status == "error", "it is jammed, and that is still reported"
+    assert printer.last_online_at is not None, "but it was reached"
+
+
+async def _false(*_a, **_k):
+    return False
+
+
+async def _none(*_a, **_k):
+    return None

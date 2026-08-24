@@ -38,6 +38,18 @@ def upgrade() -> None:
     op.add_column(
         "printers", sa.Column("last_online_at", sa.DateTime(timezone=True), nullable=True)
     )
+    # Seeded, not left null. Null means "has never answered", which is the
+    # loudest thing this column can say — and on the upgrade itself every
+    # printer that ever worked would say it. A working printer that happened to
+    # be switched off during the deploy, with a job waiting, would be reported
+    # as a wrong address on the very next poll instead of getting the day's
+    # grace it has earned.
+    #
+    # status_checked_at is the closest thing to the truth already on the row;
+    # where there is none, the upgrade itself is the conservative answer. Either
+    # way a printer starts from "seen recently" and has to go quiet for a day
+    # before anything is said about it.
+    op.execute("UPDATE printers SET last_online_at = COALESCE(status_checked_at, NOW())")
 
 
 def downgrade() -> None:

@@ -37,6 +37,14 @@ export function CopierCard({
   onUpdate: (printer: Printer) => void;
 }) {
   const [device, setDevice] = useState<MfpDevice | null>(null);
+  // Which printer the fetch above has finished for. Distinguishes "still
+  // fetching" from "fetched, and there is nothing there" — without it, a
+  // printer flagged as a copier whose record has gone (deleted through the
+  // copier API, say) sat on "Loading copier details…" forever. Keyed by id
+  // rather than reset at the top of the effect, because setting state
+  // synchronously in an effect body just causes another render.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const loaded = loadedFor === printer.id;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,7 +54,8 @@ export function CopierCard({
     if (!printer.copier_enabled) return;
     getPrinterCopier(printer.id)
       .then(setDevice)
-      .catch(() => setDevice(null));
+      .catch(() => setDevice(null))
+      .finally(() => setLoadedFor(printer.id));
   }, [printer.id, printer.copier_enabled]);
 
   async function toggle(enable: boolean) {
@@ -128,8 +137,16 @@ export function CopierCard({
         </div>
       )}
 
-      {printer.copier_enabled && !device && (
+      {printer.copier_enabled && !device && !loaded && (
         <p className="mt-3 text-sm text-zinc-500">Loading copier details…</p>
+      )}
+
+      {printer.copier_enabled && !device && loaded && (
+        <p className="mt-3 text-sm text-zinc-500">
+          This printer is marked as a copier, but its copier record is missing.
+          Turning copy tracking off and on again will create a fresh one — any
+          previous accounting stayed with the record that was removed.
+        </p>
       )}
     </Card>
   );

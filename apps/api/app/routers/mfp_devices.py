@@ -157,6 +157,27 @@ async def list_connector_types():
     return available_connector_types()
 
 
+async def _sync_copier_flag(db: AsyncSession, printer_id: UUID | None) -> None:
+    """Keep Printer.copier_enabled agreeing with whether a copier is linked.
+
+    The flag is what the printer page shows and the toggle sets, but these
+    endpoints can still add, move or remove a link without going near it. A
+    copier deleted here left the flag true, and the printer page then sat on
+    "Loading copier details…" for a record that no longer existed.
+
+    Derived from the rows rather than trusted: whatever is actually linked
+    decides, so the two cannot drift however the link changed."""
+    if printer_id is None:
+        return
+    printer = await db.get(Printer, printer_id)
+    if printer is None:
+        return
+    linked = (
+        await db.execute(select(MfpDevice.id).where(MfpDevice.printer_id == printer_id).limit(1))
+    ).scalar_one_or_none()
+    printer.copier_enabled = linked is not None
+
+
 @router.post("", response_model=MfpDeviceOut, status_code=status.HTTP_201_CREATED)
 async def create_mfp_device(payload: MfpDeviceCreate, db: AsyncSession = Depends(get_db)):
     if payload.connector_type not in CONNECTOR_REGISTRY:
@@ -175,6 +196,8 @@ async def create_mfp_device(payload: MfpDeviceCreate, db: AsyncSession = Depends
         else None,
     )
     db.add(device)
+    await db.flush()
+    await _sync_copier_flag(db, device.printer_id)
     await db.commit()
     await db.refresh(device)
     return mfp_device_out(device)
@@ -221,6 +244,10 @@ async def update_mfp_device(
     ):
         device.default_owner_attributed_through = None
 
+    # Captured before the update: moving a copier to a different printer has to
+    # clear the flag on the one it left, not only set it on the one it joined.
+    previous_printer_id = device.printer_id
+
     for field, value in updates.items():
         setattr(device, field, value)
 
@@ -242,6 +269,10 @@ async def update_mfp_device(
         device.capabilities_source = "manual"
         device.capabilities_detected_at = datetime.now(UTC)
 
+    await db.flush()
+    await _sync_copier_flag(db, previous_printer_id)
+    if device.printer_id != previous_printer_id:
+        await _sync_copier_flag(db, device.printer_id)
     await db.commit()
     await db.refresh(device)
     return mfp_device_out(device)
@@ -250,7 +281,10 @@ async def update_mfp_device(
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_mfp_device(device_id: UUID, db: AsyncSession = Depends(get_db)):
     device = await _get_device_or_404(device_id, db)
+    printer_id = device.printer_id
     await db.delete(device)
+    await db.flush()
+    await _sync_copier_flag(db, printer_id)
     await db.commit()
 
 
