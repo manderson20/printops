@@ -868,17 +868,23 @@ export function CopierPanel({
                     allAccountRows.length > 12 ? "h-72" : "max-h-72"
                   }`}
                 >
-                  <table className="w-full text-left text-xs">
+                  {/* table-fixed, with a width on every column: an auto table
+                      re-measures its columns against whatever rows are
+                      currently visible, so filtering to one person silently
+                      re-flows every column and the text stops lining up as
+                      you type. Fixed widths make the columns a property of
+                      the table rather than of the search. */}
+                  <table className="w-full table-fixed text-left text-xs">
                     {/* Header stays put while the list scrolls — with a few
                         hundred rows, a column heading that scrolls away makes
                         the numbers below it meaningless. */}
                     <thead className="sticky top-0 bg-white text-zinc-500 dark:bg-zinc-950">
                       <tr>
-                        <th className="py-1 pr-3 font-medium">Slot</th>
-                        <th className="py-1 pr-3 font-medium">Username</th>
+                        <th className="w-16 py-1 pr-3 font-medium">Slot</th>
+                        <th className="w-32 py-1 pr-3 font-medium">Username</th>
                         <th className="py-1 pr-3 font-medium">Name</th>
-                        <th className="py-1 pr-3 font-medium">Code</th>
-                        <th className="py-1 font-medium">Status</th>
+                        <th className="w-20 py-1 pr-3 font-medium">Code</th>
+                        <th className="w-36 py-1 font-medium">Status</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -887,17 +893,23 @@ export function CopierPanel({
                           key={row.key}
                           className="border-t border-black/[.04] dark:border-white/[.06]"
                         >
-                          <td className="py-1 pr-3 font-mono">#{row.slot}</td>
-                          <td className="py-1 pr-3 font-mono text-zinc-500">
+                          <td className="truncate py-1 pr-3 font-mono">#{row.slot}</td>
+                          <td
+                            className="truncate py-1 pr-3 font-mono text-zinc-500"
+                            title={row.username ?? undefined}
+                          >
                             {row.username ?? "—"}
                           </td>
-                          <td className="py-1 pr-3 text-zinc-700 dark:text-zinc-300">
+                          <td
+                            className="truncate py-1 pr-3 text-zinc-700 dark:text-zinc-300"
+                            title={row.email ?? undefined}
+                          >
                             {row.fullName ? surnameFirst(row.fullName) : (row.email ?? "—")}
                           </td>
-                          <td className="py-1 pr-3 font-mono text-zinc-400">
+                          <td className="truncate py-1 pr-3 font-mono text-zinc-400">
                             {row.code ?? "—"}
                           </td>
-                          <td className="py-1">
+                          <td className="py-1 text-[11px] leading-tight">
                             <div className="flex flex-wrap gap-x-2">
                               {/* Only meaningful once the copier has actually
                                   been read; before that, absence from the live
