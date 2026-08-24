@@ -146,12 +146,24 @@ async def _printer_status_poll_loop() -> None:
                 # online printer per cycle is worth not depending on catching
                 # an instant.
                 for printer in printers:
-                    if printer.status != "online":
-                        continue
                     try:
-                        await offline_holds.release_jobs_waiting_for(db, printer)
+                        if printer.status == "online":
+                            await offline_holds.release_jobs_waiting_for(db, printer)
+                            continue
+                        # Offline with work behind it. Most of the time that is
+                        # a printer switched off for the night and nothing worth
+                        # saying; when it is not, this is the only place anybody
+                        # would find out.
+                        alert = await offline_holds.waiting_alert(db, printer)
+                        if alert:
+                            printer.status_message = alert
+                            printer.status_reasons = [
+                                *(printer.status_reasons or []),
+                                offline_holds.UNREACHABLE_REASON,
+                            ]
+                            logger.warning("%s: %s", printer.name, alert)
                     except Exception:
-                        logger.exception("Could not release jobs waiting for %s", printer.name)
+                        logger.exception("Could not check jobs waiting for %s", printer.name)
                 await db.commit()
         except Exception:
             logger.exception("Unexpected error in printer status poll loop")

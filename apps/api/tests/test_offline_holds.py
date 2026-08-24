@@ -11,7 +11,7 @@ the Held Jobs page while it waits, and it goes the moment the printer answers.
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest_asyncio
@@ -266,3 +266,72 @@ async def test_an_ordinary_release_hold_still_expires(session):
 
     await session.refresh(job)
     assert job.held_expires_at is not None
+
+
+# ---- telling "away for the night" apart from "nobody can reach this" ----
+
+
+async def test_a_printer_that_has_never_answered_is_reported_at_once(session):
+    """The case that cost a day: ES 4th Grade Printer was recorded at
+    10.20.3.104 and was actually at 10.10.1.10, so it read as offline and
+    everyone — me included — assumed it was switched off for the night. There
+    is nothing to wait for at an address nothing answers on."""
+    printer = await _printer(session)
+    printer.last_online_at = None
+    await _held(session, printer)
+
+    alert = await offline_holds.waiting_alert(session, printer)
+
+    assert alert is not None
+    assert "never answered" in alert
+    assert printer.ip_address in alert
+
+
+async def test_a_printer_away_for_the_night_says_nothing(session):
+    """Ordinary, and the jobs are safe. An alarm that fires every evening is
+    one nobody reads by October."""
+    printer = await _printer(session)
+    printer.last_online_at = datetime.now(UTC) - timedelta(hours=10)
+    await _held(session, printer)
+
+    assert await offline_holds.waiting_alert(session, printer) is None
+
+
+async def test_a_printer_away_more_than_a_day_with_work_behind_it_does(session):
+    printer = await _printer(session)
+    printer.last_online_at = datetime.now(UTC) - timedelta(days=3)
+    await _held(session, printer)
+
+    alert = await offline_holds.waiting_alert(session, printer)
+
+    assert alert is not None
+    assert "3 days" in alert
+
+
+async def test_an_absent_printer_with_no_work_behind_it_says_nothing(session):
+    """Nobody is waiting, so there is nothing to act on."""
+    printer = await _printer(session)
+    printer.last_online_at = None
+
+    assert await offline_holds.waiting_alert(session, printer) is None
+
+
+async def test_the_alert_counts_the_jobs_and_ages_the_oldest(session):
+    printer = await _printer(session)
+    printer.last_online_at = None
+    await _held(session, printer, created=datetime.now(UTC) - timedelta(hours=30))
+    await _held(session, printer)
+    await _held(session, printer)
+
+    alert = await offline_holds.waiting_alert(session, printer)
+
+    assert "3 jobs waiting" in alert
+    assert "1 day" in alert
+
+
+async def test_one_job_is_not_described_as_jobs(session):
+    printer = await _printer(session)
+    printer.last_online_at = None
+    await _held(session, printer)
+
+    assert "1 job waiting" in await offline_holds.waiting_alert(session, printer)

@@ -10,7 +10,11 @@ import {
 } from "@/lib/api";
 import { capabilityBadges } from "@/lib/capabilities";
 import { formatRelativeTime } from "@/lib/format";
-import { hasNetworkWarning, printerStatusInfo } from "@/lib/printerStatus";
+import {
+  hasNetworkWarning,
+  hasWaitingJobsWarning,
+  printerStatusInfo,
+} from "@/lib/printerStatus";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -303,6 +307,19 @@ export default function PrintersPage() {
                                 >
                                   {info.label}
                                 </Badge>
+                                {hasWaitingJobsWarning(
+                                  printer.status_reasons,
+                                ) && (
+                                  <Badge
+                                    tone="danger"
+                                    title={
+                                      printer.status_message ??
+                                      "Jobs are waiting for this printer"
+                                    }
+                                  >
+                                    Jobs waiting
+                                  </Badge>
+                                )}
                                 {hasNetworkWarning(printer.status_reasons) && (
                                   <Badge
                                     tone="warning"

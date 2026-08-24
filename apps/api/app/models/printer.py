@@ -148,6 +148,11 @@ class Printer(Base, TimestampMixin):
     status_checked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+    # When this printer was last actually reachable, as opposed to last
+    # checked. Null means it has never answered at the address on record —
+    # which looks exactly like "switched off" and is not remotely the same
+    # problem (migration 0067).
+    last_online_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     # Consecutive failed probes, reset to 0 by any success. A printer has to
     # miss CONSECUTIVE_PROBE_FAILURES_BEFORE_OFFLINE times in a row before
     # `status` is allowed to say "offline" — see app/printers/status.py:
