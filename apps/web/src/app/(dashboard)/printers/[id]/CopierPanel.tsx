@@ -232,7 +232,7 @@ export function CopierPanel({
   // repeat across domains, and joining on it would file one person's copies
   // under another. The username is only a fallback for a live account with no
   // provisioning record behind it.
-  const accountRows = useMemo(() => {
+  const allAccountRows = useMemo(() => {
     const nameByEmail = new Map<string, string>();
     for (const person of staffOptions) {
       if (person.name) nameByEmail.set(person.email.toLowerCase(), person.name);
@@ -315,14 +315,18 @@ export function CopierPanel({
       sortKey(a).localeCompare(sortKey(b), undefined, { sensitivity: "base" }),
     );
 
+    return rows;
+  }, [deviceAccounts, owners, staffOptions]);
+
+  const accountRows = useMemo(() => {
     const needle = accountSearch.trim().toLowerCase();
-    if (!needle) return rows;
-    return rows.filter((row) =>
+    if (!needle) return allAccountRows;
+    return allAccountRows.filter((row) =>
       [row.slot, row.username, row.email, row.fullName, row.code]
         .filter(Boolean)
         .some((field) => String(field).toLowerCase().includes(needle)),
     );
-  }, [deviceAccounts, owners, staffOptions, accountSearch]);
+  }, [allAccountRows, accountSearch]);
 
   async function handleSave() {
     setSaving(true);
@@ -829,7 +833,7 @@ export function CopierPanel({
               </div>
             </div>
             <p className="mb-2 text-xs text-zinc-500">
-              {accountRows.length} accounts. PrintOps holds the record of which slot belongs
+              {allAccountRows.length} accounts. PrintOps holds the record of which slot belongs
               to whom — the copier itself can&apos;t tell you that, as it never reveals an
               account&apos;s code. <strong>Check copier</strong> reads the machine live and
               marks anything the two disagree about.
@@ -854,7 +858,16 @@ export function CopierPanel({
                       " — nobody by that name has an account on this copier."}
                   </p>
                 )}
-                <div className="max-h-72 overflow-y-auto">
+                {/* Fixed height, not max-height, once the full list would
+                    fill the box: otherwise every keystroke while searching
+                    resizes the panel and the content below it jumps around.
+                    A copier with only a handful of accounts still sizes to
+                    its content rather than showing a mostly-empty box. */}
+                <div
+                  className={`overflow-y-auto ${
+                    allAccountRows.length > 12 ? "h-72" : "max-h-72"
+                  }`}
+                >
                   <table className="w-full text-left text-xs">
                     {/* Header stays put while the list scrolls — with a few
                         hundred rows, a column heading that scrolls away makes
