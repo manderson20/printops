@@ -108,6 +108,11 @@ export type Capabilities = {
   // Advertised (not live-tested) IPPS support — see Printer.use_tls to
   // actually turn TLS on.
   tls_supported: boolean;
+  /** Whether the printer itself speaks AirPrint, so someone on its VLAN could
+   *  add it directly and print around PrintOps. null = the device answered
+   *  neither marker, which is "unknown", not "off". */
+  airprint_supported: boolean | null;
+  dns_sd_name: string | null;
 };
 
 export type Printer = {

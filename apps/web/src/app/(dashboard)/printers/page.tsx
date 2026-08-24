@@ -61,9 +61,23 @@ const CSV_COLUMNS: { header: string; value: (printer: Printer) => string }[] = [
   { header: "Department", value: (p) => p.department ?? "" },
   { header: "Page Count", value: (p) => p.page_count_total?.toString() ?? "" },
   {
-    header: "AirPrint",
+    // Renamed: this is PrintOps' own queue being discoverable, which is a
+    // different question from whether the *printer* speaks AirPrint.
+    header: "Queue Discovery",
     value: (p) => (p.airprint_enabled ? "Discoverable" : "Hidden"),
   },
+  {
+    // The fleet-wide answer to "who could bypass the server". Exported so it
+    // can be sorted and worked through a printer at a time.
+    header: "Printer AirPrint",
+    value: (p) =>
+      p.capabilities?.airprint_supported === true
+        ? "Yes - can be added directly"
+        : p.capabilities?.airprint_supported === false
+          ? "No"
+          : "Unknown - not reported",
+  },
+  { header: "Bonjour Name", value: (p) => p.capabilities?.dns_sd_name ?? "" },
   { header: "Archived", value: (p) => (p.archived_at ? "Yes" : "No") },
 ];
 
@@ -413,12 +427,29 @@ export default function PrintersPage() {
                                   </dd>
                                 </div>
                                 <div>
-                                  <dt className="text-xs text-zinc-500">AirPrint</dt>
+                                  <dt className="text-xs text-zinc-500">Queue discovery</dt>
                                   <dd>
                                     {printer.airprint_enabled ? (
                                       <Badge tone="success">Discoverable</Badge>
                                     ) : (
                                       <Badge tone="neutral">Hidden</Badge>
+                                    )}
+                                  </dd>
+                                </div>
+                                <div>
+                                  {/* The printer's own AirPrint, which is a
+                                      different question from the queue's:
+                                      this is whether someone on its VLAN
+                                      could add the machine directly and
+                                      print around PrintOps. */}
+                                  <dt className="text-xs text-zinc-500">Printer AirPrint</dt>
+                                  <dd>
+                                    {printer.capabilities?.airprint_supported === true ? (
+                                      <Badge tone="warning">Can be added directly</Badge>
+                                    ) : printer.capabilities?.airprint_supported === false ? (
+                                      <Badge tone="success">Off</Badge>
+                                    ) : (
+                                      <Badge tone="neutral">Not reported</Badge>
                                     )}
                                   </dd>
                                 </div>

@@ -182,3 +182,30 @@ def test_sanitize_raw_attributes_handles_enums_and_datetimes():
     assert safe["finishings-supported"] == [4]
     assert safe["printer-current-time"] == "2026-01-01T00:00:00+00:00"
     assert safe["nested"] == {"a": 5}
+
+
+def test_airprint_is_detected_from_apple_raster():
+    """urf-supported is the AirPrint marker — a printer offering it can be
+    added directly by anyone on its VLAN, bypassing PrintOps entirely."""
+    caps = parse_capabilities({"urf-supported": ["V1.4", "CP1", "W8", "RS600"]})
+    assert caps["airprint_supported"] is True
+
+
+def test_mopria_also_counts():
+    caps = parse_capabilities({"mopria-certified": "1.3"})
+    assert caps["airprint_supported"] is True
+
+
+def test_a_silent_printer_is_unknown_not_off():
+    """The distinction that matters. An older device may answer neither marker
+    while still advertising AirPrint over Bonjour — the LaserJet 4250 here
+    speaks only IPP 1.1. Reporting that as "off" would tell an admin a machine
+    is closed when it is open, which is the worst way for this to be wrong."""
+    caps = parse_capabilities({"printer-make-and-model": "hp LaserJet 4250"})
+    assert caps["airprint_supported"] is None
+    assert caps["airprint_supported"] is not False
+
+
+def test_dns_sd_name_is_captured_when_offered():
+    caps = parse_capabilities({"printer-dns-sd-name": "ES 4th Grade Printer"})
+    assert caps["dns_sd_name"] == "ES 4th Grade Printer"

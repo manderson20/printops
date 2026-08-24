@@ -5,6 +5,24 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.67.0] - 2026-08-24
+
+- **You can now see which printers speak AirPrint.** A printer with AirPrint on
+  can be added directly by anyone on its network, printing around PrintOps
+  entirely — no accounting, no quotas, no held-job release. Open a printer's
+  row on the Printers page and look at **Printer AirPrint**, or export the
+  printer list to CSV to work through the whole fleet at once.
+- A printer that doesn't answer the question reads **Not reported**, never
+  "Off". Some older printers advertise AirPrint over Bonjour without saying so
+  over IPP, and telling you a machine is closed when it is open would be the
+  worst way for this to be wrong.
+- The old **AirPrint** column is renamed **Queue discovery**. It always
+  referred to whether PrintOps' own queue is discoverable, which is a
+  different question from what the printer itself does.
+- Detection is read-only: PrintOps asks the printer three extra questions
+  during the capability check it already performs. Nothing is changed on any
+  device and printing is unaffected.
+
 ## [0.66.0] - 2026-08-24
 
 - **One list of accounts instead of two.** The copier tab showed the same
