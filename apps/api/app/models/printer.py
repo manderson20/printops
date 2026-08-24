@@ -148,6 +148,11 @@ class Printer(Base, TimestampMixin):
     status_checked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+    # When this printer was last actually reachable, as opposed to last
+    # checked. Null means it has never answered at the address on record —
+    # which looks exactly like "switched off" and is not remotely the same
+    # problem (migration 0067).
+    last_online_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     # Consecutive failed probes, reset to 0 by any success. A printer has to
     # miss CONSECUTIVE_PROBE_FAILURES_BEFORE_OFFLINE times in a row before
     # `status` is allowed to say "offline" — see app/printers/status.py:
@@ -167,6 +172,13 @@ class Printer(Base, TimestampMixin):
     # queue instead of forwarding it immediately — see app/routers/release.py
     # and app/printers/release.py for how a held job is later delivered via
     # a second, internal-only CUPS queue (scripts/sync_release_queue.sh).
+    # Whether this machine is also a copier — walk-up copying, per-account
+    # counters, staff codes. The copier itself is an MfpDevice row linked back
+    # here (app/models/mfp_device.py); this flag is what an admin turns on, and
+    # turning it off only hides the feature. It never deletes the device,
+    # because every foreign key into mfp_devices cascades and the accounting
+    # history rides on that row (migration 0068).
+    copier_enabled: Mapped[bool] = mapped_column(default=False, server_default="false")
     release_required: Mapped[bool] = mapped_column(default=False, server_default="false")
     # Print-and-release, follow-me variant. Sits alongside release_required
     # rather than replacing it — a job held because of this flag gets

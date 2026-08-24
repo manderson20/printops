@@ -231,6 +231,11 @@ class PrinterOut(BaseModel):
 
     archived_at: datetime | None
 
+    # Whether this machine also does walk-up copying. Set only by
+    # POST /printers/{id}/copier/enable|disable, never by a plain update:
+    # the flag and the copier's own row have to be created together, or
+    # one says this is a copier while the other has never heard of it.
+    copier_enabled: bool
     release_required: bool
     follow_me_enabled: bool
     roll_autocut: bool

@@ -16,6 +16,7 @@ from app.db import get_db
 from app.deps import get_current_user, require_role
 from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.job import Job
+from app.models.mfp_device import MfpDevice
 from app.models.printer import Printer
 from app.models.printer_ou_access import PrinterAllowedOu
 from app.models.quota import PrinterUserQuota
@@ -40,7 +41,9 @@ from app.printers.status import refresh_printer_status_and_rediscover
 from app.printers.test_print import TestPrintError, build_page_info, submit_test_print
 from app.printers.toner_history import get_daily_toner_levels
 from app.quotas.service import get_pages_used, period_bounds, resolve_hold_reason
+from app.routers.mfp_devices import mfp_device_out
 from app.schemas.auth import UserOut
+from app.schemas.mfp_device import MfpDeviceOut
 from app.schemas.printer import (
     CupsQueueDefaultsOut,
     PrinterCreate,
@@ -608,6 +611,82 @@ async def dismiss_redirect(printer_id: UUID, db: AsyncSession = Depends(get_db))
     suggestion, not the evidence."""
     printer = await _get_printer_or_404(printer_id, db)
     printer.pending_redirect = None
+    await db.commit()
+    await db.refresh(printer)
+    return printer
+
+
+@router.get("/{printer_id}/copier", response_model=MfpDeviceOut | None)
+async def get_printer_copier(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    """The copier side of this machine, if it has one.
+
+    Returns null rather than 404 for a printer that is not a copier: "this
+    machine does not do walk-up copying" is an ordinary answer to the question
+    the printer page asks on every load, not a failure."""
+    await _get_printer_or_404(printer_id, db)
+    device = (
+        await db.execute(select(MfpDevice).where(MfpDevice.printer_id == printer_id))
+    ).scalar_one_or_none()
+    return mfp_device_out(device) if device else None
+
+
+@router.post(
+    "/{printer_id}/copier/enable",
+    response_model=MfpDeviceOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def enable_printer_copier(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Turns on walk-up copy tracking for this machine.
+
+    A copier is a capability of a printer, not a separate thing to be added
+    somewhere else — every copier in this district is also a printer, and
+    keeping them as two records meant one machine appeared twice with the same
+    connection, model, location and meter described in both places.
+
+    Creates the underlying device row the first time, seeded from what the
+    printer already knows so nobody retypes an address and a location that are
+    already on screen. Enabling again after it was turned off reuses the
+    existing row, which is the one every provisioned account, counter reading
+    and usage record is attached to."""
+    printer = await _get_printer_or_404(printer_id, db)
+    device = (
+        await db.execute(select(MfpDevice).where(MfpDevice.printer_id == printer_id))
+    ).scalar_one_or_none()
+    if device is None:
+        device = MfpDevice(
+            printer_id=printer.id,
+            name=printer.name,
+            vendor=(printer.manufacturer or "generic").lower(),
+            model=printer.model,
+            serial_number=printer.serial_number,
+            ip_address=printer.ip_address,
+            hostname=printer.hostname,
+            building=printer.building,
+            room=printer.room,
+            department=printer.department,
+        )
+        db.add(device)
+    printer.copier_enabled = True
+    await db.commit()
+    await db.refresh(device)
+    return mfp_device_out(device)
+
+
+@router.post(
+    "/{printer_id}/copier/disable",
+    response_model=PrinterOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def disable_printer_copier(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Hides the copier side of this machine.
+
+    Only the flag changes. The device row stays, and so does everything hanging
+    off it — every foreign key into mfp_devices is ON DELETE CASCADE, so
+    removing the row would take 1620 provisioned accounts, 1735 counter
+    readings and every usage record with it. Turning a feature off in the UI
+    must not be a way to destroy years of accounting."""
+    printer = await _get_printer_or_404(printer_id, db)
+    printer.copier_enabled = False
     await db.commit()
     await db.refresh(printer)
     return printer

@@ -23,3 +23,14 @@ export const NETWORK_UNSTABLE_REASON = "printops-network-unstable";
 export function hasNetworkWarning(reasons: string[] | null | undefined) {
   return (reasons ?? []).includes(NETWORK_UNSTABLE_REASON);
 }
+
+// An offline printer with work piling up behind it that is *not* simply away
+// for the night — it has never answered at its stored address, or has been
+// gone more than a day. Shown in red rather than the neutral grey an offline
+// printer normally gets, because those two look identical and only one of them
+// needs somebody.
+export const UNREACHABLE_WITH_JOBS_REASON = "printops-unreachable-with-jobs";
+
+export function hasWaitingJobsWarning(reasons: string[] | null | undefined) {
+  return (reasons ?? []).includes(UNREACHABLE_WITH_JOBS_REASON);
+}

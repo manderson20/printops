@@ -15,10 +15,10 @@ when the printer answers again.
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job import Job
@@ -28,6 +28,16 @@ from app.printers.release import ReleaseError, submit_released_job
 logger = logging.getLogger(__name__)
 
 HOLD_REASON = "printer_offline"
+
+# The keyword the UI keys off to say this printer needs looking at, rather than
+# simply being away.
+UNREACHABLE_REASON = "printops-unreachable-with-jobs"
+
+# How long a printer that used to work may be away with jobs waiting before
+# that is worth saying out loud. A day, so a printer switched off overnight or
+# over a weekend does not raise anything: those are ordinary, the jobs are safe,
+# and an alarm that fires every Saturday is one nobody reads by October.
+AWAY_TOO_LONG = timedelta(hours=24)
 
 
 async def release_jobs_waiting_for(db: AsyncSession, printer: Printer) -> int:
@@ -99,3 +109,75 @@ async def release_jobs_waiting_for(db: AsyncSession, printer: Printer) -> int:
             "%s came back: released %d job(s) that were waiting for it.", printer.name, released
         )
     return released
+
+
+async def waiting_alert(
+    db: AsyncSession, printer: Printer, now: datetime | None = None
+) -> str | None:
+    """Whether this offline printer's waiting jobs are worth an admin's
+    attention, and what to tell them.
+
+    Jobs waiting for a printer that is off overnight are fine — they go when it
+    is switched on, and saying anything would be noise. Two cases are not fine,
+    and both look identical to "switched off" from the outside:
+
+    A printer that has *never* been reachable is almost always a wrong address
+    rather than a dark room. That is what happened to ES 4th Grade Printer on
+    2026-08-23: the record said 10.20.3.104, the printer was at 10.10.1.10, and
+    a teacher's job waited a day for somewhere nothing was ever going to answer.
+    Reported as soon as one job is waiting, because there is nothing to wait
+    for.
+
+    A printer that used to work and has been away more than a day with work
+    piling up behind it might be broken, moved, or decommissioned — and either
+    way somebody should decide, rather than the queue quietly growing.
+    """
+    now = now or datetime.now(UTC)
+    waiting = (
+        await db.execute(
+            select(func.count(Job.id), func.min(Job.created_at)).where(
+                Job.printer_id == printer.id,
+                Job.status == "held",
+                Job.hold_reason == HOLD_REASON,
+            )
+        )
+    ).one()
+    count, oldest = waiting
+    if not count:
+        return None
+
+    jobs = "job" if count == 1 else "jobs"
+    waited = _describe_wait(oldest, now)
+
+    if printer.last_online_at is None:
+        return (
+            f"{count} {jobs} waiting, and this printer has never answered at "
+            f"{printer.ip_address}. That is usually the wrong address rather than a printer "
+            f"that is switched off — nothing will print until it is corrected. Oldest has "
+            f"been waiting {waited}."
+        )
+
+    away = now - printer.last_online_at
+    if away < AWAY_TOO_LONG:
+        return None
+    gone_for = _describe_wait(printer.last_online_at, now)
+    return (
+        f"{count} {jobs} waiting, and this printer has not answered for {gone_for}. They will "
+        f"print when it comes back, but a printer away this long with work behind it is usually "
+        f"switched off for good, moved, or on a changed address. Oldest job has been waiting "
+        f"{waited}."
+    )
+
+
+def _describe_wait(since: datetime | None, now: datetime) -> str:
+    if since is None:
+        return "an unknown time"
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=UTC)
+    hours = int((now - since).total_seconds() // 3600)
+    if hours < 1:
+        return "less than an hour"
+    if hours < 24:
+        return f"{hours} hour{'s' if hours != 1 else ''}"
+    days = hours // 24
+    return f"{days} day{'s' if days != 1 else ''}"
