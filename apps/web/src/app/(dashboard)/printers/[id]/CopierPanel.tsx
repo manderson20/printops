@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ApiError,
@@ -135,6 +135,7 @@ export function CopierPanel({
   const [previewing, setPreviewing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [deviceAccounts, setDeviceAccounts] = useState<DeviceUser[] | null>(null);
+  const [accountSearch, setAccountSearch] = useState("");
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [accountsError, setAccountsError] = useState<string | null>(null);
   const [job, setJob] = useState<SyncJob | null>(null);
@@ -195,6 +196,59 @@ export function CopierPanel({
       .then(setStaffOptions)
       .catch(() => setStaffOptions([]));
   }, [deviceId]);
+
+  // The copier stores an account's *username* — the email local part, so
+  // "mwoodard" — never the person's name. Scrolling this list looking for
+  // "Madison Woodard" therefore fails even when she is on the copier, which
+  // is exactly how a correctly provisioned person gets reported as missing.
+  // PrintOps knows both halves, so the name is shown alongside and is
+  // searchable; the code is too, since that is what someone reads off a
+  // sticky note at the machine.
+  const accountRows = useMemo(() => {
+    if (!deviceAccounts) return [];
+    const emailByAccount = new Map<string, string>();
+    for (const owner of owners ?? []) {
+      if (owner.device_account_name) {
+        emailByAccount.set(owner.device_account_name.toLowerCase(), owner.staff_email);
+      }
+      emailByAccount.set(`#${owner.identity_value}`, owner.staff_email);
+    }
+    const nameByEmail = new Map<string, string>();
+    for (const person of staffOptions) {
+      if (person.name) nameByEmail.set(person.email.toLowerCase(), person.name);
+    }
+
+    const rows = deviceAccounts.map((account) => {
+      const email =
+        emailByAccount.get((account.name ?? "").toLowerCase()) ??
+        emailByAccount.get(`#${account.identifier}`) ??
+        null;
+      return {
+        account,
+        email,
+        fullName: email ? (nameByEmail.get(email.toLowerCase()) ?? null) : null,
+      };
+    });
+
+    // Alphabetical by the name a person would look for, falling back to the
+    // username and then the code. The device returns them in its own order,
+    // which is not an order anyone can search by eye.
+    rows.sort((a, b) =>
+      (a.fullName ?? a.account.name ?? a.account.identifier).localeCompare(
+        b.fullName ?? b.account.name ?? b.account.identifier,
+        undefined,
+        { sensitivity: "base" },
+      ),
+    );
+
+    const needle = accountSearch.trim().toLowerCase();
+    if (!needle) return rows;
+    return rows.filter((row) =>
+      [row.account.identifier, row.account.name, row.email, row.fullName]
+        .filter(Boolean)
+        .some((field) => String(field).toLowerCase().includes(needle)),
+    );
+  }, [deviceAccounts, owners, staffOptions, accountSearch]);
 
   async function handleSave() {
     setSaving(true);
@@ -728,17 +782,47 @@ export function CopierPanel({
                 </p>
               ) : (
                 <>
-                  <p className="mb-1 text-xs text-zinc-500">
+                  <p className="mb-2 text-xs text-zinc-500">
                     {deviceAccounts.length} registered on the device. Read live from the copier,
                     not from PrintOps.
                   </p>
-                  <ul className="max-h-48 overflow-y-auto text-xs">
-                    {deviceAccounts.map((account) => (
-                      <li key={account.identifier} className="py-0.5 font-mono">
-                        #{account.identifier}
-                        {account.name ? ` — ${account.name}` : ""}
-                        {!account.has_password && " (no code set)"}
-                        {account.disabled && " (disabled)"}
+                  <Input
+                    value={accountSearch}
+                    onChange={(e) => setAccountSearch(e.target.value)}
+                    placeholder="Search by name, username or code…"
+                    className="mb-2"
+                  />
+                  {accountSearch.trim() && (
+                    <p className="mb-1 text-xs text-zinc-500">
+                      {accountRows.length} of {deviceAccounts.length} match
+                      {accountRows.length === 0 &&
+                        " — this person has no account on this copier."}
+                    </p>
+                  )}
+                  <ul className="max-h-72 overflow-y-auto text-xs">
+                    {accountRows.map(({ account, fullName, email }) => (
+                      <li
+                        key={account.identifier}
+                        className="flex flex-wrap items-baseline gap-x-2 py-0.5"
+                      >
+                        <span className="font-mono">#{account.identifier}</span>
+                        {account.name && (
+                          <span className="font-mono text-zinc-500">{account.name}</span>
+                        )}
+                        {fullName && (
+                          <span className="text-zinc-700 dark:text-zinc-300">{fullName}</span>
+                        )}
+                        {!fullName && email && (
+                          <span className="text-zinc-500">{email}</span>
+                        )}
+                        {!account.has_password && (
+                          <span className="text-amber-700 dark:text-amber-400">
+                            (no code set)
+                          </span>
+                        )}
+                        {account.disabled && (
+                          <span className="text-zinc-500">(disabled)</span>
+                        )}
                       </li>
                     ))}
                   </ul>
