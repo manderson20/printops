@@ -5,6 +5,23 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.63.0] - 2026-08-24
+
+- **A copier is now part of its printer.** Copiers had their own top-level
+  menu, which meant every machine that both prints and copies was described
+  twice — the same address, model, location and meter, kept in two places that
+  could disagree. There is now one page per machine: open the printer and use
+  the new **Copier** tab. The first thing on it is a switch. Leave it off and
+  the machine is simply a printer; turn it on and the full copier settings
+  appear underneath — staff accounts and codes, copy counters, owner
+  attribution and recent copier usage, exactly as they were.
+- Turning the switch off only stops the tracking. Nothing is deleted: the
+  provisioned accounts, counter readings and usage history stay with the
+  machine and come back if it is turned on again.
+- The old Copiers pages now send you to the machine's own page, so existing
+  links and bookmarks keep working.
+- **Print Test Page** is now a button on the printer's own settings page.
+
 ## [0.62.0] - 2026-08-23
 
 - **Jobs sent to a printer that is switched off now wait for it.** The print
