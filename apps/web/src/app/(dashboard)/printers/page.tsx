@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ApiError,
@@ -109,21 +109,18 @@ type TestPrintState =
   | { phase: "ok"; message: string }
   | { phase: "error"; message: string };
 
-// Multifunction copiers can report a dozen+ finishing options (staple,
-// punch-top-left, punch-dual-right, ...) — showing all of them inline blows
-// up the row height once several printers are added. Collapse to this many
-// and let the admin expand per-row if they actually need the full list.
-const VISIBLE_CAPABILITY_COUNT = 4;
-
 export default function PrintersPage() {
   const isAdmin = useCurrentUser()?.role === "admin";
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [testPrints, setTestPrints] = useState<Record<string, TestPrintState>>(
     {},
   );
-  const [expandedCapabilities, setExpandedCapabilities] = useState<
-    Record<string, boolean>
-  >({});
+  // Ten columns did not fit, so the table scrolled sideways and the things an
+  // admin acts on — Test Print above all — sat off the right-hand edge. The
+  // row now carries only what gets scanned down the list (is this the printer
+  // I mean, is it healthy, where is it, how much has it done); everything you
+  // want after picking a row opens underneath it.
+  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -250,205 +247,244 @@ export default function PrintersPage() {
       {state.phase === "ok" && filteredPrinters.length > 0 && (
         <Card className="overflow-hidden p-0">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1100px] text-left text-sm">
+            <table className="w-full text-left text-sm">
               <thead className="bg-black/[.03] text-zinc-600 dark:bg-white/[.05] dark:text-zinc-400">
                 <tr>
+                  <th className="w-8 px-2 py-3" />
                   <th className="px-4 py-3 font-medium">Name</th>
                   <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Pages</th>
-                  <th className="px-4 py-3 font-medium">Model</th>
-                  <th className="px-4 py-3 font-medium">IP Address</th>
                   <th className="px-4 py-3 font-medium">Location</th>
-                  <th className="px-4 py-3 font-medium">Queue</th>
-                  <th className="px-4 py-3 font-medium">AirPrint</th>
-                  <th className="px-4 py-3 font-medium">Capabilities</th>
-                  <th className="px-4 py-3 font-medium">Actions</th>
+                  <th className="px-4 py-3 font-medium">Pages</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredPrinters.map((printer) => {
                   const testPrint = testPrints[printer.id];
+                  const open = expandedRows[printer.id] ?? false;
+                  const detailId = `printer-detail-${printer.id}`;
                   return (
-                    <tr
-                      key={printer.id}
-                      className="border-t border-black/[.08] hover:bg-black/[.02] dark:border-white/[.1] dark:hover:bg-white/[.03]"
-                    >
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <Link
-                            href={`/printers/${printer.id}`}
-                            className="font-medium text-black hover:underline dark:text-zinc-50"
+                    <Fragment key={printer.id}>
+                      <tr className="border-t border-black/[.08] hover:bg-black/[.02] dark:border-white/[.1] dark:hover:bg-white/[.03]">
+                        <td className="px-2 py-3 align-top">
+                          {/* Its own control rather than a click on the row:
+                              the row already contains a link to the printer,
+                              and a row that both navigates and expands is a
+                              coin toss for whoever clicks it. */}
+                          <button
+                            type="button"
+                            aria-expanded={open}
+                            aria-controls={detailId}
+                            aria-label={
+                              open
+                                ? `Hide details for ${printer.name}`
+                                : `Show details for ${printer.name}`
+                            }
+                            onClick={() =>
+                              setExpandedRows((prev) => ({
+                                ...prev,
+                                [printer.id]: !open,
+                              }))
+                            }
+                            className="flex h-6 w-6 items-center justify-center rounded text-zinc-500 hover:bg-black/[.05] hover:text-black dark:hover:bg-white/[.08] dark:hover:text-zinc-50"
                           >
-                            {printer.name}
-                          </Link>
-                          {printer.is_virtual && (
-                            <Badge tone="neutral">Follow-Me Queue</Badge>
-                          )}
-                          {printer.archived_at && (
-                            <Badge tone="neutral">Archived</Badge>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        {(() => {
-                          const info = printerStatusInfo(printer.status);
-                          const title = [
-                            printer.status_message,
-                            ...(printer.status_reasons ?? []),
-                          ]
-                            .filter(Boolean)
-                            .join(", ");
-                          return (
-                            <div className="flex flex-col gap-0.5">
-                              <div className="flex flex-wrap items-center gap-1">
-                                <Badge
-                                  tone={info.tone}
-                                  title={title || undefined}
-                                >
-                                  {info.label}
-                                </Badge>
-                                {hasWaitingJobsWarning(
-                                  printer.status_reasons,
-                                ) && (
-                                  <Badge
-                                    tone="danger"
-                                    title={
-                                      printer.status_message ??
-                                      "Jobs are waiting for this printer"
-                                    }
-                                  >
-                                    Jobs waiting
-                                  </Badge>
-                                )}
-                                {hasNetworkWarning(printer.status_reasons) && (
-                                  <Badge
-                                    tone="warning"
-                                    title={
-                                      printer.status_message ??
-                                      "This printer is missing status checks"
-                                    }
-                                  >
-                                    Network
-                                  </Badge>
-                                )}
-                              </div>
-                              <span className="text-xs text-zinc-400">
-                                {formatRelativeTime(printer.status_checked_at)}
-                              </span>
-                            </div>
-                          );
-                        })()}
-                      </td>
-                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
-                        {printer.page_count_total ?? "—"}
-                      </td>
-                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
-                        {printer.manufacturer ?? ""} {printer.model ?? "—"}
-                        {printer.capabilities_error && (
-                          <span className="ml-2 text-amber-700 dark:text-amber-400">
-                            (capabilities not detected)
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
-                        {printer.ip_address ?? "—"}
-                      </td>
-                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
-                        {[printer.building, printer.room, printer.department]
-                          .filter(Boolean)
-                          .join(" / ") || "—"}
-                      </td>
-                      <td className="px-4 py-3">
-                        {printer.queue_sync_error ? (
-                          <Badge tone="danger" title={printer.queue_sync_error}>
-                            Sync Failed
-                          </Badge>
-                        ) : (
-                          <Badge tone="success">Synced</Badge>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        {printer.airprint_enabled ? (
-                          <Badge tone="success">Discoverable</Badge>
-                        ) : (
-                          <Badge tone="neutral">Hidden</Badge>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        {(() => {
-                          const badges = capabilityBadges(printer.capabilities);
-                          if (badges.length === 0) {
-                            return (
-                              <span className="text-xs text-zinc-400">—</span>
-                            );
-                          }
-                          const expanded =
-                            expandedCapabilities[printer.id] ?? false;
-                          const visible = expanded
-                            ? badges
-                            : badges.slice(0, VISIBLE_CAPABILITY_COUNT);
-                          const hiddenCount = badges.length - visible.length;
-                          return (
-                            <div className="flex max-w-xs flex-wrap items-center gap-1">
-                              {visible.map((badge) => (
-                                <Badge key={badge} tone="info">
-                                  {badge}
-                                </Badge>
-                              ))}
-                              {(hiddenCount > 0 || expanded) &&
-                                badges.length > VISIBLE_CAPABILITY_COUNT && (
-                                  <button
-                                    onClick={() =>
-                                      setExpandedCapabilities((prev) => ({
-                                        ...prev,
-                                        [printer.id]: !expanded,
-                                      }))
-                                    }
-                                    className="text-xs font-medium text-accent hover:underline"
-                                  >
-                                    {expanded
-                                      ? "Show less"
-                                      : `+${hiddenCount} more`}
-                                  </button>
-                                )}
-                            </div>
-                          );
-                        })()}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col items-start gap-1">
-                          {isAdmin && (
-                            <Button
-                              variant="secondary"
-                              className="!px-3 !py-1 text-xs"
-                              disabled={testPrint?.phase === "sending"}
-                              onClick={() => handleTestPrint(printer.id)}
+                            <span
+                              className={`transition-transform ${open ? "rotate-90" : ""}`}
+                              aria-hidden="true"
                             >
-                              {testPrint?.phase === "sending"
-                                ? "Sending…"
-                                : "Test Print"}
-                            </Button>
-                          )}
-                          {testPrint?.phase === "ok" &&
-                            (isHeldMessage(testPrint.message) ? (
-                              // Amber, not green: the submission succeeded, but
-                              // nothing is going to print until someone acts.
-                              <span className="max-w-[22rem] text-xs text-amber-700 dark:text-amber-400">
-                                {testPrint.message}
-                              </span>
-                            ) : (
-                              <span className="text-xs text-emerald-700 dark:text-emerald-400">
-                                Sent — check Jobs
-                              </span>
-                            ))}
-                          {testPrint?.phase === "error" && (
-                            <span className="max-w-[16rem] text-xs text-red-600 dark:text-red-400">
-                              {testPrint.message}
+                              &#9656;
                             </span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
+                          </button>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <Link
+                              href={`/printers/${printer.id}`}
+                              className="font-medium text-black hover:underline dark:text-zinc-50"
+                            >
+                              {printer.name}
+                            </Link>
+                            {printer.is_virtual && (
+                              <Badge tone="neutral">Follow-Me Queue</Badge>
+                            )}
+                            {printer.archived_at && (
+                              <Badge tone="neutral">Archived</Badge>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {(() => {
+                            const info = printerStatusInfo(printer.status);
+                            const title = [
+                              printer.status_message,
+                              ...(printer.status_reasons ?? []),
+                            ]
+                              .filter(Boolean)
+                              .join(", ");
+                            return (
+                              <div className="flex flex-col gap-0.5">
+                                <div className="flex flex-wrap items-center gap-1">
+                                  <Badge tone={info.tone} title={title || undefined}>
+                                    {info.label}
+                                  </Badge>
+                                  {/* Both of these stay in the collapsed row on
+                                      purpose: they are the reason someone opens
+                                      this page at all, and a warning you have to
+                                      expand a row to find is a warning nobody
+                                      sees. */}
+                                  {hasWaitingJobsWarning(printer.status_reasons) && (
+                                    <Badge
+                                      tone="danger"
+                                      title={
+                                        printer.status_message ??
+                                        "Jobs are waiting for this printer"
+                                      }
+                                    >
+                                      Jobs waiting
+                                    </Badge>
+                                  )}
+                                  {hasNetworkWarning(printer.status_reasons) && (
+                                    <Badge
+                                      tone="warning"
+                                      title={
+                                        printer.status_message ??
+                                        "This printer is missing status checks"
+                                      }
+                                    >
+                                      Network
+                                    </Badge>
+                                  )}
+                                  {printer.queue_sync_error && (
+                                    <Badge tone="danger" title={printer.queue_sync_error}>
+                                      Sync Failed
+                                    </Badge>
+                                  )}
+                                </div>
+                                <span className="text-xs text-zinc-400">
+                                  {formatRelativeTime(printer.status_checked_at)}
+                                </span>
+                              </div>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
+                          {[printer.building, printer.room, printer.department]
+                            .filter(Boolean)
+                            .join(" / ") || "—"}
+                        </td>
+                        <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
+                          {printer.page_count_total ?? "—"}
+                        </td>
+                      </tr>
+
+                      {open && (
+                        <tr
+                          id={detailId}
+                          className="border-t border-black/[.08] bg-black/[.02] dark:border-white/[.1] dark:bg-white/[.03]"
+                        >
+                          <td />
+                          <td colSpan={4} className="px-4 py-4">
+                            <div className="flex flex-col gap-4">
+                              <dl className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3">
+                                <div>
+                                  <dt className="text-xs text-zinc-500">Model</dt>
+                                  <dd className="text-zinc-700 dark:text-zinc-300">
+                                    {printer.manufacturer ?? ""} {printer.model ?? "—"}
+                                    {printer.capabilities_error && (
+                                      <span className="ml-2 text-amber-700 dark:text-amber-400">
+                                        (capabilities not detected)
+                                      </span>
+                                    )}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt className="text-xs text-zinc-500">IP Address</dt>
+                                  <dd className="text-zinc-700 dark:text-zinc-300">
+                                    {printer.ip_address ?? "—"}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt className="text-xs text-zinc-500">Queue</dt>
+                                  <dd>
+                                    {printer.queue_sync_error ? (
+                                      <Badge tone="danger" title={printer.queue_sync_error}>
+                                        Sync Failed
+                                      </Badge>
+                                    ) : (
+                                      <Badge tone="success">Synced</Badge>
+                                    )}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt className="text-xs text-zinc-500">AirPrint</dt>
+                                  <dd>
+                                    {printer.airprint_enabled ? (
+                                      <Badge tone="success">Discoverable</Badge>
+                                    ) : (
+                                      <Badge tone="neutral">Hidden</Badge>
+                                    )}
+                                  </dd>
+                                </div>
+                              </dl>
+
+                              <div>
+                                <p className="mb-1 text-xs text-zinc-500">Capabilities</p>
+                                {(() => {
+                                  const badges = capabilityBadges(printer.capabilities);
+                                  if (badges.length === 0) {
+                                    return <span className="text-xs text-zinc-400">—</span>;
+                                  }
+                                  // Shown in full — there is room for a dozen
+                                  // finishing options down here, which is why
+                                  // the old "+N more" is gone.
+                                  return (
+                                    <div className="flex flex-wrap items-center gap-1">
+                                      {badges.map((badge) => (
+                                        <Badge key={badge} tone="info">
+                                          {badge}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+
+                              {isAdmin && (
+                                <div className="flex flex-wrap items-center gap-3">
+                                  <Button
+                                    variant="secondary"
+                                    className="!px-3 !py-1 text-xs"
+                                    disabled={testPrint?.phase === "sending"}
+                                    onClick={() => handleTestPrint(printer.id)}
+                                  >
+                                    {testPrint?.phase === "sending"
+                                      ? "Sending…"
+                                      : "Test Print"}
+                                  </Button>
+                                  {testPrint?.phase === "ok" &&
+                                    (isHeldMessage(testPrint.message) ? (
+                                      // Amber, not green: the submission
+                                      // succeeded, but nothing is going to
+                                      // print until someone acts.
+                                      <span className="text-xs text-amber-700 dark:text-amber-400">
+                                        {testPrint.message}
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-emerald-700 dark:text-emerald-400">
+                                        Sent — check Jobs
+                                      </span>
+                                    ))}
+                                  {testPrint?.phase === "error" && (
+                                    <span className="text-xs text-red-600 dark:text-red-400">
+                                      {testPrint.message}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>
