@@ -11,9 +11,9 @@ schedules an update.
   list of nearly 300. Search matches a person's name, their username or their
   copier code, and says plainly when nobody matches — so "is this person set up
   here?" is a question you can answer in a second.
-- **The list is now in alphabetical order**, by the name you would look for.
-  The copier returns accounts in its own order, which is not one anyone can
-  scan by eye.
+- **The list is now ordered by surname**, the way a staff roster is, and shown
+  that way too — "Woodard, Madison" — so the order explains itself. The copier
+  returns accounts in its own order, which is not one anyone can scan by eye.
 - **Each account now shows the person's name**, not just their username. A
   copier only stores the username — `mwoodard` — so looking for "Madison
   Woodard" in that list failed even when her account was there. That is exactly

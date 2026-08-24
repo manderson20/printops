@@ -103,6 +103,19 @@ function capabilityTone(value: boolean | null): "success" | "danger" | "neutral"
  * — provisioning, counter polls, owner attribution — is the behaviour that was
  * already working.
  */
+/** "Madison Woodard" -> "Woodard, Madison".
+ *
+ * The list is ordered by surname, and a surname-ordered list displayed
+ * first-name-first reads as though it is in no order at all. Shown the way a
+ * staff roster is, so the ordering explains itself. A single-word name comes
+ * back unchanged.
+ */
+function surnameFirst(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length < 2) return fullName;
+  return `${parts[parts.length - 1]}, ${parts.slice(0, -1).join(" ")}`;
+}
+
 export function CopierPanel({
   deviceId,
   printer,
@@ -230,15 +243,24 @@ export function CopierPanel({
       };
     });
 
-    // Alphabetical by the name a person would look for, falling back to the
-    // username and then the code. The device returns them in its own order,
-    // which is not an order anyone can search by eye.
+    // By surname, the way a staff roster is ordered — not by first name.
+    // People are looked up by last name here, and the copier's own usernames
+    // are built from it ("mwoodard"), so surname is the one thing both halves
+    // of this list agree on. Last token of the name: good enough for "Beth Ann
+    // Thompson" and for the ALL-CAPS entries the directory contains, and a
+    // wrong guess only misplaces one row rather than breaking anything.
+    // Accounts PrintOps cannot put a name to sort under their username, kept
+    // in the one sequence rather than clumped at the end.
+    const sortKey = (row: (typeof rows)[number]) => {
+      if (row.fullName) {
+        const parts = row.fullName.trim().split(/\s+/);
+        const surname = parts[parts.length - 1];
+        return `${surname} ${parts.slice(0, -1).join(" ")}`.trim();
+      }
+      return row.account.name ?? row.account.identifier;
+    };
     rows.sort((a, b) =>
-      (a.fullName ?? a.account.name ?? a.account.identifier).localeCompare(
-        b.fullName ?? b.account.name ?? b.account.identifier,
-        undefined,
-        { sensitivity: "base" },
-      ),
+      sortKey(a).localeCompare(sortKey(b), undefined, { sensitivity: "base" }),
     );
 
     const needle = accountSearch.trim().toLowerCase();
@@ -810,7 +832,9 @@ export function CopierPanel({
                           <span className="font-mono text-zinc-500">{account.name}</span>
                         )}
                         {fullName && (
-                          <span className="text-zinc-700 dark:text-zinc-300">{fullName}</span>
+                          <span className="text-zinc-700 dark:text-zinc-300">
+                            {surnameFirst(fullName)}
+                          </span>
                         )}
                         {!fullName && email && (
                           <span className="text-zinc-500">{email}</span>
