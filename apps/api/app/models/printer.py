@@ -172,6 +172,13 @@ class Printer(Base, TimestampMixin):
     # queue instead of forwarding it immediately — see app/routers/release.py
     # and app/printers/release.py for how a held job is later delivered via
     # a second, internal-only CUPS queue (scripts/sync_release_queue.sh).
+    # Whether this machine is also a copier — walk-up copying, per-account
+    # counters, staff codes. The copier itself is an MfpDevice row linked back
+    # here (app/models/mfp_device.py); this flag is what an admin turns on, and
+    # turning it off only hides the feature. It never deletes the device,
+    # because every foreign key into mfp_devices cascades and the accounting
+    # history rides on that row (migration 0068).
+    copier_enabled: Mapped[bool] = mapped_column(default=False, server_default="false")
     release_required: Mapped[bool] = mapped_column(default=False, server_default="false")
     # Print-and-release, follow-me variant. Sits alongside release_required
     # rather than replacing it — a job held because of this flag gets

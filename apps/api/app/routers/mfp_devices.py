@@ -53,7 +53,7 @@ def _job_out(job) -> "SyncJobOut":
     )
 
 
-def _device_out(device: MfpDevice) -> MfpDeviceOut:
+def mfp_device_out(device: MfpDevice) -> MfpDeviceOut:
     """Built explicitly (not MfpDeviceOut.model_validate(device) via
     from_attributes) because "capabilities" is a synthetic grouping of 14
     flat cap_* columns on the model, not a single attribute Pydantic could
@@ -177,19 +177,19 @@ async def create_mfp_device(payload: MfpDeviceCreate, db: AsyncSession = Depends
     db.add(device)
     await db.commit()
     await db.refresh(device)
-    return _device_out(device)
+    return mfp_device_out(device)
 
 
 @router.get("", response_model=list[MfpDeviceOut])
 async def list_mfp_devices(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(MfpDevice).order_by(MfpDevice.name))
-    return [_device_out(d) for d in result.scalars().all()]
+    return [mfp_device_out(d) for d in result.scalars().all()]
 
 
 @router.get("/{device_id}", response_model=MfpDeviceOut)
 async def get_mfp_device(device_id: UUID, db: AsyncSession = Depends(get_db)):
     device = await _get_device_or_404(device_id, db)
-    return _device_out(device)
+    return mfp_device_out(device)
 
 
 @router.patch("/{device_id}", response_model=MfpDeviceOut)
@@ -244,7 +244,7 @@ async def update_mfp_device(
 
     await db.commit()
     await db.refresh(device)
-    return _device_out(device)
+    return mfp_device_out(device)
 
 
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -269,7 +269,7 @@ async def test_mfp_device_connection(device_id: UUID, db: AsyncSession = Depends
     device.last_test_connection_message = result.message
     await db.commit()
     await db.refresh(device)
-    return _device_out(device)
+    return mfp_device_out(device)
 
 
 @router.post("/{device_id}/check-capabilities", response_model=MfpDeviceOut)
@@ -289,7 +289,7 @@ async def check_mfp_device_capabilities(device_id: UUID, db: AsyncSession = Depe
     device.capabilities_detected_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(device)
-    return _device_out(device)
+    return mfp_device_out(device)
 
 
 @router.post("/{device_id}/check-meter", response_model=MfpDeviceOut)
@@ -315,7 +315,7 @@ async def check_mfp_device_meter(device_id: UUID, db: AsyncSession = Depends(get
             device.page_count_error = printer.page_count_error
             await db.commit()
             await db.refresh(device)
-            return _device_out(device)
+            return mfp_device_out(device)
 
     connector = get_connector(device.connector_type)
     try:
@@ -324,7 +324,7 @@ async def check_mfp_device_meter(device_id: UUID, db: AsyncSession = Depends(get
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     await db.commit()
     await db.refresh(device)
-    return _device_out(device)
+    return mfp_device_out(device)
 
 
 @router.get("/{device_id}/usage", response_model=list[CopierUsageRecordOut])

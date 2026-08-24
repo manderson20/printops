@@ -113,6 +113,10 @@ export type Capabilities = {
 export type Printer = {
   id: string;
   name: string;
+  // Whether this machine also does walk-up copying. Set only through
+  // enablePrinterCopier / disablePrinterCopier below — the flag and the copier's own record
+  // have to be created together.
+  copier_enabled: boolean;
   // True for a virtual Follow-Me queue (no real device behind it) —
   // see createVirtualFollowMeQueue below. ip_address is null for these.
   is_virtual: boolean;
@@ -2998,6 +3002,33 @@ export async function dismissPrinterRedirect(id: string): Promise<Printer> {
   const response = await authorizedFetch(
     `/api/v1/printers/${id}/redirect/dismiss`,
     { method: "POST" },
+  );
+  return response.json();
+}
+
+// --- the copier side of a printer ---
+
+export async function getPrinterCopier(id: string): Promise<MfpDevice | null> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/copier`);
+  return response.json();
+}
+
+export async function enablePrinterCopier(id: string): Promise<MfpDevice> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${id}/copier/enable`,
+    {
+      method: "POST",
+    },
+  );
+  return response.json();
+}
+
+export async function disablePrinterCopier(id: string): Promise<Printer> {
+  const response = await authorizedFetch(
+    `/api/v1/printers/${id}/copier/disable`,
+    {
+      method: "POST",
+    },
   );
   return response.json();
 }
