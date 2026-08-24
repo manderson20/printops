@@ -5,6 +5,12 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.64.1] - 2026-08-24
+
+- **IP address is back on the printer's row** in the Printers list, rather than
+  inside the opened row — it is looked up across the whole list, not once a
+  printer has been picked.
+
 ## [0.64.0] - 2026-08-24
 
 - **The Printers list no longer scrolls sideways.** Ten columns did not fit on

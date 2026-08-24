@@ -118,8 +118,8 @@ export default function PrintersPage() {
   // Ten columns did not fit, so the table scrolled sideways and the things an
   // admin acts on — Test Print above all — sat off the right-hand edge. The
   // row now carries only what gets scanned down the list (is this the printer
-  // I mean, is it healthy, where is it, how much has it done); everything you
-  // want after picking a row opens underneath it.
+  // I mean, is it healthy, what is its address, where is it, how much has it
+  // done); everything you want after picking a row opens underneath it.
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState("");
@@ -253,6 +253,7 @@ export default function PrintersPage() {
                   <th className="w-8 px-2 py-3" />
                   <th className="px-4 py-3 font-medium">Name</th>
                   <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium">IP Address</th>
                   <th className="px-4 py-3 font-medium">Location</th>
                   <th className="px-4 py-3 font-medium">Pages</th>
                 </tr>
@@ -367,6 +368,9 @@ export default function PrintersPage() {
                           })()}
                         </td>
                         <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
+                          {printer.ip_address ?? "—"}
+                        </td>
+                        <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                           {[printer.building, printer.room, printer.department]
                             .filter(Boolean)
                             .join(" / ") || "—"}
@@ -382,7 +386,7 @@ export default function PrintersPage() {
                           className="border-t border-black/[.08] bg-black/[.02] dark:border-white/[.1] dark:bg-white/[.03]"
                         >
                           <td />
-                          <td colSpan={4} className="px-4 py-4">
+                          <td colSpan={5} className="px-4 py-4">
                             <div className="flex flex-col gap-4">
                               <dl className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3">
                                 <div>
@@ -394,12 +398,6 @@ export default function PrintersPage() {
                                         (capabilities not detected)
                                       </span>
                                     )}
-                                  </dd>
-                                </div>
-                                <div>
-                                  <dt className="text-xs text-zinc-500">IP Address</dt>
-                                  <dd className="text-zinc-700 dark:text-zinc-300">
-                                    {printer.ip_address ?? "—"}
                                   </dd>
                                 </div>
                                 <div>
