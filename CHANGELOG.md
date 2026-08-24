@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.64.2] - 2026-08-24
+
+- **Grey pages are no longer counted, or charged, as colour.** A colour job
+  sent to a black-and-white printer prints in grey, but the print server
+  reports the colour the job *asked* for — so Insights counted those pages as
+  colour and the cost formula billed them at the colour rate. Jobs on a printer
+  known to be black-and-white are now recorded as monochrome, and the 18 jobs
+  already stored that way have been corrected.
+- A printer whose capabilities have never been detected is left alone, so a
+  colour printer is never wrongly recorded as black-and-white.
+
 ## [0.64.1] - 2026-08-24
 
 - **IP address is back on the printer's row** in the Printers list, rather than
