@@ -854,42 +854,67 @@ export function CopierPanel({
                       " — nobody by that name has an account on this copier."}
                   </p>
                 )}
-                <ul className="max-h-72 overflow-y-auto text-xs">
-                  {accountRows.map((row) => (
-                    <li
-                      key={row.key}
-                      className="flex flex-wrap items-baseline gap-x-2 py-0.5"
-                    >
-                      <span className="font-mono">#{row.slot}</span>
-                      {row.username && (
-                        <span className="font-mono text-zinc-500">{row.username}</span>
-                      )}
-                      <span className="text-zinc-700 dark:text-zinc-300">
-                        {row.fullName ? surnameFirst(row.fullName) : (row.email ?? "—")}
-                      </span>
-                      {row.code && (
-                        <span className="font-mono text-zinc-400">code {row.code}</span>
-                      )}
-                      {/* Only meaningful once the copier has actually been
-                          read; before that, absence from the live list means
-                          nothing was asked, not that anything is wrong. */}
-                      {deviceAccounts && !row.onDevice && (
-                        <span className="text-amber-700 dark:text-amber-400">
-                          not on the copier
-                        </span>
-                      )}
-                      {deviceAccounts && !row.inPrintOps && (
-                        <span className="text-amber-700 dark:text-amber-400">
-                          on the copier only
-                        </span>
-                      )}
-                      {row.onDevice && row.hasPassword === false && (
-                        <span className="text-amber-700 dark:text-amber-400">no code set</span>
-                      )}
-                      {row.disabled && <span className="text-zinc-500">disabled</span>}
-                    </li>
-                  ))}
-                </ul>
+                <div className="max-h-72 overflow-y-auto">
+                  <table className="w-full text-left text-xs">
+                    {/* Header stays put while the list scrolls — with a few
+                        hundred rows, a column heading that scrolls away makes
+                        the numbers below it meaningless. */}
+                    <thead className="sticky top-0 bg-white text-zinc-500 dark:bg-zinc-950">
+                      <tr>
+                        <th className="py-1 pr-3 font-medium">Slot</th>
+                        <th className="py-1 pr-3 font-medium">Username</th>
+                        <th className="py-1 pr-3 font-medium">Name</th>
+                        <th className="py-1 pr-3 font-medium">Code</th>
+                        <th className="py-1 font-medium">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accountRows.map((row) => (
+                        <tr
+                          key={row.key}
+                          className="border-t border-black/[.04] dark:border-white/[.06]"
+                        >
+                          <td className="py-1 pr-3 font-mono">#{row.slot}</td>
+                          <td className="py-1 pr-3 font-mono text-zinc-500">
+                            {row.username ?? "—"}
+                          </td>
+                          <td className="py-1 pr-3 text-zinc-700 dark:text-zinc-300">
+                            {row.fullName ? surnameFirst(row.fullName) : (row.email ?? "—")}
+                          </td>
+                          <td className="py-1 pr-3 font-mono text-zinc-400">
+                            {row.code ?? "—"}
+                          </td>
+                          <td className="py-1">
+                            <div className="flex flex-wrap gap-x-2">
+                              {/* Only meaningful once the copier has actually
+                                  been read; before that, absence from the live
+                                  list means nothing was asked, not that
+                                  anything is wrong. */}
+                              {deviceAccounts && !row.onDevice && (
+                                <span className="text-amber-700 dark:text-amber-400">
+                                  not on the copier
+                                </span>
+                              )}
+                              {deviceAccounts && !row.inPrintOps && (
+                                <span className="text-amber-700 dark:text-amber-400">
+                                  on the copier only
+                                </span>
+                              )}
+                              {row.onDevice && row.hasPassword === false && (
+                                <span className="text-amber-700 dark:text-amber-400">
+                                  no code set
+                                </span>
+                              )}
+                              {row.disabled && (
+                                <span className="text-zinc-500">disabled</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </>
             )}
           </div>
