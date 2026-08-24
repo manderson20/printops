@@ -5,6 +5,27 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.66.0] - 2026-08-24
+
+- **One list of accounts instead of two.** The copier tab showed the same
+  people twice — once from PrintOps' record and once read from the machine —
+  under two different numbers, since a person's slot (268) and their copier
+  code (26818) are not the same thing. There is now a single list, and
+  **Check copier** reads the machine and marks anything the two disagree
+  about: an account PrintOps expects that isn't there, or one on the copier
+  that PrintOps didn't put there.
+- **You can search the staff accounts on a copier**, instead of scrolling a
+  list of nearly 300. Search matches a person's name, their username or their
+  copier code, and says plainly when nobody matches — so "is this person set up
+  here?" is a question you can answer in a second.
+- **The list is now ordered by surname**, the way a staff roster is, and shown
+  that way too — "Woodard, Madison" — so the order explains itself. The copier
+  returns accounts in its own order, which is not one anyone can scan by eye.
+- **Each account now shows the person's name**, not just their username. A
+  copier only stores the username — `mwoodard` — so looking for "Madison
+  Woodard" in that list failed even when her account was there. That is exactly
+  how someone who *is* set up gets reported as missing.
+
 ## [0.65.0] - 2026-08-24
 
 - **Held jobs are now part of Jobs.** The separate **Held Jobs** menu item is

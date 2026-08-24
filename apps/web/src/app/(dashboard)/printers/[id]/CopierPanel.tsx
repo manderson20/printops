@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ApiError,
@@ -103,6 +103,19 @@ function capabilityTone(value: boolean | null): "success" | "danger" | "neutral"
  * — provisioning, counter polls, owner attribution — is the behaviour that was
  * already working.
  */
+/** "Madison Woodard" -> "Woodard, Madison".
+ *
+ * The list is ordered by surname, and a surname-ordered list displayed
+ * first-name-first reads as though it is in no order at all. Shown the way a
+ * staff roster is, so the ordering explains itself. A single-word name comes
+ * back unchanged.
+ */
+function surnameFirst(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length < 2) return fullName;
+  return `${parts[parts.length - 1]}, ${parts.slice(0, -1).join(" ")}`;
+}
+
 export function CopierPanel({
   deviceId,
   printer,
@@ -135,6 +148,7 @@ export function CopierPanel({
   const [previewing, setPreviewing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [deviceAccounts, setDeviceAccounts] = useState<DeviceUser[] | null>(null);
+  const [accountSearch, setAccountSearch] = useState("");
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [accountsError, setAccountsError] = useState<string | null>(null);
   const [job, setJob] = useState<SyncJob | null>(null);
@@ -195,6 +209,137 @@ export function CopierPanel({
       .then(setStaffOptions)
       .catch(() => setStaffOptions([]));
   }, [deviceId]);
+
+  // The copier stores an account's *username* — the email local part, so
+  // "mwoodard" — never the person's name. Scrolling this list looking for
+  // "Madison Woodard" therefore fails even when she is on the copier, which
+  // is exactly how a correctly provisioned person gets reported as missing.
+  // PrintOps knows both halves, so the name is shown alongside and is
+  // searchable; the code is too, since that is what someone reads off a
+  // sticky note at the machine.
+  // One list, from two sources that describe the same accounts.
+  //
+  // PrintOps' provisioning record is the only thing that knows *who* a slot
+  // belongs to — the copier never reveals an account's code, and stores only a
+  // username like "mwoodard", never "Madison Woodard". Reading the machine
+  // adds what only it knows: whether the account is really there, has a code,
+  // is disabled. Showing these as two lists meant the same people appeared
+  // twice under two different numbers (slot 268 vs code 26818).
+  //
+  // Joined on device_account_id -> DeviceUser.identifier, which is the Konica
+  // TrackID slot both sides record. Never on the username: two people can
+  // share one, since the copier truncates at 20 characters and local parts
+  // repeat across domains, and joining on it would file one person's copies
+  // under another. The username is only a fallback for a live account with no
+  // provisioning record behind it.
+  const allAccountRows = useMemo(() => {
+    const nameByEmail = new Map<string, string>();
+    for (const person of staffOptions) {
+      if (person.name) nameByEmail.set(person.email.toLowerCase(), person.name);
+    }
+
+    type Row = {
+      key: string;
+      slot: string;
+      username: string | null;
+      email: string | null;
+      fullName: string | null;
+      code: string | null;
+      onDevice: boolean;
+      inPrintOps: boolean;
+      hasPassword: boolean | null;
+      disabled: boolean;
+    };
+
+    const bySlot = new Map<string, Row>();
+    for (const owner of owners ?? []) {
+      const slot = String(owner.device_account_id);
+      bySlot.set(slot, {
+        key: `p-${slot}`,
+        slot,
+        username: owner.device_account_name,
+        email: owner.staff_email,
+        fullName: nameByEmail.get(owner.staff_email.toLowerCase()) ?? null,
+        code: owner.identity_value,
+        onDevice: false,
+        inPrintOps: true,
+        hasPassword: null,
+        disabled: false,
+      });
+    }
+
+    for (const account of deviceAccounts ?? []) {
+      const slot = String(account.identifier);
+      const known = bySlot.get(slot);
+      if (known) {
+        known.onDevice = true;
+        known.hasPassword = account.has_password;
+        known.disabled = account.disabled;
+        // The copier's own label wins for display only when PrintOps has none.
+        known.username = known.username ?? account.name;
+      } else {
+        bySlot.set(slot, {
+          key: `d-${slot}`,
+          slot,
+          username: account.name,
+          email: null,
+          fullName: null,
+          code: null,
+          onDevice: true,
+          inPrintOps: false,
+          hasPassword: account.has_password,
+          disabled: account.disabled,
+        });
+      }
+    }
+
+    const rows = [...bySlot.values()];
+
+    // By surname, the way a staff roster is ordered — not by first name.
+    // People are looked up by last name here, and the copier's own usernames
+    // are built from it ("mwoodard"), so surname is the one thing both halves
+    // of this list agree on. Last token of the name: good enough for "Beth Ann
+    // Thompson" and for the ALL-CAPS entries the directory contains, and a
+    // wrong guess only misplaces one row rather than breaking anything.
+    // Accounts PrintOps cannot put a name to sort under their username, kept
+    // in the one sequence rather than clumped at the end.
+    const sortKey = (row: Row) => {
+      if (row.fullName) {
+        const parts = row.fullName.trim().split(/\s+/);
+        const surname = parts[parts.length - 1];
+        return `${surname} ${parts.slice(0, -1).join(" ")}`.trim();
+      }
+      return row.username ?? row.slot;
+    };
+    rows.sort((a, b) =>
+      sortKey(a).localeCompare(sortKey(b), undefined, { sensitivity: "base" }),
+    );
+
+    return rows;
+  }, [deviceAccounts, owners, staffOptions]);
+
+  // Sized to the longest name in the *whole* list, not the filtered one —
+  // measuring the visible rows would move the column again on every
+  // keystroke, which is the problem the fixed layout just solved. Names are
+  // not monospace so ch is approximate; the clamp keeps a single long name
+  // from pushing Code off to the right, and a short roster from squeezing it.
+  const nameColumnCh = useMemo(() => {
+    const longest = allAccountRows.reduce((max, row) => {
+      const shown = row.fullName ? surnameFirst(row.fullName) : (row.email ?? "");
+      return Math.max(max, shown.length);
+    }, 0);
+    return Math.min(38, Math.max(14, longest + 2));
+  }, [allAccountRows]);
+
+  const accountRows = useMemo(() => {
+    const needle = accountSearch.trim().toLowerCase();
+    if (!needle) return allAccountRows;
+    return allAccountRows.filter((row) =>
+      [row.slot, row.username, row.email, row.fullName, row.code]
+        .filter(Boolean)
+        .some((field) => String(field).toLowerCase().includes(needle)),
+    );
+  }, [allAccountRows, accountSearch]);
 
   async function handleSave() {
     setSaving(true);
@@ -674,12 +819,23 @@ export function CopierPanel({
             </div>
           )}
 
-          {owners && owners.length > 0 && (
-            <div className="mb-3">
-              <div className="mb-1 flex items-center justify-between">
-                <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                  Who is who on this copier
-                </span>
+          <div className="mb-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                Who is who on this copier
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={handleLoadDeviceAccounts}
+                  disabled={loadingAccounts}
+                >
+                  {loadingAccounts
+                    ? "Reading…"
+                    : deviceAccounts
+                      ? "Re-check copier"
+                      : "Check copier"}
+                </Button>
                 <Button
                   variant="secondary"
                   onClick={() => handleSyncUsers(true)}
@@ -688,62 +844,122 @@ export function CopierPanel({
                   Rewrite All
                 </Button>
               </div>
-              <p className="mb-1 text-xs text-zinc-500">
-                {owners.length} accounts PrintOps has set up here. The copier itself can&apos;t
-                tell you this — it never reveals an account&apos;s code — so this is the record of
-                which slot belongs to whom.
-              </p>
-              <ul className="max-h-56 overflow-y-auto text-xs">
-                {owners.map((o) => (
-                  <li key={o.device_account_id} className="py-0.5">
-                    <span className="font-mono">#{o.device_account_id}</span>{" "}
-                    <span className="font-mono text-zinc-500">
-                      {o.device_account_name ?? "—"}
-                    </span>{" "}
-                    — {o.staff_email}
-                  </li>
-                ))}
-              </ul>
             </div>
-          )}
-
-          <div className="mb-3 border-t border-black/[.06] pt-3 dark:border-white/[.1]">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                Accounts currently on the copier
-              </span>
-              <Button
-                variant="secondary"
-                onClick={handleLoadDeviceAccounts}
-                disabled={loadingAccounts}
-              >
-                {loadingAccounts ? "Reading…" : deviceAccounts ? "Refresh" : "Show"}
-              </Button>
-            </div>
+            <p className="mb-2 text-xs text-zinc-500">
+              {allAccountRows.length} accounts. PrintOps holds the record of which slot belongs
+              to whom — the copier itself can&apos;t tell you that, as it never reveals an
+              account&apos;s code. <strong>Check copier</strong> reads the machine live and
+              marks anything the two disagree about.
+            </p>
             {accountsError && <ErrorState>{accountsError}</ErrorState>}
-            {deviceAccounts !== null &&
-              (deviceAccounts.length === 0 ? (
-                <p className="text-xs text-zinc-500">
-                  The copier has no accounts registered yet.
-                </p>
-              ) : (
-                <>
+            {accountRows.length === 0 && !accountSearch.trim() ? (
+              <p className="text-xs text-zinc-500">
+                No accounts set up on this copier yet.
+              </p>
+            ) : (
+              <>
+                <Input
+                  value={accountSearch}
+                  onChange={(e) => setAccountSearch(e.target.value)}
+                  placeholder="Search by name, username, slot or code…"
+                  className="mb-2"
+                />
+                {accountSearch.trim() && (
                   <p className="mb-1 text-xs text-zinc-500">
-                    {deviceAccounts.length} registered on the device. Read live from the copier,
-                    not from PrintOps.
+                    {accountRows.length} match
+                    {accountRows.length === 0 &&
+                      " — nobody by that name has an account on this copier."}
                   </p>
-                  <ul className="max-h-48 overflow-y-auto text-xs">
-                    {deviceAccounts.map((account) => (
-                      <li key={account.identifier} className="py-0.5 font-mono">
-                        #{account.identifier}
-                        {account.name ? ` — ${account.name}` : ""}
-                        {!account.has_password && " (no code set)"}
-                        {account.disabled && " (disabled)"}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ))}
+                )}
+                {/* Fixed height, not max-height, once the full list would
+                    fill the box: otherwise every keystroke while searching
+                    resizes the panel and the content below it jumps around.
+                    A copier with only a handful of accounts still sizes to
+                    its content rather than showing a mostly-empty box. */}
+                <div
+                  className={`overflow-y-auto ${
+                    allAccountRows.length > 12 ? "h-72" : "max-h-72"
+                  }`}
+                >
+                  {/* table-fixed, with a width on every column: an auto table
+                      re-measures its columns against whatever rows are
+                      currently visible, so filtering to one person silently
+                      re-flows every column and the text stops lining up as
+                      you type. Fixed widths make the columns a property of
+                      the table rather than of the search. */}
+                  <table className="w-full table-fixed text-left text-xs">
+                    {/* Header stays put while the list scrolls — with a few
+                        hundred rows, a column heading that scrolls away makes
+                        the numbers below it meaningless. */}
+                    <thead className="sticky top-0 bg-white text-zinc-500 dark:bg-zinc-950">
+                      <tr>
+                        <th className="w-16 py-1 pr-3 font-medium">Slot</th>
+                        <th className="w-32 py-1 pr-3 font-medium">Username</th>
+                        <th
+                          className="py-1 pr-3 font-medium"
+                          style={{ width: `${nameColumnCh}ch` }}
+                        >
+                          Name
+                        </th>
+                        <th className="w-20 py-1 pr-3 font-medium">Code</th>
+                        <th className="py-1 font-medium">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accountRows.map((row) => (
+                        <tr
+                          key={row.key}
+                          className="border-t border-black/[.04] dark:border-white/[.06]"
+                        >
+                          <td className="truncate py-1 pr-3 font-mono">#{row.slot}</td>
+                          <td
+                            className="truncate py-1 pr-3 font-mono text-zinc-500"
+                            title={row.username ?? undefined}
+                          >
+                            {row.username ?? "—"}
+                          </td>
+                          <td
+                            className="truncate py-1 pr-3 text-zinc-700 dark:text-zinc-300"
+                            title={row.email ?? undefined}
+                          >
+                            {row.fullName ? surnameFirst(row.fullName) : (row.email ?? "—")}
+                          </td>
+                          <td className="truncate py-1 pr-3 font-mono text-zinc-400">
+                            {row.code ?? "—"}
+                          </td>
+                          <td className="py-1 text-[11px] leading-tight">
+                            <div className="flex flex-wrap gap-x-2">
+                              {/* Only meaningful once the copier has actually
+                                  been read; before that, absence from the live
+                                  list means nothing was asked, not that
+                                  anything is wrong. */}
+                              {deviceAccounts && !row.onDevice && (
+                                <span className="text-amber-700 dark:text-amber-400">
+                                  not on the copier
+                                </span>
+                              )}
+                              {deviceAccounts && !row.inPrintOps && (
+                                <span className="text-amber-700 dark:text-amber-400">
+                                  on the copier only
+                                </span>
+                              )}
+                              {row.onDevice && row.hasPassword === false && (
+                                <span className="text-amber-700 dark:text-amber-400">
+                                  no code set
+                                </span>
+                              )}
+                              {row.disabled && (
+                                <span className="text-zinc-500">disabled</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </div>
 
           {device.last_user_sync_at && (
