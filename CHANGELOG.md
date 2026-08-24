@@ -7,6 +7,13 @@ schedules an update.
 
 ## [0.66.0] - 2026-08-24
 
+- **One list of accounts instead of two.** The copier tab showed the same
+  people twice — once from PrintOps' record and once read from the machine —
+  under two different numbers, since a person's slot (268) and their copier
+  code (26818) are not the same thing. There is now a single list, and
+  **Check copier** reads the machine and marks anything the two disagree
+  about: an account PrintOps expects that isn't there, or one on the copier
+  that PrintOps didn't put there.
 - **You can search the staff accounts on a copier**, instead of scrolling a
   list of nearly 300. Search matches a person's name, their username or their
   copier code, and says plainly when nobody matches — so "is this person set up

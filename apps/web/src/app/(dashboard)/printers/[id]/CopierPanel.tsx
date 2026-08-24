@@ -217,31 +217,83 @@ export function CopierPanel({
   // PrintOps knows both halves, so the name is shown alongside and is
   // searchable; the code is too, since that is what someone reads off a
   // sticky note at the machine.
+  // One list, from two sources that describe the same accounts.
+  //
+  // PrintOps' provisioning record is the only thing that knows *who* a slot
+  // belongs to — the copier never reveals an account's code, and stores only a
+  // username like "mwoodard", never "Madison Woodard". Reading the machine
+  // adds what only it knows: whether the account is really there, has a code,
+  // is disabled. Showing these as two lists meant the same people appeared
+  // twice under two different numbers (slot 268 vs code 26818).
+  //
+  // Joined on device_account_id -> DeviceUser.identifier, which is the Konica
+  // TrackID slot both sides record. Never on the username: two people can
+  // share one, since the copier truncates at 20 characters and local parts
+  // repeat across domains, and joining on it would file one person's copies
+  // under another. The username is only a fallback for a live account with no
+  // provisioning record behind it.
   const accountRows = useMemo(() => {
-    if (!deviceAccounts) return [];
-    const emailByAccount = new Map<string, string>();
-    for (const owner of owners ?? []) {
-      if (owner.device_account_name) {
-        emailByAccount.set(owner.device_account_name.toLowerCase(), owner.staff_email);
-      }
-      emailByAccount.set(`#${owner.identity_value}`, owner.staff_email);
-    }
     const nameByEmail = new Map<string, string>();
     for (const person of staffOptions) {
       if (person.name) nameByEmail.set(person.email.toLowerCase(), person.name);
     }
 
-    const rows = deviceAccounts.map((account) => {
-      const email =
-        emailByAccount.get((account.name ?? "").toLowerCase()) ??
-        emailByAccount.get(`#${account.identifier}`) ??
-        null;
-      return {
-        account,
-        email,
-        fullName: email ? (nameByEmail.get(email.toLowerCase()) ?? null) : null,
-      };
-    });
+    type Row = {
+      key: string;
+      slot: string;
+      username: string | null;
+      email: string | null;
+      fullName: string | null;
+      code: string | null;
+      onDevice: boolean;
+      inPrintOps: boolean;
+      hasPassword: boolean | null;
+      disabled: boolean;
+    };
+
+    const bySlot = new Map<string, Row>();
+    for (const owner of owners ?? []) {
+      const slot = String(owner.device_account_id);
+      bySlot.set(slot, {
+        key: `p-${slot}`,
+        slot,
+        username: owner.device_account_name,
+        email: owner.staff_email,
+        fullName: nameByEmail.get(owner.staff_email.toLowerCase()) ?? null,
+        code: owner.identity_value,
+        onDevice: false,
+        inPrintOps: true,
+        hasPassword: null,
+        disabled: false,
+      });
+    }
+
+    for (const account of deviceAccounts ?? []) {
+      const slot = String(account.identifier);
+      const known = bySlot.get(slot);
+      if (known) {
+        known.onDevice = true;
+        known.hasPassword = account.has_password;
+        known.disabled = account.disabled;
+        // The copier's own label wins for display only when PrintOps has none.
+        known.username = known.username ?? account.name;
+      } else {
+        bySlot.set(slot, {
+          key: `d-${slot}`,
+          slot,
+          username: account.name,
+          email: null,
+          fullName: null,
+          code: null,
+          onDevice: true,
+          inPrintOps: false,
+          hasPassword: account.has_password,
+          disabled: account.disabled,
+        });
+      }
+    }
+
+    const rows = [...bySlot.values()];
 
     // By surname, the way a staff roster is ordered — not by first name.
     // People are looked up by last name here, and the copier's own usernames
@@ -251,13 +303,13 @@ export function CopierPanel({
     // wrong guess only misplaces one row rather than breaking anything.
     // Accounts PrintOps cannot put a name to sort under their username, kept
     // in the one sequence rather than clumped at the end.
-    const sortKey = (row: (typeof rows)[number]) => {
+    const sortKey = (row: Row) => {
       if (row.fullName) {
         const parts = row.fullName.trim().split(/\s+/);
         const surname = parts[parts.length - 1];
         return `${surname} ${parts.slice(0, -1).join(" ")}`.trim();
       }
-      return row.account.name ?? row.account.identifier;
+      return row.username ?? row.slot;
     };
     rows.sort((a, b) =>
       sortKey(a).localeCompare(sortKey(b), undefined, { sensitivity: "base" }),
@@ -266,7 +318,7 @@ export function CopierPanel({
     const needle = accountSearch.trim().toLowerCase();
     if (!needle) return rows;
     return rows.filter((row) =>
-      [row.account.identifier, row.account.name, row.email, row.fullName]
+      [row.slot, row.username, row.email, row.fullName, row.code]
         .filter(Boolean)
         .some((field) => String(field).toLowerCase().includes(needle)),
     );
@@ -750,12 +802,23 @@ export function CopierPanel({
             </div>
           )}
 
-          {owners && owners.length > 0 && (
-            <div className="mb-3">
-              <div className="mb-1 flex items-center justify-between">
-                <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                  Who is who on this copier
-                </span>
+          <div className="mb-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                Who is who on this copier
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={handleLoadDeviceAccounts}
+                  disabled={loadingAccounts}
+                >
+                  {loadingAccounts
+                    ? "Reading…"
+                    : deviceAccounts
+                      ? "Re-check copier"
+                      : "Check copier"}
+                </Button>
                 <Button
                   variant="secondary"
                   onClick={() => handleSyncUsers(true)}
@@ -764,94 +827,71 @@ export function CopierPanel({
                   Rewrite All
                 </Button>
               </div>
-              <p className="mb-1 text-xs text-zinc-500">
-                {owners.length} accounts PrintOps has set up here. The copier itself can&apos;t
-                tell you this — it never reveals an account&apos;s code — so this is the record of
-                which slot belongs to whom.
-              </p>
-              <ul className="max-h-56 overflow-y-auto text-xs">
-                {owners.map((o) => (
-                  <li key={o.device_account_id} className="py-0.5">
-                    <span className="font-mono">#{o.device_account_id}</span>{" "}
-                    <span className="font-mono text-zinc-500">
-                      {o.device_account_name ?? "—"}
-                    </span>{" "}
-                    — {o.staff_email}
-                  </li>
-                ))}
-              </ul>
             </div>
-          )}
-
-          <div className="mb-3 border-t border-black/[.06] pt-3 dark:border-white/[.1]">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                Accounts currently on the copier
-              </span>
-              <Button
-                variant="secondary"
-                onClick={handleLoadDeviceAccounts}
-                disabled={loadingAccounts}
-              >
-                {loadingAccounts ? "Reading…" : deviceAccounts ? "Refresh" : "Show"}
-              </Button>
-            </div>
+            <p className="mb-2 text-xs text-zinc-500">
+              {accountRows.length} accounts. PrintOps holds the record of which slot belongs
+              to whom — the copier itself can&apos;t tell you that, as it never reveals an
+              account&apos;s code. <strong>Check copier</strong> reads the machine live and
+              marks anything the two disagree about.
+            </p>
             {accountsError && <ErrorState>{accountsError}</ErrorState>}
-            {deviceAccounts !== null &&
-              (deviceAccounts.length === 0 ? (
-                <p className="text-xs text-zinc-500">
-                  The copier has no accounts registered yet.
-                </p>
-              ) : (
-                <>
-                  <p className="mb-2 text-xs text-zinc-500">
-                    {deviceAccounts.length} registered on the device. Read live from the copier,
-                    not from PrintOps.
+            {accountRows.length === 0 && !accountSearch.trim() ? (
+              <p className="text-xs text-zinc-500">
+                No accounts set up on this copier yet.
+              </p>
+            ) : (
+              <>
+                <Input
+                  value={accountSearch}
+                  onChange={(e) => setAccountSearch(e.target.value)}
+                  placeholder="Search by name, username, slot or code…"
+                  className="mb-2"
+                />
+                {accountSearch.trim() && (
+                  <p className="mb-1 text-xs text-zinc-500">
+                    {accountRows.length} match
+                    {accountRows.length === 0 &&
+                      " — nobody by that name has an account on this copier."}
                   </p>
-                  <Input
-                    value={accountSearch}
-                    onChange={(e) => setAccountSearch(e.target.value)}
-                    placeholder="Search by name, username or code…"
-                    className="mb-2"
-                  />
-                  {accountSearch.trim() && (
-                    <p className="mb-1 text-xs text-zinc-500">
-                      {accountRows.length} of {deviceAccounts.length} match
-                      {accountRows.length === 0 &&
-                        " — this person has no account on this copier."}
-                    </p>
-                  )}
-                  <ul className="max-h-72 overflow-y-auto text-xs">
-                    {accountRows.map(({ account, fullName, email }) => (
-                      <li
-                        key={account.identifier}
-                        className="flex flex-wrap items-baseline gap-x-2 py-0.5"
-                      >
-                        <span className="font-mono">#{account.identifier}</span>
-                        {account.name && (
-                          <span className="font-mono text-zinc-500">{account.name}</span>
-                        )}
-                        {fullName && (
-                          <span className="text-zinc-700 dark:text-zinc-300">
-                            {surnameFirst(fullName)}
-                          </span>
-                        )}
-                        {!fullName && email && (
-                          <span className="text-zinc-500">{email}</span>
-                        )}
-                        {!account.has_password && (
-                          <span className="text-amber-700 dark:text-amber-400">
-                            (no code set)
-                          </span>
-                        )}
-                        {account.disabled && (
-                          <span className="text-zinc-500">(disabled)</span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ))}
+                )}
+                <ul className="max-h-72 overflow-y-auto text-xs">
+                  {accountRows.map((row) => (
+                    <li
+                      key={row.key}
+                      className="flex flex-wrap items-baseline gap-x-2 py-0.5"
+                    >
+                      <span className="font-mono">#{row.slot}</span>
+                      {row.username && (
+                        <span className="font-mono text-zinc-500">{row.username}</span>
+                      )}
+                      <span className="text-zinc-700 dark:text-zinc-300">
+                        {row.fullName ? surnameFirst(row.fullName) : (row.email ?? "—")}
+                      </span>
+                      {row.code && (
+                        <span className="font-mono text-zinc-400">code {row.code}</span>
+                      )}
+                      {/* Only meaningful once the copier has actually been
+                          read; before that, absence from the live list means
+                          nothing was asked, not that anything is wrong. */}
+                      {deviceAccounts && !row.onDevice && (
+                        <span className="text-amber-700 dark:text-amber-400">
+                          not on the copier
+                        </span>
+                      )}
+                      {deviceAccounts && !row.inPrintOps && (
+                        <span className="text-amber-700 dark:text-amber-400">
+                          on the copier only
+                        </span>
+                      )}
+                      {row.onDevice && row.hasPassword === false && (
+                        <span className="text-amber-700 dark:text-amber-400">no code set</span>
+                      )}
+                      {row.disabled && <span className="text-zinc-500">disabled</span>}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </div>
 
           {device.last_user_sync_at && (
