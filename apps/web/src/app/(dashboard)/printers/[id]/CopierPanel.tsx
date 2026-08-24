@@ -318,6 +318,19 @@ export function CopierPanel({
     return rows;
   }, [deviceAccounts, owners, staffOptions]);
 
+  // Sized to the longest name in the *whole* list, not the filtered one —
+  // measuring the visible rows would move the column again on every
+  // keystroke, which is the problem the fixed layout just solved. Names are
+  // not monospace so ch is approximate; the clamp keeps a single long name
+  // from pushing Code off to the right, and a short roster from squeezing it.
+  const nameColumnCh = useMemo(() => {
+    const longest = allAccountRows.reduce((max, row) => {
+      const shown = row.fullName ? surnameFirst(row.fullName) : (row.email ?? "");
+      return Math.max(max, shown.length);
+    }, 0);
+    return Math.min(38, Math.max(14, longest + 2));
+  }, [allAccountRows]);
+
   const accountRows = useMemo(() => {
     const needle = accountSearch.trim().toLowerCase();
     if (!needle) return allAccountRows;
@@ -882,9 +895,14 @@ export function CopierPanel({
                       <tr>
                         <th className="w-16 py-1 pr-3 font-medium">Slot</th>
                         <th className="w-32 py-1 pr-3 font-medium">Username</th>
-                        <th className="py-1 pr-3 font-medium">Name</th>
+                        <th
+                          className="py-1 pr-3 font-medium"
+                          style={{ width: `${nameColumnCh}ch` }}
+                        >
+                          Name
+                        </th>
                         <th className="w-20 py-1 pr-3 font-medium">Code</th>
-                        <th className="w-36 py-1 font-medium">Status</th>
+                        <th className="py-1 font-medium">Status</th>
                       </tr>
                     </thead>
                     <tbody>
