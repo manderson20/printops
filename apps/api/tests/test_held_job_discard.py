@@ -108,7 +108,9 @@ async def test_discard_refuses_a_job_that_is_not_held(
         await session.commit()
 
     response = client.post(f"/api/v1/held-jobs/{job_id}/discard", headers=auth_headers)
-    assert response.status_code == 404
+    # 409, not 404: the job exists, it is simply no longer a hold. Saying "not
+    # found" about a job an admin is looking at would be a lie.
+    assert response.status_code == 409
 
 
 async def test_discard_requires_an_admin(client, held_job):
@@ -116,3 +118,34 @@ async def test_discard_requires_an_admin(client, held_job):
     response = client.post(f"/api/v1/held-jobs/{job_id}/discard")
     assert response.status_code in (401, 403)
     assert spool.exists(), "an unauthenticated call must not destroy the document"
+
+
+async def test_discard_loses_to_a_release_that_got_there_first(
+    client, auth_headers, held_job, db_session_factory
+):
+    """The race this is written against.
+
+    A printer_offline hold is released automatically by the status loop the
+    moment its printer answers — in a different session. Both paths can read
+    status == "held". If discard then deleted the file regardless, the document
+    could print while the history said it was discarded, or the release could
+    fail on a file already gone. The claim is a conditional UPDATE, so whoever
+    moves the row out of "held" first wins and the loser touches nothing.
+    """
+    job_id, spool = held_job
+
+    # Stand in for the release that won: the row is no longer held.
+    async with db_session_factory() as session:
+        job = (await session.execute(select(Job).where(Job.id == uuid.UUID(job_id)))).scalar_one()
+        job.status = "forwarded"
+        await session.commit()
+
+    response = client.post(f"/api/v1/held-jobs/{job_id}/discard", headers=auth_headers)
+
+    assert response.status_code in (404, 409)
+    assert spool.exists(), "the winner's document must survive the loser's discard"
+
+    async with db_session_factory() as session:
+        job = (await session.execute(select(Job).where(Job.id == uuid.UUID(job_id)))).scalar_one()
+        assert job.status == "forwarded", "the winner's verdict stands"
+        assert job.error_message != "Discarded without printing"

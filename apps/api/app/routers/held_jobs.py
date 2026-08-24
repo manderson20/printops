@@ -21,7 +21,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
@@ -129,16 +129,54 @@ async def discard_held_job(job_id: UUID, db: AsyncSession = Depends(get_db)):
     destroyed is the document, not the record of it. That asymmetry is the
     whole point, and it is why this cannot be a DELETE.
     """
-    job = await db.get(Job, job_id)
-    if job is None or job.status != "held":
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Held job not found.")
+    # Claimed with a conditional UPDATE rather than read-then-write, because
+    # this races the automatic release of printer_offline holds: the status
+    # loop (app/printers/offline_holds.py) submits a held document the moment
+    # its printer answers, in another session. Both could see status == "held"
+    # and act — one printing the document while the history says it was
+    # discarded, or the release failing on a file this handler already
+    # deleted. Whoever moves the row out of "held" first wins; the loser is
+    # told so and touches nothing.
+    now = datetime.now(UTC)
+    # Read before the claim: RETURNING hands back the *new* row, and the claim
+    # below nulls this column, so asking for it there returns None and the
+    # document is never deleted. Only these paths ever write it.
+    existing = await db.get(Job, job_id)
+    spool_path = existing.held_file_path if existing else None
 
-    if job.held_file_path:
-        Path(job.held_file_path).unlink(missing_ok=True)
-    job.status = "cancelled"
-    job.error_message = "Discarded without printing"
-    job.completed_at = datetime.now(UTC)
-    job.held_file_path = None
+    claimed = await db.execute(
+        update(Job)
+        .where(Job.id == job_id, Job.status == "held")
+        .values(
+            status="cancelled",
+            error_message="Discarded without printing",
+            completed_at=now,
+            held_file_path=None,
+        )
+        .returning(Job.id)
+    )
+    row = claimed.first()
+    if row is None:
+        await db.rollback()
+        job = await db.get(Job, job_id)
+        if job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Held job not found."
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"This job is no longer held — it is {job.status}. "
+                "It was most likely released while you were looking at it."
+            ),
+        )
+
+    # The file is removed only after the claim is committed. Deleting first
+    # would destroy the document of a job this handler turned out not to own.
     await db.commit()
+    if spool_path:
+        Path(spool_path).unlink(missing_ok=True)
+
+    job = await db.get(Job, job_id)
     await db.refresh(job)
     return job

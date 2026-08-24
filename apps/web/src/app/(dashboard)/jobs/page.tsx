@@ -8,6 +8,7 @@ import {
   adminDiscardHeldJob,
   adminReleaseHeldJob,
   cancelJob,
+  listAllHeldJobs,
   listJobs,
   listPrinters,
   type Job,
@@ -92,8 +93,16 @@ function JobsList() {
   // A Follow-Me job was addressed to a virtual queue with no device behind
   // it. The kiosk resolves that to whichever printer the person is standing
   // at; an admin is not standing anywhere, so they have to say.
+  // Archived is excluded deliberately: this list is loaded with
+  // includeArchived so the *filter* can still name a retired printer, but
+  // archiving tears down the CUPS queue. Releasing to one fails with an
+  // unknown destination, and a failed release flips the job out of "held" —
+  // taking Release and Discard with it, so the hold cannot be retried.
   const followMePrinters = useMemo(
-    () => printers.filter((p) => p.follow_me_enabled && !p.is_virtual),
+    () =>
+      printers.filter(
+        (p) => p.follow_me_enabled && !p.is_virtual && !p.archived_at,
+      ),
     [printers],
   );
 
@@ -105,7 +114,16 @@ function JobsList() {
 
   useEffect(() => {
     setState({ phase: "loading" });
-    listJobs({ printer_id: printerId || undefined, limit: 200 })
+    // Holds come from their own uncapped endpoint rather than the newest 200
+    // jobs. A hold waits — that is what makes it a hold — so on a busy fleet
+    // it drifts out of any recent-jobs window and becomes unreleasable, which
+    // is exactly the job someone is looking for. The general list stays
+    // capped; it is a log, and nobody needs its tail.
+    const load =
+      statusFilter === "held"
+        ? listAllHeldJobs()
+        : listJobs({ printer_id: printerId || undefined, limit: 200 });
+    load
       .then((jobs) => setState({ phase: "ok", jobs }))
       .catch((error: unknown) =>
         setState({
@@ -113,12 +131,14 @@ function JobsList() {
           message: error instanceof Error ? error.message : "Failed to load jobs",
         }),
       );
-  }, [printerId]);
+  }, [printerId, statusFilter]);
 
   function reload() {
-    listJobs({ printer_id: printerId || undefined, limit: 200 })
-      .then((jobs) => setState({ phase: "ok", jobs }))
-      .catch(() => undefined);
+    const load =
+      statusFilter === "held"
+        ? listAllHeldJobs()
+        : listJobs({ printer_id: printerId || undefined, limit: 200 });
+    load.then((jobs) => setState({ phase: "ok", jobs })).catch(() => undefined);
   }
 
   async function handleRelease(job: Job) {
@@ -361,16 +381,20 @@ function JobsList() {
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-2">
                           <Badge tone={info.tone}>{info.label}</Badge>
-                          {/* "Held" on its own does not say what for, and the
-                              answer changes who is expected to act: a quota
-                              hold is an admin's to release, a print-release
-                              hold is the submitter's, and an offline hold
-                              needs nobody at all. */}
-                          {job.status === "held" && job.hold_reason && (
-                            <Badge tone={HOLD_TONE[job.hold_reason] ?? "neutral"}>
-                              {HOLD_LABEL[job.hold_reason] ?? "Held"}
-                            </Badge>
-                          )}
+                          {/* Only when the reason changes who is expected to
+                              act. A print-release hold is what "Held" already
+                              means around here — nearly every hold on this
+                              server is one — so labelling it repeats the
+                              status badge next to it. The others genuinely
+                              differ: a quota hold is an admin's to release,
+                              and an offline hold needs nobody at all. */}
+                          {job.status === "held" &&
+                            job.hold_reason &&
+                            job.hold_reason !== "pin_release" && (
+                              <Badge tone={HOLD_TONE[job.hold_reason] ?? "neutral"}>
+                                {HOLD_LABEL[job.hold_reason] ?? "Held"}
+                              </Badge>
+                            )}
                           {isStuck && <Badge tone="warning">Stuck?</Badge>}
                         </div>
                         {job.status === "failed" && job.error_message && (
