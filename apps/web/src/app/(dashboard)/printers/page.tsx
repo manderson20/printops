@@ -83,6 +83,24 @@ const CSV_COLUMNS: { header: string; value: (printer: Printer) => string }[] = [
           ? "No"
           : "Unknown - not reported",
   },
+  {
+    // The other way onto a printer that bypasses the server entirely, and the
+    // one nobody could see without walking the building with a phone.
+    header: "Own Wi-Fi Network",
+    value: (p) =>
+      p.wireless_broadcasting === true
+        ? "Yes - broadcasting its own SSID"
+        : p.wireless_broadcasting === false
+          ? "No"
+          : "Unknown - not reported",
+  },
+  {
+    header: "Wi-Fi Radios",
+    value: (p) =>
+      (p.wireless_radios ?? [])
+        .map((radio) => `${radio.name} ${radio.up ? "up" : "down"}`)
+        .join("; "),
+  },
   { header: "Bonjour Name", value: (p) => p.capabilities?.dns_sd_name ?? "" },
   { header: "Archived", value: (p) => (p.archived_at ? "Yes" : "No") },
 ];
@@ -461,6 +479,42 @@ export default function PrintersPage() {
                                       <Badge tone="success">Off</Badge>
                                     ) : (
                                       <Badge tone="neutral">Not reported</Badge>
+                                    )}
+                                  </dd>
+                                </div>
+                                <div>
+                                  {/* The printer's own access point. Its radio
+                                      never appears on the wired network, so
+                                      until this the only way to find one was
+                                      to walk the building watching the Wi-Fi
+                                      list on a phone. */}
+                                  <dt className="text-xs text-zinc-500">Own Wi-Fi network</dt>
+                                  <dd>
+                                    {printer.wireless_broadcasting === true ? (
+                                      <Badge tone="warning">Broadcasting</Badge>
+                                    ) : printer.wireless_broadcasting === false ? (
+                                      <Badge tone="success">Off</Badge>
+                                    ) : (
+                                      <Badge tone="neutral">Not reported</Badge>
+                                    )}
+                                    {(printer.wireless_radios?.length ?? 0) > 0 && (
+                                      <p className="mt-1 text-xs text-zinc-500">
+                                        {printer.wireless_radios
+                                          ?.map(
+                                            (radio) =>
+                                              `${radio.name}: ${radio.up ? "up" : "down"}${
+                                                radio.access_point ? " (access point)" : ""
+                                              }`,
+                                          )
+                                          .join(" · ")}
+                                      </p>
+                                    )}
+                                    {printer.wireless_broadcasting === true && (
+                                      <p className="mt-1 text-xs text-zinc-500">
+                                        Anyone in range can connect to this printer directly,
+                                        without touching the district network. Turn Wi-Fi Direct
+                                        off on the printer&rsquo;s own panel.
+                                      </p>
                                     )}
                                   </dd>
                                 </div>
