@@ -292,6 +292,12 @@ async def _snmp_counter_poll_loop() -> None:
                             # and why walking the building was the alternative.
                             await refresh_printer_wireless(printer, defaults)
                         except SnmpProbeError:
+                            # Best-effort per printer, exactly as the toner poll
+                            # below is: a device that won't answer this walk has
+                            # already had its error recorded on the row by
+                            # refresh_printer_wireless, and must not stop the
+                            # rest of this gather() — or this printer's own
+                            # counter reading, which is the point of the loop.
                             pass
                         try:
                             await sync_toner_levels(
