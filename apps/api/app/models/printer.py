@@ -248,6 +248,24 @@ class Printer(Base, TimestampMixin):
     )
     page_count_error: Mapped[str | None] = mapped_column(default=None)
 
+    # --- The printer's own radios (app/printers/wireless.py) ---
+    # True when an access-point radio is up: this machine is hosting a Wi-Fi
+    # network of its own right now, which is a way onto it that never touches
+    # the district's network. False when it has no such radio, or has one and
+    # it is off. None means it hasn't been asked, or couldn't be — a printer
+    # that stopped answering SNMP is not a printer that stopped broadcasting,
+    # and the two must not read the same.
+    wireless_broadcasting: Mapped[bool | None] = mapped_column(default=None)
+    # One entry per radio: {"name", "up", "access_point"}. The boolean above
+    # can't show its working, and "wifi0 down, wifiUAP up" is what tells an
+    # admin which switch on the panel they are looking for. An empty list is a
+    # real answer: no wireless hardware at all.
+    wireless_radios: Mapped[list | None] = mapped_column(JSON, default=None)
+    wireless_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    wireless_error: Mapped[str | None] = mapped_column(default=None)
+
     # LDAP address-book relay (infra/ldap-relay/, app/routers/internal.py's
     # /ldap/bind + /ldap/search) — lets this printer's scan-to-email address
     # book search PrintOps instead of holding its own direct connection to

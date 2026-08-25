@@ -284,6 +284,14 @@ class PrinterOut(BaseModel):
     page_count_vendor_profile_used: str | None
     page_count_checked_at: datetime | None
     page_count_error: str | None
+    # The printer's own radios — see app/printers/wireless.py. True means it is
+    # hosting a Wi-Fi network of its own right now, which is a way onto the
+    # machine that never touches the district's network. None means it hasn't
+    # been asked or couldn't be, which is not the same as "no".
+    wireless_broadcasting: bool | None = None
+    wireless_radios: list[dict] | None = None
+    wireless_checked_at: datetime | None = None
+    wireless_error: str | None = None
 
     created_at: datetime
     updated_at: datetime

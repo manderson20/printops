@@ -194,6 +194,13 @@ export type Printer = {
   page_count_vendor_profile_used: string | null;
   page_count_checked_at: string | null;
   page_count_error: string | null;
+  /** True when the printer is hosting a Wi-Fi network of its own right now.
+   *  null = not asked, or couldn't be — which is not the same as "no". */
+  wireless_broadcasting: boolean | null;
+  /** One entry per radio: the boolean above can't show its working. */
+  wireless_radios: { name: string; up: boolean; access_point: boolean }[] | null;
+  wireless_checked_at: string | null;
+  wireless_error: string | null;
   created_at: string;
   updated_at: string;
 };

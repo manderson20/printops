@@ -83,9 +83,66 @@ const CSV_COLUMNS: { header: string; value: (printer: Printer) => string }[] = [
           ? "No"
           : "Unknown - not reported",
   },
+  {
+    // The other way onto a printer that bypasses the server entirely, and the
+    // one nobody could see without walking the building with a phone.
+    header: "Own Wi-Fi Network",
+    value: (p) => {
+      const verdict = wirelessVerdict(p);
+      if (verdict.state === "broadcasting") return "Yes - broadcasting its own SSID";
+      if (verdict.state === "off") return "No";
+      if (verdict.stale && verdict.lastSeen) {
+        // Never a bare "No" on a stale reading: a printer that stopped
+        // answering is not a printer that is still switched off.
+        return `Unknown - printer not answering, last seen ${
+          verdict.lastSeen === "broadcasting" ? "broadcasting" : "off"
+        }`;
+      }
+      return "Unknown - not reported";
+    },
+  },
+  {
+    header: "Wi-Fi Radios",
+    value: (p) =>
+      (p.wireless_radios ?? [])
+        .map((radio) => `${radio.name} ${radio.up ? "up" : "down"}`)
+        .join("; "),
+  },
   { header: "Bonjour Name", value: (p) => p.capabilities?.dns_sd_name ?? "" },
   { header: "Archived", value: (p) => (p.archived_at ? "Yes" : "No") },
 ];
+
+// What to say about a printer's own Wi-Fi right now.
+//
+// The row keeps the last good reading when a poll fails (see
+// app/printers/wireless.py) — losing it would be worse — but a kept reading is
+// not a current one, and presenting it as one is how this feature would betray
+// the person relying on it: a printer last seen "Off" can have its access point
+// switched on and then stop answering SNMP, and the page would go on saying
+// "Off" indefinitely. Once the device stops answering, the honest answer is
+// that nobody knows; the last reading is offered as history, with its date.
+function wirelessVerdict(p: Printer): {
+  state: "broadcasting" | "off" | "unknown";
+  stale: boolean;
+  lastSeen: "broadcasting" | "off" | null;
+  checkedAt: string | null;
+} {
+  const lastSeen =
+    p.wireless_broadcasting === true
+      ? ("broadcasting" as const)
+      : p.wireless_broadcasting === false
+        ? ("off" as const)
+        : null;
+  if (p.wireless_error) {
+    return { state: "unknown", stale: true, lastSeen, checkedAt: p.wireless_checked_at };
+  }
+  return {
+    state: lastSeen ?? "unknown",
+    stale: false,
+    lastSeen,
+    checkedAt: p.wireless_checked_at,
+  };
+}
 
 // Quote any field containing a comma, quote, or newline — the minimal
 // escaping CSV needs, per RFC 4180. Excel/Sheets/Numbers all read this.
@@ -462,6 +519,65 @@ export default function PrintersPage() {
                                     ) : (
                                       <Badge tone="neutral">Not reported</Badge>
                                     )}
+                                  </dd>
+                                </div>
+                                <div>
+                                  {/* The printer's own access point. Its radio
+                                      never appears on the wired network, so
+                                      until this the only way to find one was
+                                      to walk the building watching the Wi-Fi
+                                      list on a phone. */}
+                                  <dt className="text-xs text-zinc-500">Own Wi-Fi network</dt>
+                                  <dd>
+                                    {(() => {
+                                      const verdict = wirelessVerdict(printer);
+                                      if (verdict.state === "broadcasting")
+                                        return <Badge tone="warning">Broadcasting</Badge>;
+                                      if (verdict.state === "off")
+                                        return <Badge tone="success">Off</Badge>;
+                                      return <Badge tone="neutral">Not reported</Badge>;
+                                    })()}
+                                    {(printer.wireless_radios?.length ?? 0) > 0 && (
+                                      <p className="mt-1 text-xs text-zinc-500">
+                                        {printer.wireless_radios
+                                          ?.map(
+                                            (radio) =>
+                                              `${radio.name}: ${radio.up ? "up" : "down"}${
+                                                radio.access_point ? " (access point)" : ""
+                                              }`,
+                                          )
+                                          .join(" · ")}
+                                      </p>
+                                    )}
+                                    {(() => {
+                                      const verdict = wirelessVerdict(printer);
+                                      if (verdict.state === "broadcasting") {
+                                        return (
+                                          <p className="mt-1 text-xs text-zinc-500">
+                                            Anyone in range can connect to this printer directly,
+                                            without touching the district network. Turn Wi-Fi
+                                            Direct off on the printer&rsquo;s own panel.
+                                          </p>
+                                        );
+                                      }
+                                      if (verdict.stale) {
+                                        return (
+                                          <p className="mt-1 text-xs text-zinc-500">
+                                            This printer isn&rsquo;t answering, so its radios
+                                            can&rsquo;t be checked right now.
+                                            {verdict.lastSeen &&
+                                              ` When it last answered${
+                                                verdict.checkedAt
+                                                  ? ` (${new Date(verdict.checkedAt).toLocaleString()})`
+                                                  : ""
+                                              } its own Wi-Fi was ${
+                                                verdict.lastSeen === "broadcasting" ? "on" : "off"
+                                              } — that may have changed since.`}
+                                          </p>
+                                        );
+                                      }
+                                      return null;
+                                    })()}
                                   </dd>
                                 </div>
                                 {printer.capabilities?.media_col_broken === true && (

@@ -5,6 +5,32 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.71.0] - 2026-08-25
+
+- **You can now see which printers are running a Wi-Fi network of their own.**
+  Many printers can host their own access point — Wi-Fi Direct on HP, Access
+  Point Mode on Canon — and ship with it switched on. Anyone in range can then
+  connect to that machine directly, without touching the district network at
+  all: no VLAN, no firewall rule, no PrintOps. Until now the only way to find
+  one was to walk the building watching the Wi-Fi list on a phone.
+- Open a printer's row on the **Printers** page and look at **Own Wi-Fi
+  network**, or export the printer list to CSV to work through the whole fleet.
+  A printer that is broadcasting says so, and lists its radios — "wifi0: down ·
+  wifiUAP: up (access point)" — so you know which setting on the panel you are
+  looking for.
+- **A printer that has joined someone else's Wi-Fi is not the same thing**, and
+  isn't reported as broadcasting. Both radios are listed either way, so a
+  printer sitting on the wire *and* on a wireless network is visible too.
+- A printer that can't be asked reads **Not reported**, never "Off". That holds
+  for a printer that has answered before, too: once it stops answering, the page
+  says so and offers the last reading with its date rather than repeating it as
+  though it were current. A printer last seen switched off can have its Wi-Fi
+  turned on and *then* go quiet, and a page still saying "Off" would fail the
+  person relying on it.
+- Detection is read-only and rides along on the SNMP poll that already runs
+  every 30 minutes. Nothing is changed on any device, printing is unaffected,
+  and switching a radio off is picked up within the half hour.
+
 ## [0.70.0] - 2026-08-25
 
 - **Held jobs now appear on your Print Queue page.** A job PrintOps is holding
