@@ -15,6 +15,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
 import { formatBytes } from "@/lib/format";
+import { useCurrentUser } from "@/lib/useCurrentUser";
 
 type LoadState =
   | { phase: "loading" }
@@ -33,12 +34,20 @@ function jobLabel(job: PrintQueueJob): string {
 
 function stateBadge(job: PrintQueueJob) {
   if (job.state === "printing") return <Badge tone="success">Printing now</Badge>;
-  if (job.state === "held") return <Badge tone="neutral">Held</Badge>;
+  // "Held" on this page always means a person parked the job — an admin on the
+  // print server, or PrintOps itself waiting for a release. It is not the
+  // printer doing something, and a bare "Held" badge reads as though it were.
+  if (job.state === "held") return <Badge tone="neutral">Held by an administrator</Badge>;
   if (job.yielded) return <Badge tone="warning">Letting others go first</Badge>;
   return <Badge tone="neutral">Waiting</Badge>;
 }
 
 export default function PrintQueuePage() {
+  const currentUser = useCurrentUser();
+  // A "View as" session is read-only server-side — every non-GET is 403'd by
+  // the middleware in app/main.py, whatever the page thinks. So the buttons
+  // are disabled rather than left to fail, matching the Print page.
+  const isImpersonating = Boolean(currentUser?.impersonated_by);
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [busy, setBusy] = useState<Record<number, boolean>>({});
   const [errors, setErrors] = useState<Record<number, string>>({});
@@ -149,7 +158,7 @@ export default function PrintQueuePage() {
                       <Button
                         variant="secondary"
                         className="!px-3 !py-1 text-xs"
-                        disabled={busy[job.cups_job_id]}
+                        disabled={busy[job.cups_job_id] || isImpersonating}
                         onClick={() => act(job, job.can_yield ? "yield" : "restore")}
                       >
                         {busy[job.cups_job_id]
@@ -168,6 +177,21 @@ export default function PrintQueuePage() {
                 </li>
               ))}
             </ol>
+
+            {isImpersonating && (
+              <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
+                You&rsquo;re viewing this as another user (read-only) — moving jobs is
+                disabled during a &quot;View as&quot; session.
+              </p>
+            )}
+
+            {queue.jobs.some((job) => job.state === "held" && job.mine) && (
+              <p className="mt-3 text-xs text-zinc-500">
+                A held job is one someone has parked on the print server. It will not
+                print until an administrator releases it, and it isn&rsquo;t holding
+                anyone else up in the meantime.
+              </p>
+            )}
 
             {queue.jobs.some((job) => job.yielded && job.mine) && (
               <p className="mt-3 text-xs text-zinc-500">
