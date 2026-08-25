@@ -47,6 +47,11 @@ REQUESTED_ATTRIBUTES: list[str] = [
     # right now" and would have made every copier look like it has dozens
     # of trays.
     "media-col-ready",
+    # Not parsed into a capability field — read by app/printers/discovery.py to
+    # decide whether the media-col probe is even a question worth asking. CUPS
+    # only builds a media-col for a device that advertises this, so a device
+    # that doesn't cannot be hurt by the collection it can't parse.
+    "media-col-supported",
     "output-bin-supported",
     "finishings-supported",
     "job-password-supported",

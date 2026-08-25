@@ -69,10 +69,16 @@ const CSV_COLUMNS: { header: string; value: (printer: Printer) => string }[] = [
   {
     // The fleet-wide answer to "who could bypass the server". Exported so it
     // can be sorted and worked through a printer at a time.
-    header: "Printer AirPrint",
+    //
+    // Named for what it answers rather than for AirPrint alone: the detection
+    // accepts Apple's marker (urf-supported) OR Mopria certification, because
+    // either one lets someone add the machine directly and print around
+    // PrintOps — Mopria is the same hole with an Android key. Calling the
+    // column "AirPrint" would assert Apple conformance this can't see.
+    header: "Direct Printing",
     value: (p) =>
       p.capabilities?.airprint_supported === true
-        ? "Yes - can be added directly"
+        ? "Yes - AirPrint or Mopria, can be added directly"
         : p.capabilities?.airprint_supported === false
           ? "No"
           : "Unknown - not reported",
@@ -437,12 +443,17 @@ export default function PrintersPage() {
                                   </dd>
                                 </div>
                                 <div>
-                                  {/* The printer's own AirPrint, which is a
-                                      different question from the queue's:
-                                      this is whether someone on its VLAN
-                                      could add the machine directly and
-                                      print around PrintOps. */}
-                                  <dt className="text-xs text-zinc-500">Printer AirPrint</dt>
+                                  {/* The printer's own direct-printing
+                                      support, which is a different question
+                                      from the queue's: this is whether
+                                      someone on its VLAN could add the
+                                      machine directly and print around
+                                      PrintOps — via AirPrint or Mopria,
+                                      which are separate certifications and
+                                      the same hole. */}
+                                  <dt className="text-xs text-zinc-500">
+                                    Direct printing (AirPrint / Mopria)
+                                  </dt>
                                   <dd>
                                     {printer.capabilities?.airprint_supported === true ? (
                                       <Badge tone="warning">Can be added directly</Badge>

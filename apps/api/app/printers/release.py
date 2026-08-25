@@ -1,5 +1,7 @@
 import subprocess
 
+from app.printers.media_options import strip_media_options
+
 
 class ReleaseError(Exception):
     pass
@@ -23,6 +25,7 @@ def submit_released_job(
     document_name: str | None,
     copy_count: int | None,
     held_job_options: str | None,
+    drop_page_size: bool = False,
 ) -> str:
     """Delivers a previously-held job via the printer's internal
     direct-delivery queue (scripts/sync_release_queue.sh) — mirrors
@@ -38,6 +41,13 @@ def submit_released_job(
     "confirmed physically printed" — the post-completion ipptool
     page_count/color_mode/duplex capture normal jobs get isn't available
     for released jobs.
+
+    `drop_page_size` is that same missing backend showing through: a printer
+    whose firmware cannot parse media-col has its page-size options stripped by
+    infra/cups/backends/printops on the ordinary path, and nothing would do it
+    here. The caller passes the destination printer's own
+    `capabilities.media_col_broken`, since a Follow-Me job is released at a
+    printer that need not be the one it was sent to.
     """
     queue_name = f"printops-release-{printer_id}"
     argv = ["lp", "-d", queue_name]
@@ -45,7 +55,10 @@ def submit_released_job(
         argv += ["-n", str(copy_count)]
     if document_name:
         argv += ["-t", document_name]
-    for option in parse_job_options(held_job_options):
+    options = held_job_options or ""
+    if drop_page_size:
+        options = strip_media_options(options)
+    for option in parse_job_options(options):
         argv += ["-o", option]
     argv.append(held_file_path)
 

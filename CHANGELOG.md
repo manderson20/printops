@@ -20,12 +20,22 @@ schedules an update.
   update fixes the device. A printer that couldn't be asked is left alone
   rather than assumed broken. When it does apply, the printer's expanded row on
   the **Printers** page says so, under **Page size over IPP**.
+- **Held jobs are protected too.** A job held for quota, PIN release, or
+  because the printer was switched off is delivered later through a different
+  route, which didn't know about any of this. It does now — so a held job
+  released to an affected printer prints instead of failing on its way out.
+- The **Printer AirPrint** column is now **Direct Printing**. It always
+  answered "could someone add this machine directly and print around
+  PrintOps", which is true of Mopria (Android) as well as AirPrint (Apple) —
+  two separate certifications and the same hole. The old name asserted Apple
+  conformance the check can't actually see.
 - **You can now cancel a failed job.** A job PrintOps has marked failed is often
   still sitting on the print server being retried — and being retried is how
   one bad job stops a printer over and over. **Cancel** is now on those rows
   too, and on anything else that hasn't printed yet. A job that already printed
   still can't be cancelled, because there is nothing left to cancel, and held
-  jobs keep **Discard**.
+  jobs keep **Discard**. PrintOps checks the job is still the one it thinks it
+  is before cancelling anything, since print-server job numbers are reused.
 
 ## [0.67.0] - 2026-08-24
 

@@ -8,6 +8,7 @@ enough to trigger it: a device that was merely busy, rebooting or briefly off
 the network has to come out as "couldn't tell", not as broken.
 """
 
+from contextlib import contextmanager
 from unittest.mock import patch
 
 from app.printers.media_col_probe import detect_media_col_broken, probe_uri
@@ -17,14 +18,25 @@ URI = "ipps://10.50.1.37:443/ipp/print"
 ANSWERED = "successful-ok-ignored-or-substituted-attributes"
 
 
+@contextmanager
 def _statuses(*sequence):
     """Feeds detect_media_col_broken one canned Validate-Job outcome per call,
-    in order: control, media-col, then the control re-check."""
+    in order: control, media-col, then the control re-check.
+
+    ipptool is stubbed as present as well as answering. Without that these
+    tests pass or fail on whether the machine running them happens to have
+    CUPS installed — which is how they passed here and failed in CI, where
+    every one of them silently took the "no ipptool, answer unknown" path
+    instead of the logic they claim to describe."""
     answers = list(sequence)
-    return patch(
-        "app.printers.media_col_probe._validate_job_status",
-        side_effect=lambda *_args, **_kwargs: answers.pop(0),
-    )
+    with (
+        patch("app.printers.media_col_probe.shutil.which", return_value="/usr/bin/ipptool"),
+        patch(
+            "app.printers.media_col_probe._validate_job_status",
+            side_effect=lambda *_args, **_kwargs: answers.pop(0),
+        ),
+    ):
+        yield
 
 
 def test_answers_plain_but_not_media_col_is_broken():

@@ -132,6 +132,10 @@ async def _probe_following_redirect(printer: Printer) -> ProbeResult:
 async def refresh_printer_capabilities(printer: Printer) -> None:
     """Does not commit — the caller owns the transaction, matching
     app/printers/status.py's convention."""
+    # Read before the capabilities dict is replaced below: a media-col fault
+    # already confirmed against this device outlives a later probe that can't
+    # reach it (see _detect_media_col below).
+    previously_broken = (printer.capabilities or {}).get("media_col_broken")
     try:
         result = await _probe_following_redirect(printer)
         printer.capabilities = parse_capabilities(result.raw_attributes)
@@ -153,18 +157,49 @@ async def refresh_printer_capabilities(printer: Printer) -> None:
         detected_model = printer.capabilities.get("make_model")
         if not printer.manufacturer and not printer.model and detected_model:
             printer.model = detected_model
-        # Two more Validate-Jobs against a device we have just established is
-        # answering — see app/printers/media_col_probe.py for what they ask and
-        # why the answer can't be read off the attribute list above. Off the
-        # event loop: ipptool is a subprocess.
-        printer.capabilities["media_col_broken"] = await asyncio.to_thread(
-            detect_media_col_broken,
-            probe_uri(
-                printer.ip_address,
-                printer.port,
-                result.resolved_tls or printer.use_tls,
-                result.resolved_path or printer.effective_ipp_path,
-            ),
+        printer.capabilities["media_col_broken"] = await _detect_media_col(
+            printer, result, previously_broken
         )
     except PrinterProbeError as exc:
         printer.capabilities_error = str(exc)
+
+
+async def _detect_media_col(
+    printer: Printer, result: ProbeResult, previously_broken: bool | None
+) -> bool | None:
+    """Whether this device stops answering IPP when a job names a page size.
+
+    Only asked of a device that advertises `media-col-supported`: CUPS builds
+    the collection that causes the fault *because* the device advertises it, so
+    one that doesn't is never sent one and has nothing to be protected from.
+    Probing it anyway would spend two round trips per printer per refresh to
+    learn something that cannot happen — and worse, a legacy device that drops
+    the connection on any unrecognised collection would be marked broken, and
+    then have page-size selection stripped from jobs that were working.
+
+    A confirmed fault survives an inconclusive re-probe. Detection returns None
+    when the device could not be asked properly, and a printer coming back from
+    offline is exactly when that is likeliest; overwriting True with None there
+    would switch the workaround off in the backend (which acts only on a truthy
+    value) and hand the next page-sized job straight back to the fault. An
+    explicit False — the device was asked and answered — still clears it, so a
+    firmware fix is picked up.
+    """
+    if not result.raw_attributes.get("media-col-supported"):
+        return False
+    detected = await asyncio.to_thread(
+        detect_media_col_broken,
+        probe_uri(
+            printer.ip_address,
+            printer.port,
+            result.resolved_tls or printer.use_tls,
+            result.resolved_path or printer.effective_ipp_path,
+        ),
+    )
+    if detected is None and previously_broken:
+        logger.info(
+            "%s could not be re-checked for the media-col fault; keeping the confirmed result.",
+            printer.name,
+        )
+        return True
+    return detected

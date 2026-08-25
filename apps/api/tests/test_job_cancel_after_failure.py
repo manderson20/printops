@@ -23,6 +23,7 @@ from app.main import app
 from app.models.base import Base
 from app.models.job import Job
 from app.models.printer import Printer
+from app.printers.job_control import CupsJobIdentity
 
 
 @pytest_asyncio.fixture
@@ -57,7 +58,9 @@ def auth_headers(client):
 
 @pytest_asyncio.fixture
 async def job_factory(db_session_factory):
-    async def make(status: str, cups_job_id: int | None = 5814) -> str:
+    async def make(
+        status: str, cups_job_id: int | None = 5814, cups_job_uuid: str | None = None
+    ) -> str:
         async with db_session_factory() as session:
             printer = Printer(id=uuid.uuid4(), name="LCACTC - GA Kyocera", ip_address="10.50.1.37")
             session.add(printer)
@@ -66,6 +69,7 @@ async def job_factory(db_session_factory):
                 printer_id=printer.id,
                 status=status,
                 cups_job_id=cups_job_id,
+                cups_job_uuid=cups_job_uuid,
                 document_name="Advisory.pdf",
                 submitted_by="hfiala",
             )
@@ -83,9 +87,25 @@ def cancelled_ids(monkeypatch):
     return seen
 
 
+@pytest.fixture
+def cups_says(monkeypatch):
+    """Stands in for cupsd's answer to "whose job is id N right now?".
+
+    Defaults to "the same job this row describes", which is the ordinary case;
+    tests that care about a reused id say so explicitly."""
+
+    def set_identity(identity):
+        monkeypatch.setattr(
+            "app.routers.jobs.cups_job_identity", lambda printer_id, cups_job_id: identity
+        )
+
+    set_identity(CupsJobIdentity(uuid=None, owner="hfiala"))
+    return set_identity
+
+
 @pytest.mark.parametrize("status", ["forwarding", "failed", "cancelled", "received"])
 async def test_anything_that_has_not_printed_can_be_cancelled(
-    client, auth_headers, job_factory, cancelled_ids, status
+    client, auth_headers, job_factory, cancelled_ids, cups_says, status
 ):
     job_id = await job_factory(status)
     response = client.post(f"/api/v1/jobs/{job_id}/cancel", headers=auth_headers)
@@ -118,4 +138,43 @@ async def test_a_job_with_no_cups_id_says_so(client, auth_headers, job_factory, 
     job_id = await job_factory("failed", cups_job_id=None)
     response = client.post(f"/api/v1/jobs/{job_id}/cancel", headers=auth_headers)
     assert response.status_code == 400
+    assert cancelled_ids == []
+
+
+async def test_a_reused_job_id_is_not_cancelled_out_from_under_someone(
+    client, auth_headers, job_factory, cancelled_ids, cups_says
+):
+    """CUPS job ids restart from 1 when the spool is cleared, so an old row can
+    name an id that now belongs to a stranger's document. Closing our row must
+    not cancel theirs."""
+    job_id = await job_factory("failed")
+    cups_says(CupsJobIdentity(uuid=None, owner="someone.else@brookfieldr3.org"))
+    response = client.post(f"/api/v1/jobs/{job_id}/cancel", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+    assert cancelled_ids == []
+
+
+async def test_a_job_uuid_settles_it_when_the_owner_would_not(
+    client, auth_headers, job_factory, cancelled_ids, cups_says
+):
+    job_id = await job_factory("failed", cups_job_uuid="urn:uuid:the-original")
+    cups_says(CupsJobIdentity(uuid="urn:uuid:something-else", owner="hfiala"))
+    client.post(f"/api/v1/jobs/{job_id}/cancel", headers=auth_headers)
+    assert cancelled_ids == []
+
+    job_id = await job_factory("failed", cups_job_uuid="urn:uuid:the-original")
+    cups_says(CupsJobIdentity(uuid="urn:uuid:the-original", owner="anybody"))
+    client.post(f"/api/v1/jobs/{job_id}/cancel", headers=auth_headers)
+    assert cancelled_ids == [5814]
+
+
+async def test_a_job_cupsd_has_never_heard_of_just_closes(
+    client, auth_headers, job_factory, cancelled_ids, cups_says
+):
+    job_id = await job_factory("failed")
+    cups_says(None)
+    response = client.post(f"/api/v1/jobs/{job_id}/cancel", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
     assert cancelled_ids == []

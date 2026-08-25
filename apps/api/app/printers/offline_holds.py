@@ -88,6 +88,9 @@ async def release_jobs_waiting_for(db: AsyncSession, printer: Printer) -> int:
                 job.document_name,
                 job.copy_count,
                 job.held_job_options,
+                # See the release queue's own note in app/printers/release.py:
+                # nothing else strips the page size on this path.
+                bool((printer.capabilities or {}).get("media_col_broken")),
             )
         except ReleaseError as exc:
             job.status = "failed"

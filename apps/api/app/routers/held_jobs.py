@@ -90,6 +90,10 @@ async def release_held_job(
             job.document_name,
             job.copy_count,
             job.held_job_options,
+            # The release queue has no PrintOps backend on it, so this is the
+            # only place the media-col workaround can be applied to a job that
+            # was held — and it keys off the printer it is being released AT.
+            bool((printer.capabilities or {}).get("media_col_broken")),
         )
     except ReleaseError as exc:
         job.status = "failed"
@@ -160,9 +164,7 @@ async def discard_held_job(job_id: UUID, db: AsyncSession = Depends(get_db)):
         await db.rollback()
         job = await db.get(Job, job_id)
         if job is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Held job not found."
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Held job not found.")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
