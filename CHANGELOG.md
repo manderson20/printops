@@ -5,6 +5,25 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.69.0] - 2026-08-25
+
+- **Staff can now see the print queue they are standing in.** A new **Print
+  Queue** page shows what is waiting on the printers you have sent something
+  to — your job, where it is in the line, and how many jobs are ahead of it.
+  Other people's jobs appear as their size and their place in the queue only,
+  never by document name.
+- **"Let others go first."** If you have sent something long, you can move
+  your own job to the back of that printer's queue so a colleague's two-page
+  handout isn't stuck behind it. Your job still prints — it waits until the
+  others have. **Put back in line** undoes it, returning the job to its
+  original place, any time before it starts printing.
+- You can only move your own jobs, and only downwards. There is deliberately
+  no way to move a job ahead of someone else's, and a job that has already
+  started printing can't be moved at all.
+- The queue is read live from the print server rather than from PrintOps'
+  job history, so it shows jobs that are still waiting — which is exactly the
+  set that never appeared anywhere in PrintOps before.
+
 ## [0.68.0] - 2026-08-24
 
 - **A printer that can't accept a page size no longer stops its own queue.**

@@ -2936,6 +2936,46 @@ export type SelfServicePrintResult = {
   copies: number;
 };
 
+export type PrintQueueJob = {
+  cups_job_id: number;
+  /** 1-based place in this printer's line, in the order CUPS will print. */
+  position: number;
+  mine: boolean;
+  /** Null for other people's jobs — redacted server-side, not hidden here. */
+  document_name: string | null;
+  size_bytes: number | null;
+  state: "printing" | "waiting" | "held";
+  yielded: boolean;
+  can_yield: boolean;
+  can_restore: boolean;
+  submitted_at: string | null;
+};
+
+export type PrintQueuePrinter = {
+  printer_id: string;
+  printer_name: string;
+  jobs: PrintQueueJob[];
+  my_job_count: number;
+  total_job_count: number;
+};
+
+export async function getMyPrintQueue(): Promise<PrintQueuePrinter[]> {
+  const response = await authorizedFetch("/api/v1/print-queue");
+  return response.json();
+}
+
+export async function yieldPrintQueueJob(cupsJobId: number): Promise<void> {
+  await authorizedFetch(`/api/v1/print-queue/jobs/${cupsJobId}/yield`, {
+    method: "POST",
+  });
+}
+
+export async function restorePrintQueueJob(cupsJobId: number): Promise<void> {
+  await authorizedFetch(`/api/v1/print-queue/jobs/${cupsJobId}/restore`, {
+    method: "POST",
+  });
+}
+
 export async function listSelfServicePrinters(): Promise<SelfServicePrinter[]> {
   const response = await authorizedFetch("/api/v1/self-service-print/printers");
   return response.json();

@@ -351,13 +351,14 @@ async def _mirror_to_copier(db: AsyncSession, printer: Printer, changed: set[str
     if not shared:
         return
     device = (
-        await db.execute(select(MfpDevice).where(MfpDevice.printer_id == printer.id))
-    ).scalars().first()
+        (await db.execute(select(MfpDevice).where(MfpDevice.printer_id == printer.id)))
+        .scalars()
+        .first()
+    )
     if device is None:
         return
     for field in shared:
         setattr(device, SHARED_WITH_COPIER[field], getattr(printer, field))
-
 
 
 @router.patch(

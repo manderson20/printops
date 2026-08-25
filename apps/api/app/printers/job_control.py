@@ -7,8 +7,10 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "scripts"
 CANCEL_SCRIPT = SCRIPTS_DIR / "cancel_cups_job.sh"
 PURGE_SCRIPT = SCRIPTS_DIR / "purge_cups_queue.sh"
+PRIORITY_SCRIPT = SCRIPTS_DIR / "set_cups_job_priority.sh"
 
 CANCEL_TIMEOUT_SECONDS = 10
+PRIORITY_TIMEOUT_SECONDS = 10
 PURGE_TIMEOUT_SECONDS = 15
 LPSTAT_TIMEOUT_SECONDS = 5
 IPPTOOL_TIMEOUT_SECONDS = 10
@@ -50,9 +52,13 @@ class JobControlError(Exception):
 
 
 def _run(script: Path, arg: str, timeout: int) -> None:
+    _run_args(script, [arg], timeout)
+
+
+def _run_args(script: Path, args: list[str], timeout: int) -> None:
     try:
         result = subprocess.run(
-            [str(script), arg],
+            [str(script), *args],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -119,6 +125,17 @@ def cancel_cups_job(cups_job_id: int) -> None:
     queue_sync.py's non-fatal convention, a cancel that silently didn't
     happen would be actively misleading)."""
     _run(CANCEL_SCRIPT, str(cups_job_id), CANCEL_TIMEOUT_SECONDS)
+
+
+def set_cups_job_priority(cups_job_id: int, priority: int) -> None:
+    """Moves one queued job up or down the line by changing its CUPS
+    priority. Raises JobControlError on failure — unlike a cancel, a
+    priority change that silently didn't happen leaves someone believing
+    they have yielded when they are still at the head of the queue.
+
+    See app/printers/print_queue.py for what the values mean and who is
+    allowed to ask for this."""
+    _run_args(PRIORITY_SCRIPT, [str(cups_job_id), str(priority)], PRIORITY_TIMEOUT_SECONDS)
 
 
 @dataclass(frozen=True)
