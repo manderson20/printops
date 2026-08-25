@@ -5,6 +5,29 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.70.0] - 2026-08-25
+
+- **Held jobs now appear on your Print Queue page.** A job PrintOps is holding
+  never reaches a printer's queue, so nothing on that page could show it — and
+  the person who sent it had no way to tell a job that was waiting from one
+  that had vanished. Your own held jobs are now listed under **Waiting on
+  something else**, with what is holding them and what happens next.
+- Each one says what to do, which for most of them is nothing: a job held
+  because the printer was switched off **prints by itself when the printer is
+  back on**, and does not need sending again. A job over quota needs an
+  administrator. A job waiting for your PIN needs you at the printer.
+- Where a hold has a deadline, the job says when it expires. A hold that has
+  already expired isn't listed — its document has been deleted.
+- Only ever your own held jobs. Unlike the queue, where you can see that other
+  people are waiting behind you, a held job holds nobody else up, so there is
+  nothing for anyone else to see.
+- **You can throw away your own held job.** For the duplicate sent three times
+  or the document sent to the wrong printer, **Discard** clears it without
+  waiting for an administrator or for the hold to expire. It deletes the
+  document and cannot be undone, so it names the job and asks first. The job
+  itself stays in your history — what is destroyed is the document, not the
+  record of it. You can only discard your own.
+
 ## [0.69.0] - 2026-08-25
 
 - **Staff can now see the print queue they are standing in.** A new **Print
