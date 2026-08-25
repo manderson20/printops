@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.attribution.resolve import resolve_user
 from app.db import get_db
 from app.deps import get_current_user
+from app.held_jobs.service import HoldNoLongerHeld, HoldNotFound, discard_hold
 from app.models.job import Job
 from app.models.printer import Printer
 from app.printers.job_control import (
@@ -40,6 +41,7 @@ from app.printers.print_queue import (
     remember_priority_before_yield,
 )
 from app.schemas.auth import UserOut
+from app.schemas.job import JobOut
 from app.schemas.print_queue import (
     PrintQueueHeldJobOut,
     PrintQueueJobOut,
@@ -327,3 +329,52 @@ async def _my_held_jobs(db: AsyncSession, current_user: UserOut) -> list[PrintQu
         )
         for job, printer_name in rows
     ]
+
+
+@router.post("/held/{job_id}/discard", response_model=JobOut)
+async def discard_my_held_job(
+    job_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+):
+    """Throws away one of this person's own held jobs without printing it.
+
+    The commonest reason a hold is worth clearing belongs to the person who
+    made it, not to an admin: they sent the same thing three times, or sent it
+    to the wrong printer, and know it before anyone else does. Until now the
+    only ways out were an admin discarding it or the expiry sweep, and neither
+    of those is the person standing there who already knows.
+
+    Their own only — enforced inside the claim, not by a check before it — and
+    the same 404 for "no such job" as for "somebody else's", so nobody can
+    discover what else is held by discarding at guessed ids.
+
+    This deletes the document and cannot be undone. The job row stays, marked
+    cancelled, so the history and the reports are unaffected: what is destroyed
+    is the document, not the record of it.
+
+    Discarding an over-quota hold is deliberately allowed. The quota hold
+    exists to stop a job *printing* without an admin, and this doesn't print
+    it — throwing your own over-quota job away asks nothing of anyone and
+    consumes no quota.
+    """
+    identities = [identity for identity in _identities(current_user) if identity]
+    if not identities:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="That job isn't held under your name."
+        )
+    try:
+        return await discard_hold(db, job_id, owned_by=identities)
+    except HoldNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="That job isn't held under your name.",
+        ) from exc
+    except HoldNoLongerHeld as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"{exc} It may have started printing on its own — a job held for an offline "
+                "printer is released the moment that printer comes back."
+            ),
+        ) from exc

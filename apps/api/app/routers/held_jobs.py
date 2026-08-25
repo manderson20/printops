@@ -21,11 +21,12 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.deps import require_role
+from app.held_jobs.service import HoldNoLongerHeld, HoldNotFound, discard_hold
 from app.models.job import Job
 from app.models.printer import Printer
 from app.printers.release import ReleaseError, submit_released_job
@@ -119,7 +120,7 @@ async def release_held_job(
 
 @router.post("/{job_id}/discard", response_model=JobOut)
 async def discard_held_job(job_id: UUID, db: AsyncSession = Depends(get_db)):
-    """Throws one held job away without printing it.
+    """Throws one held job away without printing it, whoever sent it.
 
     The deliberate counterpart to release. A hold otherwise sits until someone
     releases it or Job.held_expires_at passes and the sweep in app/main.py
@@ -127,58 +128,19 @@ async def discard_held_job(job_id: UUID, db: AsyncSession = Depends(get_db)):
     a job nobody is coming back for (a duplicate sent three times, a document
     submitted to the wrong printer) without waiting out the expiry.
 
-    Disposes of it exactly as that sweep does, so there is one meaning of a
-    discarded hold rather than two: the spool file is deleted, the row is kept
-    and marked cancelled. The job stays in history and in the reports — what is
-    destroyed is the document, not the record of it. That asymmetry is the
-    whole point, and it is why this cannot be a DELETE.
+    The claim, the disposal and the reasoning behind both now live in
+    app/held_jobs/service.py, shared with the owner-facing discard on the queue
+    page (app/routers/print_queue.py). This is the unrestricted path: an admin
+    may discard anyone's hold.
     """
-    # Claimed with a conditional UPDATE rather than read-then-write, because
-    # this races the automatic release of printer_offline holds: the status
-    # loop (app/printers/offline_holds.py) submits a held document the moment
-    # its printer answers, in another session. Both could see status == "held"
-    # and act — one printing the document while the history says it was
-    # discarded, or the release failing on a file this handler already
-    # deleted. Whoever moves the row out of "held" first wins; the loser is
-    # told so and touches nothing.
-    now = datetime.now(UTC)
-    # Read before the claim: RETURNING hands back the *new* row, and the claim
-    # below nulls this column, so asking for it there returns None and the
-    # document is never deleted. Only these paths ever write it.
-    existing = await db.get(Job, job_id)
-    spool_path = existing.held_file_path if existing else None
-
-    claimed = await db.execute(
-        update(Job)
-        .where(Job.id == job_id, Job.status == "held")
-        .values(
-            status="cancelled",
-            error_message="Discarded without printing",
-            completed_at=now,
-            held_file_path=None,
-        )
-        .returning(Job.id)
-    )
-    row = claimed.first()
-    if row is None:
-        await db.rollback()
-        job = await db.get(Job, job_id)
-        if job is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Held job not found.")
+    try:
+        return await discard_hold(db, job_id)
+    except HoldNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Held job not found."
+        ) from exc
+    except HoldNoLongerHeld as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"This job is no longer held — it is {job.status}. "
-                "It was most likely released while you were looking at it."
-            ),
-        )
-
-    # The file is removed only after the claim is committed. Deleting first
-    # would destroy the document of a job this handler turned out not to own.
-    await db.commit()
-    if spool_path:
-        Path(spool_path).unlink(missing_ok=True)
-
-    job = await db.get(Job, job_id)
-    await db.refresh(job)
-    return job
+            detail=(f"{exc} It was most likely released while you were looking at it."),
+        ) from exc

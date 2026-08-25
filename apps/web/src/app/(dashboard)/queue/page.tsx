@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ApiError,
+  discardMyHeldJob,
   getMyPrintQueue,
   restorePrintQueueJob,
   yieldPrintQueueJob,
@@ -87,6 +88,8 @@ export default function PrintQueuePage() {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [busy, setBusy] = useState<Record<number, boolean>>({});
   const [errors, setErrors] = useState<Record<number, string>>({});
+  const [discarding, setDiscarding] = useState<Record<string, boolean>>({});
+  const [discardErrors, setDiscardErrors] = useState<Record<string, string>>({});
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -128,6 +131,40 @@ export default function PrintQueuePage() {
       }));
     } finally {
       setBusy((prev) => ({ ...prev, [job.cups_job_id]: false }));
+    }
+  }
+
+  async function handleDiscard(job: PrintQueueHeldJob) {
+    const what = job.document_name ?? "this job";
+    // Names the document and says plainly that it is destroyed — the same
+    // shape as the admin Discard on the Jobs page, because it does the same
+    // thing and this one is being clicked by whoever's document it is.
+    if (
+      !window.confirm(
+        `Throw away "${what}" without printing it?\n\n` +
+          "The document is deleted and cannot be recovered. You would need to send it again " +
+          "from the application you printed from.",
+      )
+    ) {
+      return;
+    }
+    setDiscarding((prev) => ({ ...prev, [job.job_id]: true }));
+    setDiscardErrors((prev) => {
+      const next = { ...prev };
+      delete next[job.job_id];
+      return next;
+    });
+    try {
+      await discardMyHeldJob(job.job_id);
+      await load();
+    } catch (err: unknown) {
+      setDiscardErrors((prev) => ({
+        ...prev,
+        [job.job_id]:
+          err instanceof ApiError ? err.message : "That didn't work — try again.",
+      }));
+    } finally {
+      setDiscarding((prev) => ({ ...prev, [job.job_id]: false }));
     }
   }
 
@@ -250,7 +287,9 @@ export default function PrintQueuePage() {
           </div>
           <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-400">
             These jobs of yours haven&rsquo;t reached a printer&rsquo;s queue yet. They
-            are not holding anyone else up, and nothing has been lost.
+            are not holding anyone else up, and nothing has been lost. If you don&rsquo;t
+            need one after all — a duplicate, or something sent to the wrong printer —
+            you can throw it away.
           </p>
           <ul className="space-y-2">
             {state.view.held.map((job) => (
@@ -267,8 +306,21 @@ export default function PrintQueuePage() {
                     {formatBytes(job.size_bytes)}
                   </span>
                   <span className="shrink-0">{heldBadge(job)}</span>
+                  <Button
+                    variant="danger"
+                    className="!px-3 !py-1 text-xs"
+                    disabled={discarding[job.job_id] || isImpersonating}
+                    onClick={() => handleDiscard(job)}
+                  >
+                    {discarding[job.job_id] ? "Discarding…" : "Discard"}
+                  </Button>
                 </div>
                 <p className="mt-1 text-xs text-zinc-500">{heldExplanation(job)}</p>
+                {discardErrors[job.job_id] && (
+                  <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                    {discardErrors[job.job_id]}
+                  </p>
+                )}
               </li>
             ))}
           </ul>

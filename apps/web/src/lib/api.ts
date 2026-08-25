@@ -2983,6 +2983,12 @@ export async function getMyPrintQueue(): Promise<PrintQueueView> {
   return response.json();
 }
 
+export async function discardMyHeldJob(jobId: string): Promise<void> {
+  await authorizedFetch(`/api/v1/print-queue/held/${jobId}/discard`, {
+    method: "POST",
+  });
+}
+
 export async function yieldPrintQueueJob(cupsJobId: number): Promise<void> {
   await authorizedFetch(`/api/v1/print-queue/jobs/${cupsJobId}/yield`, {
     method: "POST",

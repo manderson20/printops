@@ -21,6 +21,12 @@ schedules an update.
 - Only ever your own held jobs. Unlike the queue, where you can see that other
   people are waiting behind you, a held job holds nobody else up, so there is
   nothing for anyone else to see.
+- **You can throw away your own held job.** For the duplicate sent three times
+  or the document sent to the wrong printer, **Discard** clears it without
+  waiting for an administrator or for the hold to expire. It deletes the
+  document and cannot be undone, so it names the job and asks first. The job
+  itself stays in your history — what is destroyed is the document, not the
+  record of it. You can only discard your own.
 
 ## [0.69.0] - 2026-08-25
 
