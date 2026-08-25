@@ -21,9 +21,12 @@ schedules an update.
 - **A printer that has joined someone else's Wi-Fi is not the same thing**, and
   isn't reported as broadcasting. Both radios are listed either way, so a
   printer sitting on the wire *and* on a wireless network is visible too.
-- A printer that can't be asked reads **Not reported**, never "Off" — a printer
-  that stopped answering is not a printer that stopped broadcasting, and the
-  last known answer is kept rather than overwritten.
+- A printer that can't be asked reads **Not reported**, never "Off". That holds
+  for a printer that has answered before, too: once it stops answering, the page
+  says so and offers the last reading with its date rather than repeating it as
+  though it were current. A printer last seen switched off can have its Wi-Fi
+  turned on and *then* go quiet, and a page still saying "Off" would fail the
+  person relying on it.
 - Detection is read-only and rides along on the SNMP poll that already runs
   every 30 minutes. Nothing is changed on any device, printing is unaffected,
   and switching a radio off is picked up within the half hour.

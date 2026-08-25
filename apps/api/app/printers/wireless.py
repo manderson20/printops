@@ -157,8 +157,14 @@ async def refresh_printer_wireless(printer: Printer, defaults: SnmpDefaultsSetti
 
     On a failed probe the error is recorded and the previous radio list is left
     alone, the same convention page_count_error follows: a transient SNMP
-    hiccup should not erase what was last known, and must never be shown as
-    "not broadcasting"."""
+    hiccup should not erase what was last known.
+
+    The kept reading is history, not a current answer, and callers must not
+    present it as one. `wireless_error` being set is what says so — the
+    Printers page reads it first and shows "Not reported" with the date of the
+    last reading, because a printer last seen with its access point off can
+    switch it on and *then* stop answering, and a page that went on saying
+    "Off" would be failing exactly the person relying on it."""
     if not printer.snmp_enabled or not printer.ip_address:
         return
     state = await asyncio.to_thread(
