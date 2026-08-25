@@ -37,6 +37,19 @@ class CapabilitiesOut(BaseModel):
     # Advertised (not live-tested) IPPS support — see
     # app/printers/capabilities.py:_parse_tls_supported.
     tls_supported: bool = False
+    # Whether the printer speaks AirPrint, so a user on its VLAN could add it
+    # directly and print around PrintOps. None means the device did not answer
+    # either marker — unknown, deliberately not False; see
+    # app/printers/capabilities.py:_parse_airprint_supported.
+    airprint_supported: bool | None = None
+    # The name the printer advertises itself under over Bonjour, when it says.
+    dns_sd_name: str | None = None
+    # True when the device advertises media-col and then stops answering IPP
+    # the moment a job carries one — a firmware fault that stops the printer's
+    # whole CUPS queue, so the backend drops the page size from jobs sent to
+    # it. None means the check couldn't be completed, which is not the same as
+    # a clean bill of health; see app/printers/media_col_probe.py.
+    media_col_broken: bool | None = None
 
 
 class CupsQueueDefaultsOut(BaseModel):

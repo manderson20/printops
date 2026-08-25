@@ -5,6 +5,56 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.68.0] - 2026-08-24
+
+- **A printer that can't accept a page size no longer stops its own queue.**
+  The Graphic Arts Kyocera took itself off the air every time someone printed
+  from Acrobat: any job naming a page size made the printer stop answering,
+  which stops the whole CUPS queue with everyone else's work behind it. The
+  capability check now asks each printer whether it can accept a page size over
+  IPP, and for one that can't, PrintOps leaves the page size off — the printer
+  reads the size from the document instead, which is what it was going to do
+  anyway.
+- This is detected, not configured. Nothing to tick, it applies to any printer
+  with the same firmware fault, and it switches itself off again if a firmware
+  update fixes the device. A printer that couldn't be asked is left alone
+  rather than assumed broken. When it does apply, the printer's expanded row on
+  the **Printers** page says so, under **Page size over IPP**.
+- **Held jobs are protected too.** A job held for quota, PIN release, or
+  because the printer was switched off is delivered later through a different
+  route, which didn't know about any of this. It does now — so a held job
+  released to an affected printer prints instead of failing on its way out.
+- The **Printer AirPrint** column is now **Direct Printing**. It always
+  answered "could someone add this machine directly and print around
+  PrintOps", which is true of Mopria (Android) as well as AirPrint (Apple) —
+  two separate certifications and the same hole. The old name asserted Apple
+  conformance the check can't actually see.
+- **You can now cancel a failed job.** A job PrintOps has marked failed is often
+  still sitting on the print server being retried — and being retried is how
+  one bad job stops a printer over and over. **Cancel** is now on those rows
+  too, and on anything else that hasn't printed yet. A job that already printed
+  still can't be cancelled, because there is nothing left to cancel, and held
+  jobs keep **Discard**. PrintOps checks the job is still the one it thinks it
+  is before cancelling anything, since print-server job numbers are reused.
+
+## [0.67.0] - 2026-08-24
+
+- **You can now see which printers speak AirPrint.** A printer with AirPrint on
+  can be added directly by anyone on its network, printing around PrintOps
+  entirely — no accounting, no quotas, no held-job release. Open a printer's
+  row on the Printers page and look at **Printer AirPrint**, or export the
+  printer list to CSV to work through the whole fleet at once.
+- A printer that doesn't answer the question reads **Not reported**, never
+  "Off". Some older printers advertise AirPrint over Bonjour without saying so
+  over IPP, and telling you a machine is closed when it is open would be the
+  worst way for this to be wrong.
+- The old **AirPrint** column is renamed **Queue discovery**. It always
+  referred to whether PrintOps' own queue is discoverable, which is a
+  different question from what the printer itself does.
+- Detection is read-only: PrintOps asks the printer three extra questions
+  during the capability check it already performs. Nothing is changed on any
+  device and printing is unaffected.
+
 ## [0.66.0] - 2026-08-24
 
 - **One list of accounts instead of two.** The copier tab showed the same

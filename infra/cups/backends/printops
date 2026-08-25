@@ -169,6 +169,84 @@ def get_job_completion_attributes(queue_name: str, job_id: str) -> dict:
     }
 
 
+# Every spelling of "page size" cupsd hands us in a job's options: the IPP
+# name, the PPD keyword, and the pieces CUPS' `ipp` backend assembles a
+# media-col collection out of.
+_MEDIA_OPTION_KEYS = frozenset(
+    {
+        "media",
+        "media-col",
+        "media-size",
+        "media-top-margin",
+        "media-bottom-margin",
+        "media-left-margin",
+        "media-right-margin",
+        "PageSize",
+        "PageRegion",
+    }
+)
+
+
+def split_job_options(job_options: str) -> list[str]:
+    """Splits an options string into whole `key=value` tokens, keeping each
+    one exactly as cupsd wrote it.
+
+    Quoting and backslash escapes are honoured rather than split on, because a
+    value may legitimately contain a space — and a value may legitimately
+    contain the text of another option, so a plain regex over the whole string
+    can chop a job's options in half at a `media=` that was never an option at
+    all."""
+    tokens: list[str] = []
+    current = ""
+    quote: str | None = None
+    escaped = False
+    for char in job_options:
+        if escaped:
+            current += char
+            escaped = False
+        elif char == "\\":
+            current += char
+            escaped = True
+        elif quote:
+            current += char
+            if char == quote:
+                quote = None
+        elif char in "\"'":
+            current += char
+            quote = char
+        elif char.isspace():
+            if current:
+                tokens.append(current)
+                current = ""
+        else:
+            current += char
+    if current:
+        tokens.append(current)
+    return tokens
+
+
+def strip_media_options(job_options: str) -> str:
+    """Removes the page size from a job's options, leaving every other option
+    exactly as it was.
+
+    For a printer whose firmware cannot parse the nested media-col collection
+    CUPS builds out of these (see app/printers/media_col_probe.py), this is the
+    difference between the job printing and the job taking the printer's whole
+    queue down with it: the device stops answering, the real `ipp` backend
+    exits 4, and cupsd stops the queue with everyone else's work behind it.
+
+    Dropping the size is safe in a way it would not be on a raster path: what
+    goes to the device is the PDF itself, whose own MediaBox states the page
+    size, and the printer picks its tray from that. The IPP attribute is a hint
+    the device is refusing to hear."""
+    kept = [
+        token
+        for token in split_job_options(job_options)
+        if token.split("=", 1)[0] not in _MEDIA_OPTION_KEYS
+    ]
+    return " ".join(kept)
+
+
 def spool_held_file(job_record_id: str, filename: str | None) -> str:
     """Takes durable custody of the job's document, outside CUPS's own
     temp-file lifecycle — CUPS may clean up `filename` as soon as this
@@ -449,7 +527,20 @@ def main() -> int:
         f"{printer.get('ipp_path') or '/ipp/print'}"
     )
 
-    real_argv = [REAL_IPP_BACKEND, job_id, job_user, job_title, job_copies, job_options]
+    # A printer that stops answering IPP the moment a job names a page size
+    # gets its jobs without one, rather than one failed job at a time and a
+    # stopped queue behind each. Detected by the capability check, not
+    # configured — see app/printers/media_col_probe.py.
+    forwarded_options = job_options
+    if (printer.get("capabilities") or {}).get("media_col_broken"):
+        forwarded_options = strip_media_options(job_options)
+        if forwarded_options != job_options:
+            sys.stderr.write(
+                "DEBUG: printops backend: dropped the page size from this job — "
+                "this printer's firmware cannot accept media-col.\n"
+            )
+
+    real_argv = [REAL_IPP_BACKEND, job_id, job_user, job_title, job_copies, forwarded_options]
     if filename:
         real_argv.append(filename)
 

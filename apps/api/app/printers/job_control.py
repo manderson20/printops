@@ -1,3 +1,4 @@
+import getpass
 import re
 import subprocess
 from dataclasses import dataclass
@@ -64,6 +65,52 @@ def _run(script: Path, arg: str, timeout: int) -> None:
     if result.returncode != 0:
         reason = (result.stderr or result.stdout).strip()
         raise JobControlError(reason or f"{script.name} exited {result.returncode}.")
+
+
+@dataclass(frozen=True)
+class CupsJobIdentity:
+    """Who cupsd thinks a job id currently belongs to."""
+
+    uuid: str | None
+    owner: str | None
+
+
+def cups_job_identity(printer_id: str, cups_job_id: int) -> CupsJobIdentity | None:
+    """Asks cupsd whose job a given id is right now, or None if it has no such
+    job on that queue.
+
+    CUPS job ids are not permanent: they restart from 1 when the spool is
+    cleared, so a `jobs` row from before a reset can name an id that now
+    belongs to somebody else's document. `cancel` takes only the number, which
+    makes acting on a stale row a way to cancel a stranger's print — see
+    cancel_job in app/routers/jobs.py, which checks this before cancelling
+    anything it did not watch go out.
+
+    requesting-user-name is named for the same reason as in
+    app/printers/print_queue.py: cupsd's default policy keeps
+    job-originating-user-name private otherwise, and this comparison needs it.
+    """
+    request = (
+        "{\n"
+        "    OPERATION Get-Job-Attributes\n"
+        "    GROUP operation-attributes-tag\n"
+        "    ATTR charset attributes-charset utf-8\n"
+        "    ATTR language attributes-natural-language en\n"
+        f"    ATTR uri printer-uri ipp://localhost/printers/printops-{printer_id}\n"
+        f"    ATTR integer job-id {cups_job_id}\n"
+        f"    ATTR name requesting-user-name {getpass.getuser()}\n"
+        "    ATTR keyword requested-attributes job-uuid,job-originating-user-name\n"
+        "}\n"
+    )
+    output = _ipptool_plist(f"printops-{printer_id}", request)
+    if output is None:
+        return None
+    if _plist_value(output, "StatusCode") != "successful-ok":
+        return None
+    return CupsJobIdentity(
+        uuid=_plist_value(output, "job-uuid"),
+        owner=_plist_value(output, "job-originating-user-name"),
+    )
 
 
 def cancel_cups_job(cups_job_id: int) -> None:

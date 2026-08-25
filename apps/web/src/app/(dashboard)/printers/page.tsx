@@ -61,9 +61,29 @@ const CSV_COLUMNS: { header: string; value: (printer: Printer) => string }[] = [
   { header: "Department", value: (p) => p.department ?? "" },
   { header: "Page Count", value: (p) => p.page_count_total?.toString() ?? "" },
   {
-    header: "AirPrint",
+    // Renamed: this is PrintOps' own queue being discoverable, which is a
+    // different question from whether the *printer* speaks AirPrint.
+    header: "Queue Discovery",
     value: (p) => (p.airprint_enabled ? "Discoverable" : "Hidden"),
   },
+  {
+    // The fleet-wide answer to "who could bypass the server". Exported so it
+    // can be sorted and worked through a printer at a time.
+    //
+    // Named for what it answers rather than for AirPrint alone: the detection
+    // accepts Apple's marker (urf-supported) OR Mopria certification, because
+    // either one lets someone add the machine directly and print around
+    // PrintOps — Mopria is the same hole with an Android key. Calling the
+    // column "AirPrint" would assert Apple conformance this can't see.
+    header: "Direct Printing",
+    value: (p) =>
+      p.capabilities?.airprint_supported === true
+        ? "Yes - AirPrint or Mopria, can be added directly"
+        : p.capabilities?.airprint_supported === false
+          ? "No"
+          : "Unknown - not reported",
+  },
+  { header: "Bonjour Name", value: (p) => p.capabilities?.dns_sd_name ?? "" },
   { header: "Archived", value: (p) => (p.archived_at ? "Yes" : "No") },
 ];
 
@@ -413,7 +433,7 @@ export default function PrintersPage() {
                                   </dd>
                                 </div>
                                 <div>
-                                  <dt className="text-xs text-zinc-500">AirPrint</dt>
+                                  <dt className="text-xs text-zinc-500">Queue discovery</dt>
                                   <dd>
                                     {printer.airprint_enabled ? (
                                       <Badge tone="success">Discoverable</Badge>
@@ -422,6 +442,44 @@ export default function PrintersPage() {
                                     )}
                                   </dd>
                                 </div>
+                                <div>
+                                  {/* The printer's own direct-printing
+                                      support, which is a different question
+                                      from the queue's: this is whether
+                                      someone on its VLAN could add the
+                                      machine directly and print around
+                                      PrintOps — via AirPrint or Mopria,
+                                      which are separate certifications and
+                                      the same hole. */}
+                                  <dt className="text-xs text-zinc-500">
+                                    Direct printing (AirPrint / Mopria)
+                                  </dt>
+                                  <dd>
+                                    {printer.capabilities?.airprint_supported === true ? (
+                                      <Badge tone="warning">Can be added directly</Badge>
+                                    ) : printer.capabilities?.airprint_supported === false ? (
+                                      <Badge tone="success">Off</Badge>
+                                    ) : (
+                                      <Badge tone="neutral">Not reported</Badge>
+                                    )}
+                                  </dd>
+                                </div>
+                                {printer.capabilities?.media_col_broken === true && (
+                                  <div>
+                                    {/* Only shown when it's true. On every
+                                        healthy printer this row would be a
+                                        line of jargon explaining nothing. */}
+                                    <dt className="text-xs text-zinc-500">Page size over IPP</dt>
+                                    <dd>
+                                      <Badge tone="warning">Not accepted</Badge>
+                                      <p className="mt-1 text-xs text-zinc-500">
+                                        This printer stops answering when a job names a page
+                                        size, so PrintOps leaves it off and the printer reads
+                                        the size from the document instead.
+                                      </p>
+                                    </dd>
+                                  </div>
+                                )}
                               </dl>
 
                               <div>

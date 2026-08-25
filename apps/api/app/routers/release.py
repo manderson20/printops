@@ -158,6 +158,10 @@ async def release_job(
             job.document_name,
             job.copy_count,
             job.held_job_options,
+            # The release queue has no PrintOps backend on it, so this is the
+            # only place the media-col workaround can be applied to a job that
+            # was held — and it keys off the printer it is being released AT.
+            bool((printer.capabilities or {}).get("media_col_broken")),
         )
     except ReleaseError as exc:
         job.status = "failed"

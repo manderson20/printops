@@ -17,7 +17,7 @@ from app.models.release import PrintReleaseSettings
 from app.models.report import ReportFormulaSettings
 from app.printers import offline_holds
 from app.printers.capabilities import recorded_color_mode
-from app.printers.job_control import JobControlError, cancel_cups_job
+from app.printers.job_control import JobControlError, cancel_cups_job, cups_job_identity
 from app.quotas.service import resolve_hold_reason
 from app.reports.aggregation import (
     ReportFilters,
@@ -267,6 +267,32 @@ async def update_job(job_id: UUID, payload: JobUpdate, db: AsyncSession = Depend
     return job
 
 
+async def _is_still_the_same_cups_job(job: Job) -> bool:
+    """Whether the CUPS job wearing this row's id is actually this row's job.
+
+    CUPS job ids restart from 1 whenever the spool is cleared, and this row may
+    be old — the `jobs` table keeps every job ever printed. Cancelling by
+    number alone would then cancel whatever document holds that number today,
+    which for a terminal row is a stranger's print job and a support ticket
+    nobody can explain. `cups_job_uuid` exists on the row precisely because the
+    numbers repeat; where an older row predates it, the submitter's name is the
+    next best evidence.
+
+    False also covers "cupsd has no such job", which is the ordinary case for a
+    failed row: there is nothing to cancel, the row is simply being closed.
+    """
+    identity = await asyncio.to_thread(cups_job_identity, str(job.printer_id), job.cups_job_id)
+    if identity is None:
+        return False
+    if job.cups_job_uuid and identity.uuid:
+        return job.cups_job_uuid == identity.uuid
+    if job.submitted_by and identity.owner:
+        return job.submitted_by.casefold() == identity.owner.casefold()
+    # Neither piece of evidence available: refuse rather than guess. The row
+    # still closes; only the cancel on a job we cannot identify is skipped.
+    return False
+
+
 @user_router.post(
     "/{job_id}/cancel", response_model=JobOut, dependencies=[Depends(require_role("admin"))]
 )
@@ -275,31 +301,54 @@ async def cancel_job(
     db: AsyncSession = Depends(get_db),
     current_user: UserOut = Depends(get_current_user),
 ):
-    """Cancels a single in-flight job — only valid while it's still
-    "forwarding" (see Job.status): forwarded/failed/cancelled are already
-    terminal, and cancelling something that never started makes no sense.
-    For a printer backed up with jobs PrintOps can't individually see yet,
-    see POST /printers/{id}/purge-jobs instead."""
+    """Cancels a job's CUPS job — valid for anything that hasn't printed.
+
+    Not just "forwarding", which is what this accepted until 0.68.0. PrintOps
+    marks a job `failed` the moment its backend exits non-zero, but cupsd keeps
+    the job on the queue and retries it: on 2026-08-24 the Graphic Arts Kyocera
+    had a job that was `failed` in PrintOps and still on the queue eight hours
+    later, stopping the printer every time cupsd tried it again. Terminal in our
+    record is not the same as gone from the print server, and the admin looking
+    at that row needs to be able to get rid of it.
+
+    `forwarded` is the one status that is genuinely finished — the pages exist,
+    there is nothing left to cancel. Held jobs are spooled by PrintOps rather
+    than queued in CUPS and have their own Discard (see
+    app/routers/held_jobs.py).
+
+    For a printer backed up with jobs PrintOps can't individually see yet, see
+    POST /printers/{id}/purge-jobs instead."""
     job = await db.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    if job.status != "forwarding":
+    if job.status == "forwarded":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Job is already {job.status} — only in-flight jobs can be cancelled.",
+            detail="Job has already printed — there is nothing left to cancel.",
+        )
+    if job.status == "held":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Held jobs are discarded rather than cancelled.",
         )
     if job.cups_job_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Job has no CUPS job id on record — nothing to cancel.",
         )
-    try:
-        await asyncio.to_thread(cancel_cups_job, job.cups_job_id)
-    except JobControlError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    if job.status == "forwarding" or await _is_still_the_same_cups_job(job):
+        try:
+            await asyncio.to_thread(cancel_cups_job, job.cups_job_id)
+        except JobControlError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     job.status = "cancelled"
     job.error_message = f"Cancelled by {current_user.username}"
+    # scripts/cancel_cups_job.sh treats "already gone" as success, so this is
+    # reached whether the job was still on the queue or had finished retrying
+    # in between. Either way the admin's goal — this job is not coming back —
+    # now holds, and saying so is more use than a 400 about which of the two
+    # it was.
     job.completed_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(job)

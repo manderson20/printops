@@ -418,7 +418,15 @@ function JobsList() {
                     </td>
                     {isAdmin && (
                       <td className="px-4 py-3">
-                        {job.status === "forwarding" && (
+                        {/* Not just in-flight jobs. A job PrintOps has marked
+                            failed is often still sitting on the CUPS queue
+                            being retried — and retried is exactly how a bad
+                            job stops a printer over and over. Everything
+                            except a job that already printed (and held jobs,
+                            which are discarded below) can be cancelled; the
+                            API says so plainly if there was nothing left on
+                            the print server to cancel. */}
+                        {job.status !== "forwarded" && job.status !== "held" && (
                           <div className="flex flex-col items-start gap-1">
                             <Button
                               variant="danger"

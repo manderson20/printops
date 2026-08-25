@@ -19,6 +19,15 @@ from typing import Any
 REQUESTED_ATTRIBUTES: list[str] = [
     "printer-make-and-model",
     "printer-firmware-string-version",
+    # The AirPrint fingerprint. A printer that speaks AirPrint advertises
+    # Apple Raster ("urf-supported"); mopria-certified and the DNS-SD name
+    # corroborate it. Asked for so an admin can see which printers a user
+    # could add directly on their own machine, bypassing PrintOps entirely.
+    # This is read-only — the same Get-Printer-Attributes call capability
+    # detection already makes, with three more attributes named.
+    "urf-supported",
+    "mopria-certified",
+    "printer-dns-sd-name",
     "sides-supported",
     "color-supported",
     "print-color-mode-supported",
@@ -38,6 +47,11 @@ REQUESTED_ATTRIBUTES: list[str] = [
     # right now" and would have made every copier look like it has dozens
     # of trays.
     "media-col-ready",
+    # Not parsed into a capability field — read by app/printers/discovery.py to
+    # decide whether the media-col probe is even a question worth asking. CUPS
+    # only builds a media-col for a device that advertises this, so a device
+    # that doesn't cannot be hurt by the collection it can't parse.
+    "media-col-supported",
     "output-bin-supported",
     "finishings-supported",
     "job-password-supported",
@@ -170,6 +184,29 @@ def _parse_finishings(raw: dict[str, Any]) -> list[str]:
     return [label for label in labels if label != "none"]
 
 
+def _parse_airprint_supported(raw: dict[str, Any]) -> bool | None:
+    """Whether this printer speaks AirPrint, as far as IPP can say.
+
+    "urf-supported" is Apple Raster, the format AirPrint requires, and is the
+    attribute Apple's own conformance depends on; mopria-certified is the
+    Android equivalent and travels with it in practice. Either means a user on
+    the printer's own VLAN could add this machine directly and print around
+    PrintOps, so no accounting, no quota and no held-job release.
+
+    None, not False, when neither attribute comes back. Plenty of printers
+    answer a narrower attribute set than they support, and an older device
+    (the LaserJet 4250 here speaks only IPP 1.1) may not report these at all
+    while still advertising AirPrint over Bonjour. Absence is "unknown" and
+    must not be shown as "off" — this is a security-shaped question, and the
+    honest answer to it is sometimes "go and look".
+    """
+    if raw.get("urf-supported"):
+        return True
+    if raw.get("mopria-certified"):
+        return True
+    return None
+
+
 def _parse_color_supported(raw: dict[str, Any]) -> bool:
     if raw.get("color-supported") is True:
         return True
@@ -286,6 +323,8 @@ def parse_capabilities(raw: dict[str, Any]) -> dict[str, Any]:
         "accounting_supported": _parse_accounting_supported(raw),
         "document_formats": [_scalar(v) for v in _as_list(raw.get("document-format-supported"))],
         "tls_supported": _parse_tls_supported(raw),
+        "airprint_supported": _parse_airprint_supported(raw),
+        "dns_sd_name": _scalar(raw.get("printer-dns-sd-name")),
     }
 
 
