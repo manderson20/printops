@@ -78,3 +78,9 @@ class PrintQueueOut(BaseModel):
 
     queues: list[PrintQueuePrinterOut]
     held: list[PrintQueueHeldJobOut]
+    # True when cupsd could not be asked what is queued. The two halves come
+    # from different places — the queue from cupsd, the holds from PrintOps'
+    # own database — so one being unavailable must not take the other down
+    # with it. A print server having trouble is precisely when someone wants
+    # to know their held job is still safe.
+    queue_unavailable: bool = False

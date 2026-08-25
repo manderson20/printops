@@ -2976,6 +2976,9 @@ export type PrintQueueView = {
   queues: PrintQueuePrinter[];
   /** This person's own held jobs, which are in no queue at all. */
   held: PrintQueueHeldJob[];
+  /** True when the print server couldn't be asked what is queued. The held
+   *  half still loads — it comes from PrintOps' own records. */
+  queue_unavailable: boolean;
 };
 
 export async function getMyPrintQueue(): Promise<PrintQueueView> {

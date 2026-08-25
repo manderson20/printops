@@ -186,7 +186,18 @@ export default function PrintQueuePage() {
 
       {state.phase === "error" && <ErrorState>{state.message}</ErrorState>}
 
+      {state.phase === "ok" && state.view.queue_unavailable && (
+        <Card>
+          <p className="text-sm text-amber-700 dark:text-amber-400">
+            The print server couldn&rsquo;t be asked what is queued just now, so
+            what is waiting on each printer isn&rsquo;t shown. Nothing has been lost
+            — your jobs are still queued, and anything held for you is listed below.
+          </p>
+        </Card>
+      )}
+
       {state.phase === "ok" &&
+        !state.view.queue_unavailable &&
         state.view.queues.length === 0 &&
         state.view.held.length === 0 && (
         <EmptyState>

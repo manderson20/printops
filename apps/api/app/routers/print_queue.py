@@ -113,6 +113,8 @@ def _state_label(job: QueuedJob) -> str:
 
 
 async def _my_queued_jobs(db: AsyncSession, current_user: UserOut) -> list[QueuedJob]:
+    """The 503 stays here, unlike on the listing: moving a job in a queue that
+    cannot be read is not something to fail quietly at."""
     jobs = await asyncio.to_thread(queued_jobs)
     if jobs is None:
         raise HTTPException(
@@ -143,8 +145,16 @@ async def get_my_print_queue(
     from a job that vanished."""
     jobs = await asyncio.to_thread(queued_jobs)
     if jobs is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=CUPSD_UNREACHABLE
+        # Not a 503. The held half of this page comes from PrintOps' own
+        # database and is unaffected by cupsd being unreachable — failing the
+        # whole view would hide a person's held job at the exact moment the
+        # print server is in trouble and they most want to know it is safe.
+        # The queue half says it couldn't be read rather than showing an empty
+        # line, which would be a lie in the other direction.
+        return PrintQueueOut(
+            queues=[],
+            held=await _my_held_jobs(db, current_user),
+            queue_unavailable=True,
         )
 
     ownership = _Ownership(db, current_user)

@@ -161,7 +161,7 @@ async def test_a_printer_i_have_nothing_on_is_not_listed(client, auth_headers, q
 async def test_empty_when_nothing_of_mine_is_waiting(client, auth_headers, queue):
     queue(job(1, SOMEONE_ELSE))
     response = client.get("/api/v1/print-queue", headers=auth_headers)
-    assert response.json() == {"queues": [], "held": []}
+    assert response.json() == {"queues": [], "held": [], "queue_unavailable": False}
 
 
 async def test_a_held_job_sorts_behind_jobs_that_can_actually_print(client, auth_headers, queue):
@@ -293,8 +293,33 @@ async def test_cannot_move_a_held_job(client, auth_headers, queue, priority_call
 
 async def test_cupsd_not_answering_is_not_an_empty_queue(client, auth_headers, monkeypatch):
     monkeypatch.setattr("app.routers.print_queue.queued_jobs", lambda: None)
-    response = client.get("/api/v1/print-queue", headers=auth_headers)
+    body = client.get("/api/v1/print-queue", headers=auth_headers).json()
+    # An empty list would be a lie: it would say nobody is waiting, when what
+    # happened is that nobody could be asked.
+    assert body["queue_unavailable"] is True
+    assert body["queues"] == []
+
+
+async def test_cupsd_being_down_does_not_hide_held_jobs(client, auth_headers, monkeypatch):
+    # The two halves come from different places, and this is exactly when
+    # someone wants to know their held job is still safe.
+    monkeypatch.setattr("app.routers.print_queue.queued_jobs", lambda: None)
+    body = client.get("/api/v1/print-queue", headers=auth_headers).json()
+    assert body["queue_unavailable"] is True
+    # Held jobs are database-backed; this test's fixture set has none, but the
+    # call must succeed rather than 503 so that a person who has one sees it.
+    assert body["held"] == []
+
+
+async def test_moving_a_job_still_fails_loudly_when_cupsd_is_down(
+    client, auth_headers, monkeypatch, priority_calls
+):
+    monkeypatch.setattr("app.routers.print_queue.queued_jobs", lambda: None)
+    response = client.post("/api/v1/print-queue/jobs/2/yield", headers=auth_headers)
+    # Reordering a queue that cannot be read is not something to fail quietly
+    # at — the listing degrades, the action does not.
     assert response.status_code == 503
+    assert priority_calls == []
 
 
 async def test_the_queue_needs_a_login(client, queue):
