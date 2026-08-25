@@ -52,6 +52,7 @@ from app.routers import (
     internal,
     jobs,
     mfp_devices,
+    print_queue,
     printers,
     release,
     reports,
@@ -687,6 +688,9 @@ app.include_router(
     copier_unmapped.router, prefix="/api/v1/copier-unmapped", tags=["copier-unmapped"]
 )
 app.include_router(held_jobs.router, prefix="/api/v1/held-jobs", tags=["held-jobs"])
+# Any signed-in member of staff, not just admins: this is the one page that
+# answers "where is my job in the line" (app/routers/print_queue.py).
+app.include_router(print_queue.router, prefix="/api/v1/print-queue", tags=["print-queue"])
 app.include_router(
     self_service_print.router, prefix="/api/v1/self-service-print", tags=["self-service-print"]
 )

@@ -24,6 +24,10 @@ const ADMIN_ONLY_NAV_LINKS = [
 // user is allowed to target — app/self_service_print/service.py.
 const VIEWER_NAV_LINKS = [
   { href: "/print", label: "Print" },
+  // Everyone gets this one: it shows only the queues this person has a job
+  // in, and lets them move their own job (and nobody else's) to the back —
+  // see app/routers/print_queue.py.
+  { href: "/queue", label: "Print Queue" },
   { href: "/insights", label: "Insights" },
 ] as const;
 
@@ -37,7 +41,7 @@ const OU_VIEWER_NAV_LINKS = [{ href: "/insights", label: "Insights" }] as const;
 // landing page, mirroring the pre-existing ou_viewer redirect below.
 const ALLOWED_PATH_PREFIXES: Record<"viewer" | "ou_viewer", readonly string[]> =
   {
-    viewer: ["/print", "/insights"],
+    viewer: ["/print", "/queue", "/insights"],
     ou_viewer: ["/insights"],
   };
 
