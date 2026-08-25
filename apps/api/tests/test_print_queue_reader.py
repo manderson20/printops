@@ -24,6 +24,7 @@ def make(cups_job_id, *, priority=NORMAL_PRIORITY, state=3, owner="a@b.org"):
         cups_job_id=cups_job_id,
         printer_id="8142ccdb-195b-4acf-acfd-56bc52162b72",
         owner=owner,
+        source_host=None,
         document_name="doc.pdf",
         size_bytes=None,
         priority=priority,
@@ -62,14 +63,16 @@ def _run(stdout: str, returncode: int = 0):
 
 def test_orders_the_way_cupsd_will_print():
     printing = make(9, state=5)
+    held = make(1, state=4)
     yielded = make(2, priority=YIELDED_PRIORITY)
     older = make(4)
     newer = make(7)
-    assert sorted([yielded, newer, printing, older], key=queue_order) == [
+    assert sorted([yielded, newer, printing, held, older], key=queue_order) == [
         printing,  # whatever is on its way to the device is the head of the line
         older,  # same priority, oldest first
         newer,
         yielded,  # dropped priority puts it behind everything at the default
+        held,  # not eligible to print at all, whatever its age or priority
     ]
 
 

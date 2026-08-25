@@ -49,6 +49,34 @@ QUEUE_NAME_PREFIX = "printops-"
 NORMAL_PRIORITY = 50
 YIELDED_PRIORITY = 1
 
+# What each yielded job's priority was before it yielded, so "put back in
+# line" returns it to where it actually was rather than assuming everything
+# starts at the default. Restore is offered only for a job in here, which is
+# what keeps the no-queue-jumping guarantee true in the corner where a client
+# submitted its own low priority deliberately: PrintOps will not raise a job
+# it did not lower.
+#
+# In-process and lost on restart, deliberately — the same admission
+# app/printers/queue_recovery.py makes about its backoff state. Persisting it
+# would mean a `jobs` row for something that has no row (that is the whole
+# reason this module reads cupsd), and the failure mode is mild: a yielded job
+# stops offering the undo and simply prints last, which is what its owner
+# asked for.
+_YIELDED_FROM: dict[tuple[str | None, int], int] = {}
+
+
+def remember_priority_before_yield(printer_id: str | None, cups_job_id: int, priority: int) -> None:
+    _YIELDED_FROM[(printer_id, cups_job_id)] = priority
+
+
+def priority_before_yield(printer_id: str | None, cups_job_id: int) -> int | None:
+    return _YIELDED_FROM.get((printer_id, cups_job_id))
+
+
+def forget_priority_before_yield(printer_id: str | None, cups_job_id: int) -> None:
+    _YIELDED_FROM.pop((printer_id, cups_job_id), None)
+
+
 # The states a job can be in while it is still someone's to wait for. A
 # stopped queue's jobs are included deliberately: they are the ones a person is
 # most likely to be looking for an explanation of.
@@ -68,6 +96,10 @@ _REQUESTED_ATTRIBUTES = (
     "job-k-octets",
     "time-at-creation",
     "job-printer-uri",
+    # Not shown to anyone — used to resolve whose job this is when CUPS
+    # records a bare local username rather than an email (see
+    # app/attribution/resolve.py, and the router's _ownership).
+    "job-originating-host-name",
 )
 
 
@@ -78,6 +110,9 @@ class QueuedJob:
     # queue cupsd has that PrintOps didn't create.
     printer_id: str | None
     owner: str | None
+    # The host CUPS recorded the job as coming from, which is what turns a
+    # bare "matt" into a person via the device that sent it.
+    source_host: str | None
     document_name: str | None
     size_bytes: int | None
     priority: int
@@ -91,6 +126,10 @@ class QueuedJob:
     @property
     def is_printing(self) -> bool:
         return self.state == JOB_STATE_PROCESSING
+
+    @property
+    def is_held(self) -> bool:
+        return self.state == JOB_STATE_PENDING_HELD
 
     @property
     def is_yielded(self) -> bool:
@@ -129,6 +168,7 @@ def _as_job(attributes: dict) -> QueuedJob | None:
         cups_job_id=job_id,
         printer_id=_printer_id_from_queue_uri(attributes.get("job-printer-uri")),
         owner=attributes.get("job-originating-user-name"),
+        source_host=attributes.get("job-originating-host-name"),
         document_name=attributes.get("job-name"),
         # job-k-octets is kilobytes, and rounds a small job to 0 rather than
         # to nothing — keep it as a real size so the UI can say "12 KB".
@@ -189,8 +229,14 @@ def queued_jobs() -> list[QueuedJob] | None:
 
 
 def queue_order(job: QueuedJob) -> tuple:
-    """cupsd's own ordering: whatever is printing first, then by descending
-    priority, then oldest first. Mirrored here rather than trusting the order
-    Get-Jobs happened to return them in, since the whole point of the page is
-    to show someone where they are in the line."""
-    return (not job.is_printing, -job.priority, job.cups_job_id)
+    """cupsd's own ordering: whatever is printing first, then everything
+    eligible to print by descending priority and oldest first, then held jobs
+    last of all.
+
+    Held jobs sort to the bottom regardless of age or priority because they are
+    not eligible for scheduling: cupsd will print the pending jobs behind an
+    old held job while that job goes on waiting for a person. Ordering it by
+    age would tell someone they are 3rd in line when they are actually next —
+    a page whose only real claim is "here is your place" cannot get that
+    wrong."""
+    return (not job.is_printing, job.is_held, -job.priority, job.cups_job_id)

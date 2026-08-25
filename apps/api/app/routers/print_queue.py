@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.attribution.resolve import resolve_user
 from app.db import get_db
 from app.deps import get_current_user
 from app.models.printer import Printer
@@ -28,11 +29,13 @@ from app.printers.job_control import (
     set_cups_job_priority,
 )
 from app.printers.print_queue import (
-    NORMAL_PRIORITY,
     YIELDED_PRIORITY,
     QueuedJob,
+    forget_priority_before_yield,
+    priority_before_yield,
     queue_order,
     queued_jobs,
+    remember_priority_before_yield,
 )
 from app.schemas.auth import UserOut
 from app.schemas.print_queue import PrintQueueJobOut, PrintQueuePrinterOut
@@ -50,6 +53,48 @@ def _identities(current_user: UserOut) -> tuple[str | None, ...]:
     return (current_user.username, current_user.email)
 
 
+class _Ownership:
+    """Decides which of these queued jobs belong to the person looking.
+
+    A direct name match settles most of them, but not all: CUPS records
+    whatever the client sent, and a Mac commonly sends a bare local account
+    name — "matt", not the address the person signs in with. PrintOps already
+    has the machinery for that (app/attribution/resolve.py, which disambiguates
+    a bare username via the device that sent the job, then aliases, then the
+    Workspace roster) and it is the same machinery that decides whose job it is
+    everywhere else, so the queue must not answer this question its own way.
+    Without it those people see an empty page and get a 404 from yield on a job
+    that is sitting right there under their name.
+
+    Resolution is per distinct (owner, host) pair and cached for the request:
+    the fallback path scans the roster, and a queue has a handful of distinct
+    senders, not a handful per job."""
+
+    def __init__(self, db: AsyncSession, current_user: UserOut) -> None:
+        self._db = db
+        self._identities = _identities(current_user)
+        self._cache: dict[tuple[str | None, str | None], bool] = {}
+
+    async def owns(self, job: QueuedJob) -> bool:
+        # QueuedJob.belongs_to is the direct comparison, including the "cupsd
+        # gave us no owner, so this belongs to nobody" case.
+        if job.belongs_to(*self._identities):
+            return True
+        if not job.owner:
+            return False
+        key = (job.owner, job.source_host)
+        if key not in self._cache:
+            attributed, _method, _mac = await resolve_user(self._db, job.owner, job.source_host)
+            self._cache[key] = any(
+                identity and identity.casefold() == attributed.casefold()
+                for identity in self._identities
+            )
+        return self._cache[key]
+
+    async def filter(self, jobs: list[QueuedJob]) -> list[QueuedJob]:
+        return [job for job in jobs if await self.owns(job)]
+
+
 def _state_label(job: QueuedJob) -> str:
     if job.is_printing:
         return "printing"
@@ -58,13 +103,13 @@ def _state_label(job: QueuedJob) -> str:
     return "waiting"
 
 
-async def _my_queued_jobs(current_user: UserOut) -> list[QueuedJob]:
+async def _my_queued_jobs(db: AsyncSession, current_user: UserOut) -> list[QueuedJob]:
     jobs = await asyncio.to_thread(queued_jobs)
     if jobs is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=CUPSD_UNREACHABLE
         )
-    return [job for job in jobs if job.belongs_to(*_identities(current_user))]
+    return await _Ownership(db, current_user).filter(jobs)
 
 
 @router.get("", response_model=list[PrintQueuePrinterOut])
@@ -86,8 +131,8 @@ async def get_my_print_queue(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=CUPSD_UNREACHABLE
         )
 
-    identities = _identities(current_user)
-    mine_by_printer = {job.printer_id for job in jobs if job.belongs_to(*identities)}
+    ownership = _Ownership(db, current_user)
+    mine_by_printer = {job.printer_id for job in await ownership.filter(jobs)}
     mine_by_printer.discard(None)
     if not mine_by_printer:
         return []
@@ -109,7 +154,7 @@ async def get_my_print_queue(
         )
         rows = []
         for position, job in enumerate(on_this_printer, start=1):
-            mine = job.belongs_to(*identities)
+            mine = await ownership.owns(job)
             rows.append(
                 PrintQueueJobOut(
                     cups_job_id=job.cups_job_id,
@@ -123,7 +168,15 @@ async def get_my_print_queue(
                     # Once it is printing there is nothing left to reorder,
                     # and a held job is waiting on a person, not on the queue.
                     can_yield=mine and job.is_waiting and not job.is_yielded,
-                    can_restore=mine and job.is_waiting and job.is_yielded,
+                    # Only a job PrintOps itself lowered can be raised again,
+                    # so a client that submitted its own low priority is never
+                    # quietly promoted past the jobs it was queued behind.
+                    can_restore=(
+                        mine
+                        and job.is_waiting
+                        and job.is_yielded
+                        and priority_before_yield(job.printer_id, job.cups_job_id) is not None
+                    ),
                     submitted_at=job.created_at,
                 )
             )
@@ -139,8 +192,10 @@ async def get_my_print_queue(
     return sorted(queues, key=lambda queue: queue.printer_name)
 
 
-async def _reprioritise(cups_job_id: int, priority: int, current_user: UserOut) -> None:
-    mine = await _my_queued_jobs(current_user)
+async def _reprioritise(
+    cups_job_id: int, yielding: bool, db: AsyncSession, current_user: UserOut
+) -> None:
+    mine = await _my_queued_jobs(db, current_user)
     job = next((candidate for candidate in mine if candidate.cups_job_id == cups_job_id), None)
     if job is None:
         # Deliberately the same answer for "no such job", "someone else's job"
@@ -160,25 +215,54 @@ async def _reprioritise(cups_job_id: int, priority: int, current_user: UserOut) 
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="This job is being held rather than waiting its turn, so it can't be moved.",
         )
+    if yielding:
+        priority = YIELDED_PRIORITY
+    else:
+        # Back to what it was before PrintOps lowered it, not to the default:
+        # assuming 50 would raise a job that arrived at some other priority
+        # past the jobs it was legitimately queued behind.
+        priority = priority_before_yield(job.printer_id, cups_job_id)
+        if priority is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "PrintOps no longer knows where this job was before it moved back, so it "
+                    "can't be put back in line. It will still print, after the jobs ahead of it."
+                ),
+            )
+
     try:
         await asyncio.to_thread(set_cups_job_priority, cups_job_id, priority)
     except JobControlError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
+    if yielding:
+        remember_priority_before_yield(job.printer_id, cups_job_id, job.priority)
+    else:
+        forget_priority_before_yield(job.printer_id, cups_job_id)
+
 
 @router.post("/jobs/{cups_job_id}/yield", status_code=status.HTTP_204_NO_CONTENT)
-async def yield_job(cups_job_id: int, current_user: UserOut = Depends(get_current_user)):
+async def yield_job(
+    cups_job_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+):
     """Moves this person's own waiting job behind everything else in its
     queue — including jobs sent while it waits, which is what the button says
     and the honest consequence of a priority floor rather than a one-off
     swap."""
-    await _reprioritise(cups_job_id, YIELDED_PRIORITY, current_user)
+    await _reprioritise(cups_job_id, True, db, current_user)
 
 
 @router.post("/jobs/{cups_job_id}/restore", status_code=status.HTTP_204_NO_CONTENT)
-async def restore_job(cups_job_id: int, current_user: UserOut = Depends(get_current_user)):
+async def restore_job(
+    cups_job_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+):
     """Puts a yielded job back to the default priority, which returns it to
     its original place in the line — behind everything sent before it, ahead
     of everything sent after. It cannot be used to get further forward than
     that, which is why it isn't a queue-jump in disguise."""
-    await _reprioritise(cups_job_id, NORMAL_PRIORITY, current_user)
+    await _reprioritise(cups_job_id, False, db, current_user)
