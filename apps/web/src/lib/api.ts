@@ -2959,7 +2959,26 @@ export type PrintQueuePrinter = {
   total_job_count: number;
 };
 
-export async function getMyPrintQueue(): Promise<PrintQueuePrinter[]> {
+export type PrintQueueHeldJob = {
+  job_id: string;
+  printer_id: string;
+  printer_name: string;
+  document_name: string | null;
+  size_bytes: number | null;
+  /** Why PrintOps is holding it — see app/quotas/service.py:resolve_hold_reason. */
+  reason: "pin_release" | "follow_me" | "quota" | "printer_offline" | null;
+  submitted_at: string;
+  expires_at: string | null;
+};
+
+export type PrintQueueView = {
+  /** Queues this person has a job in, each shown whole. */
+  queues: PrintQueuePrinter[];
+  /** This person's own held jobs, which are in no queue at all. */
+  held: PrintQueueHeldJob[];
+};
+
+export async function getMyPrintQueue(): Promise<PrintQueueView> {
   const response = await authorizedFetch("/api/v1/print-queue");
   return response.json();
 }

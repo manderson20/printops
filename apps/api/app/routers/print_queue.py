@@ -13,15 +13,17 @@ is anyone else's job, at any status.
 """
 
 import asyncio
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.attribution.resolve import resolve_user
 from app.db import get_db
 from app.deps import get_current_user
+from app.models.job import Job
 from app.models.printer import Printer
 from app.printers.job_control import (
     JOB_STATE_PENDING_HELD,
@@ -38,7 +40,12 @@ from app.printers.print_queue import (
     remember_priority_before_yield,
 )
 from app.schemas.auth import UserOut
-from app.schemas.print_queue import PrintQueueJobOut, PrintQueuePrinterOut
+from app.schemas.print_queue import (
+    PrintQueueHeldJobOut,
+    PrintQueueJobOut,
+    PrintQueueOut,
+    PrintQueuePrinterOut,
+)
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -112,7 +119,7 @@ async def _my_queued_jobs(db: AsyncSession, current_user: UserOut) -> list[Queue
     return await _Ownership(db, current_user).filter(jobs)
 
 
-@router.get("", response_model=list[PrintQueuePrinterOut])
+@router.get("", response_model=PrintQueueOut)
 async def get_my_print_queue(
     db: AsyncSession = Depends(get_db),
     current_user: UserOut = Depends(get_current_user),
@@ -124,7 +131,14 @@ async def get_my_print_queue(
     turn a page about their own job into a fleet monitor. Within a queue they
     see every job, because "am I holding anyone up?" cannot be answered from
     their own jobs alone — but other people's appear as a size and a place in
-    line, never a document name."""
+    line, never a document name.
+
+    Alongside them, this person's own held jobs: the ones PrintOps is holding
+    rather than cupsd queueing — over quota, waiting to be released at the
+    printer, or waiting for a printer that is switched off. Those never enter a
+    queue at all, so nothing on the queue side of this page would ever show
+    them, and the person who sent one had no way to tell a job that is waiting
+    from a job that vanished."""
     jobs = await asyncio.to_thread(queued_jobs)
     if jobs is None:
         raise HTTPException(
@@ -135,7 +149,7 @@ async def get_my_print_queue(
     mine_by_printer = {job.printer_id for job in await ownership.filter(jobs)}
     mine_by_printer.discard(None)
     if not mine_by_printer:
-        return []
+        return PrintQueueOut(queues=[], held=await _my_held_jobs(db, current_user))
 
     result = await db.execute(
         select(Printer).where(Printer.id.in_([UUID(pid) for pid in mine_by_printer]))
@@ -189,7 +203,10 @@ async def get_my_print_queue(
                 total_job_count=len(rows),
             )
         )
-    return sorted(queues, key=lambda queue: queue.printer_name)
+    return PrintQueueOut(
+        queues=sorted(queues, key=lambda queue: queue.printer_name),
+        held=await _my_held_jobs(db, current_user),
+    )
 
 
 async def _reprioritise(
@@ -266,3 +283,47 @@ async def restore_job(
     of everything sent after. It cannot be used to get further forward than
     that, which is why it isn't a queue-jump in disguise."""
     await _reprioritise(cups_job_id, False, db, current_user)
+
+
+async def _my_held_jobs(db: AsyncSession, current_user: UserOut) -> list[PrintQueueHeldJobOut]:
+    """This person's own held jobs, newest last.
+
+    Matched on Job.submitted_by directly rather than through
+    app/attribution/resolve.py, unlike the cupsd side: submitted_by is already
+    the *resolved* identity — attribution ran once at create_job time and the
+    row records its answer — so re-resolving it here would be asking a question
+    that has been answered and stored.
+
+    Expired holds are left out. The sweep in app/main.py deletes the document
+    and closes the row shortly after `held_expires_at`, and a job listed as
+    waiting when its document is already gone is worse than one not listed.
+    """
+    identities = [identity.casefold() for identity in _identities(current_user) if identity]
+    if not identities:
+        return []
+    now = datetime.now(UTC)
+    rows = (
+        await db.execute(
+            select(Job, Printer.name)
+            .join(Printer, Printer.id == Job.printer_id)
+            .where(
+                Job.status == "held",
+                func.lower(Job.submitted_by).in_(identities),
+                (Job.held_expires_at.is_(None)) | (Job.held_expires_at > now),
+            )
+            .order_by(Job.created_at)
+        )
+    ).all()
+    return [
+        PrintQueueHeldJobOut(
+            job_id=job.id,
+            printer_id=job.printer_id,
+            printer_name=printer_name,
+            document_name=job.document_name,
+            size_bytes=job.file_size_bytes,
+            reason=job.hold_reason,
+            submitted_at=job.created_at,
+            expires_at=job.held_expires_at,
+        )
+        for job, printer_name in rows
+    ]

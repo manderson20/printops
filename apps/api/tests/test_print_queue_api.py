@@ -134,7 +134,7 @@ async def test_shows_the_whole_line_but_only_my_document_names(client, auth_head
     )
     response = client.get("/api/v1/print-queue", headers=auth_headers)
     assert response.status_code == 200, response.text
-    [printer] = response.json()
+    [printer] = response.json()["queues"]
     assert printer["printer_name"] == "MS Choir Copier"
     assert printer["total_job_count"] == 2
     assert printer["my_job_count"] == 1
@@ -154,14 +154,14 @@ async def test_shows_the_whole_line_but_only_my_document_names(client, auth_head
 async def test_a_printer_i_have_nothing_on_is_not_listed(client, auth_headers, queue):
     queue(job(1, SOMEONE_ELSE, printer_id=OTHER_PRINTER_ID), job(2, ME))
     response = client.get("/api/v1/print-queue", headers=auth_headers)
-    names = [printer["printer_name"] for printer in response.json()]
+    names = [printer["printer_name"] for printer in response.json()["queues"]]
     assert names == ["MS Choir Copier"]
 
 
 async def test_empty_when_nothing_of_mine_is_waiting(client, auth_headers, queue):
     queue(job(1, SOMEONE_ELSE))
     response = client.get("/api/v1/print-queue", headers=auth_headers)
-    assert response.json() == []
+    assert response.json() == {"queues": [], "held": []}
 
 
 async def test_a_held_job_sorts_behind_jobs_that_can_actually_print(client, auth_headers, queue):
@@ -169,13 +169,13 @@ async def test_a_held_job_sorts_behind_jobs_that_can_actually_print(client, auth
     # a held job waits on a person, not on the queue. Ordering by age here
     # would tell this person they are 2nd when they are next.
     queue(job(1, SOMEONE_ELSE, state=4), job(8, ME))
-    [printer] = client.get("/api/v1/print-queue", headers=auth_headers).json()
+    [printer] = client.get("/api/v1/print-queue", headers=auth_headers).json()["queues"]
     assert [(row["cups_job_id"], row["position"]) for row in printer["jobs"]] == [(8, 1), (1, 2)]
 
 
 async def test_the_job_being_printed_is_first_and_cannot_be_moved(client, auth_headers, queue):
     queue(job(9, ME, state=3), job(4, ME, state=5))
-    [printer] = client.get("/api/v1/print-queue", headers=auth_headers).json()
+    [printer] = client.get("/api/v1/print-queue", headers=auth_headers).json()["queues"]
     printing, waiting = printer["jobs"]
     assert printing["cups_job_id"] == 4
     assert printing["state"] == "printing"
@@ -203,7 +203,7 @@ async def test_a_job_cups_recorded_under_a_bare_username_is_still_mine(
         lambda db, cups_user, source_host: _resolved(ME),
     )
     queue(job(5, "matt"))
-    [printer] = client.get("/api/v1/print-queue", headers=auth_headers).json()
+    [printer] = client.get("/api/v1/print-queue", headers=auth_headers).json()["queues"]
     [row] = printer["jobs"]
     assert row["mine"] is True
     assert row["document_name"] == "Choir Concert Programme.pdf"
@@ -219,7 +219,7 @@ async def test_a_bare_username_that_resolves_to_someone_else_is_not_mine(
         lambda db, cups_user, source_host: _resolved(SOMEONE_ELSE),
     )
     queue(job(5, "anna"))
-    assert client.get("/api/v1/print-queue", headers=auth_headers).json() == []
+    assert client.get("/api/v1/print-queue", headers=auth_headers).json()["queues"] == []
     assert client.post("/api/v1/print-queue/jobs/5/yield", headers=auth_headers).status_code == 404
     assert priority_calls == []
 
@@ -258,7 +258,7 @@ async def test_a_low_priority_job_printops_never_lowered_cannot_be_raised(
 async def test_a_yielded_job_offers_restore_not_yield(client, auth_headers, queue):
     queue(job(2, ME, priority=YIELDED_PRIORITY))
     remember_priority_before_yield(str(PRINTER_ID), 2, NORMAL_PRIORITY)
-    [printer] = client.get("/api/v1/print-queue", headers=auth_headers).json()
+    [printer] = client.get("/api/v1/print-queue", headers=auth_headers).json()["queues"]
     [mine] = printer["jobs"]
     assert mine["yielded"] is True
     assert mine["can_yield"] is False

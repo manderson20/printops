@@ -6,8 +6,9 @@ import {
   getMyPrintQueue,
   restorePrintQueueJob,
   yieldPrintQueueJob,
+  type PrintQueueHeldJob,
   type PrintQueueJob,
-  type PrintQueuePrinter,
+  type PrintQueueView,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -19,7 +20,7 @@ import { useCurrentUser } from "@/lib/useCurrentUser";
 
 type LoadState =
   | { phase: "loading" }
-  | { phase: "ok"; queues: PrintQueuePrinter[] }
+  | { phase: "ok"; view: PrintQueueView }
   | { phase: "error"; message: string };
 
 // The queue moves on its own — a job finishes, someone else sends one — so a
@@ -30,6 +31,41 @@ const REFRESH_MS = 10_000;
 function jobLabel(job: PrintQueueJob): string {
   if (!job.mine) return "Another staff member";
   return job.document_name ?? "Your job";
+}
+
+function heldBadge(job: PrintQueueHeldJob) {
+  if (job.reason === "printer_offline") return <Badge tone="warning">Printer is off</Badge>;
+  if (job.reason === "quota") return <Badge tone="warning">Over your quota</Badge>;
+  if (job.reason === "pin_release" || job.reason === "follow_me")
+    return <Badge tone="info">Waiting for you at the printer</Badge>;
+  return <Badge tone="neutral">Held</Badge>;
+}
+
+function heldExplanation(job: PrintQueueHeldJob): string {
+  const expiry = job.expires_at
+    ? ` If it isn't printed by ${new Date(job.expires_at).toLocaleString()}, it is deleted unprinted.`
+    : "";
+  switch (job.reason) {
+    case "printer_offline":
+      // Deliberately reassuring and specific: this is the case that looks like
+      // a job disappeared, and the honest answer is that nothing is needed.
+      return (
+        `${job.printer_name} was switched off or unreachable when you sent this, so PrintOps ` +
+        `is keeping it. It prints by itself when the printer is back on — you don't need to ` +
+        `send it again.` + expiry
+      );
+    case "quota":
+      return (
+        "This would take you past your print quota, so it needs an administrator to release " +
+        "it. It has not been printed and has not counted against anyone." + expiry
+      );
+    case "pin_release":
+      return `Go to ${job.printer_name} and enter your PIN to print it.${expiry}`;
+    case "follow_me":
+      return `Enter your PIN at any Follow-Me printer to print it.${expiry}`;
+    default:
+      return `This job is being held on the print server.${expiry}`;
+  }
 }
 
 function stateBadge(job: PrintQueueJob) {
@@ -54,8 +90,8 @@ export default function PrintQueuePage() {
 
   const load = useCallback(async (): Promise<void> => {
     try {
-      const queues = await getMyPrintQueue();
-      setState({ phase: "ok", queues });
+      const view = await getMyPrintQueue();
+      setState({ phase: "ok", view });
     } catch (err: unknown) {
       setState({
         phase: "error",
@@ -103,7 +139,9 @@ export default function PrintQueuePage() {
           What is waiting to print on the printers you have a job on. If you have sent
           something long and someone else needs a page or two, you can move your own
           job to the back of the line — it still prints, once the others have. You can
-          put it back at any time before it starts.
+          put it back at any time before it starts. Anything PrintOps is holding for
+          you — over quota, waiting for your PIN, or waiting for a printer to come
+          back on — is listed underneath.
         </p>
       </div>
 
@@ -111,7 +149,9 @@ export default function PrintQueuePage() {
 
       {state.phase === "error" && <ErrorState>{state.message}</ErrorState>}
 
-      {state.phase === "ok" && state.queues.length === 0 && (
+      {state.phase === "ok" &&
+        state.view.queues.length === 0 &&
+        state.view.held.length === 0 && (
         <EmptyState>
           Nothing of yours is waiting. When you send something to print it appears
           here until the printer picks it up — a job that prints straight away may
@@ -120,7 +160,7 @@ export default function PrintQueuePage() {
       )}
 
       {state.phase === "ok" &&
-        state.queues.map((queue) => (
+        state.view.queues.map((queue) => (
           <Card key={queue.printer_id}>
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
               <CardTitle>{queue.printer_name}</CardTitle>
@@ -202,6 +242,38 @@ export default function PrintQueuePage() {
             )}
           </Card>
         ))}
+
+      {state.phase === "ok" && state.view.held.length > 0 && (
+        <Card>
+          <div className="mb-1">
+            <CardTitle>Waiting on something else</CardTitle>
+          </div>
+          <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-400">
+            These jobs of yours haven&rsquo;t reached a printer&rsquo;s queue yet. They
+            are not holding anyone else up, and nothing has been lost.
+          </p>
+          <ul className="space-y-2">
+            {state.view.held.map((job) => (
+              <li
+                key={job.job_id}
+                className="rounded-lg border border-black/[.08] px-3 py-2 text-sm dark:border-white/[.145]"
+              >
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="min-w-0 flex-1 truncate">
+                    {job.document_name ?? "Your job"}
+                    <span className="ml-2 text-xs text-zinc-500">{job.printer_name}</span>
+                  </span>
+                  <span className="shrink-0 text-xs text-zinc-500">
+                    {formatBytes(job.size_bytes)}
+                  </span>
+                  <span className="shrink-0">{heldBadge(job)}</span>
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">{heldExplanation(job)}</p>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
     </div>
   );
 }
