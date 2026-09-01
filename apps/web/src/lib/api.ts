@@ -3122,3 +3122,146 @@ export async function disablePrinterCopier(id: string): Promise<Printer> {
   );
   return response.json();
 }
+
+// --- "Your Printing, Explained" (app/routers/reports.py) ---------------
+
+export type ExplainedPeriod = "week" | "month" | "semester" | "year";
+
+export type Milestone = {
+  name: string;
+  /** The rung named for mid-sentence use ("Jefferson City" rather than
+   * "Brookfield to Jefferson City"). */
+  label: string;
+  value: number;
+};
+
+export type MilestoneProgress = {
+  ladder_key: string;
+  unit: string;
+  total: number;
+  /** Null until the first rung is reached. */
+  passed: Milestone | null;
+  /** Null once the top of the ladder is passed — render that as an
+   * achievement, not an empty bar. */
+  upcoming: Milestone | null;
+  progress: number;
+  /** False when the bar would read as broken rather than encouraging. */
+  show_progress: boolean;
+};
+
+export type Equivalency = {
+  key: string;
+  value: number;
+  unit: string;
+  /** Set only for distance, stack height and weight. */
+  milestone: MilestoneProgress | null;
+};
+
+export type PersonalExplained = {
+  period: ExplainedPeriod;
+  range_start: string;
+  range_end: string;
+  print_pages: number;
+  copy_pages: number;
+  total_pages: number;
+  job_count: number;
+  sheets: number;
+  color_pages: number;
+  mono_pages: number;
+  unknown_color_mode_pages: number;
+  duplex_pages: number;
+  simplex_pages: number;
+  unknown_duplex_pages: number;
+  largest_job_pages: number | null;
+  avg_pages_per_job: number;
+  district_median_pages: number;
+  district_mean_pages: number;
+  /** Null when the district median is 0 — show nothing rather than a
+   * nonsense multiple. */
+  times_district_median: number | null;
+  duplex_sheets_saved: number;
+  additional_sheets_if_all_duplex: number;
+  print_cost: number;
+  copy_cost: number;
+  total_cost: number;
+  equivalencies: Equivalency[];
+  facts: string[];
+  /** Copy pages come from counter deltas covering a period, not from
+   * timestamped events — surfaced as a footnote, never hidden. */
+  includes_period_derived_copies: boolean;
+  /** False whenever copies are included: a counter window has no hour. */
+  time_of_day_available: boolean;
+};
+
+export type DistrictFunFacts = {
+  period: ExplainedPeriod;
+  range_start: string;
+  range_end: string;
+  print_pages: number;
+  copy_pages: number;
+  total_pages: number;
+  sheets: number;
+  /** A count of people, never the people. */
+  contributors: number;
+  /** False below the anonymity floor, in which case every total above is
+   * withheld (zero) and the page says there isn't enough activity yet. */
+  has_enough_activity: boolean;
+  equivalencies: Equivalency[];
+  facts: string[];
+};
+
+export type DistrictSegment = {
+  key: string;
+  label: string;
+  /** Zero on the "Unassigned" row — contributor counts overlap across
+   * buildings, so that row's share can't be derived by subtraction. */
+  people: number;
+  print_pages: number;
+  copy_pages: number;
+  total_pages: number;
+  sheets: number;
+  estimated_cost: number;
+};
+
+export type DistrictDetail = {
+  period: ExplainedPeriod;
+  range_start: string;
+  range_end: string;
+  print_pages: number;
+  copy_pages: number;
+  total_pages: number;
+  sheets: number;
+  contributors: number;
+  district_median_pages: number;
+  district_mean_pages: number;
+  by_building: DistrictSegment[];
+  by_department: DistrictSegment[];
+  equivalencies: Equivalency[];
+};
+
+export async function getPersonalExplained(
+  period: ExplainedPeriod,
+): Promise<PersonalExplained> {
+  const response = await authorizedFetch(
+    `/api/v1/reports/explained/me?period=${period}`,
+  );
+  return response.json();
+}
+
+export async function getDistrictFunFacts(
+  period: ExplainedPeriod,
+): Promise<DistrictFunFacts> {
+  const response = await authorizedFetch(
+    `/api/v1/reports/explained/district?period=${period}`,
+  );
+  return response.json();
+}
+
+export async function getDistrictDetail(
+  period: ExplainedPeriod,
+): Promise<DistrictDetail> {
+  const response = await authorizedFetch(
+    `/api/v1/reports/explained/district/detail?period=${period}`,
+  );
+  return response.json();
+}
