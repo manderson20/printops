@@ -198,7 +198,7 @@ def test_football_field_sorts_below_a_track_lap():
     """The brief listed the track first; the field's perimeter is
     actually shorter. Sorting by value is what keeps the bar monotonic."""
     result = pick_milestone(1_200.0, DISTANCE_LADDER)
-    assert result.passed.name == "around the football field"
+    assert result.passed.name == "a lap of the football field"
     assert result.upcoming.name == "a lap of the track"
 
 

@@ -96,10 +96,23 @@ class Milestone:
     """One rung. `value` is in its ladder's `unit`, never a display unit —
     formatting (miles vs feet, say) is the caller's decision, because the
     same rung reads naturally at different scales on the personal and
-    district views."""
+    district views.
+
+    `short` is the same rung named for the middle of a sentence, where
+    the full name would repeat something already said: a journey rung
+    reads as "Brookfield to Jefferson City" when it is the achievement,
+    but "17% of the way to Brookfield to Jefferson City" is not English.
+    Defaults to `name`, so a rung only carries one when the two differ.
+    """
 
     name: str
     value: float
+    short: str | None = None
+
+    @property
+    def label(self) -> str:
+        """The rung named for use mid-sentence."""
+        return self.short or self.name
 
 
 @dataclass(frozen=True)
@@ -122,15 +135,17 @@ DISTANCE_LADDER = Ladder(
     key="distance",
     unit="feet",
     rungs=(
-        Milestone("around the football field", 1_040.0),  # 360x160 ft perimeter
+        Milestone("a lap of the football field", 1_040.0),  # 360x160 ft perimeter
         Milestone("a lap of the track", 1_312.34),  # 400 m
-        Milestone("Brookfield to Marceline", 12.0 * FEET_PER_MILE),
-        Milestone("Brookfield to Jefferson City", 120.0 * FEET_PER_MILE),
-        Milestone("all the way across Missouri", 300.0 * FEET_PER_MILE),
-        Milestone("Brookfield to Chicago", 410.0 * FEET_PER_MILE),
+        Milestone("Brookfield to Marceline", 12.0 * FEET_PER_MILE, short="Marceline"),
+        Milestone("Brookfield to Jefferson City", 120.0 * FEET_PER_MILE, short="Jefferson City"),
+        Milestone("all the way across Missouri", 300.0 * FEET_PER_MILE, short="across Missouri"),
+        Milestone("Brookfield to Chicago", 410.0 * FEET_PER_MILE, short="Chicago"),
         Milestone("coast to coast", 2_800.0 * FEET_PER_MILE),
-        Milestone("all the way around the Earth", 24_901.0 * FEET_PER_MILE),
-        Milestone("all the way to the Moon", 238_900.0 * FEET_PER_MILE),
+        Milestone(
+            "all the way around the Earth", 24_901.0 * FEET_PER_MILE, short="around the Earth"
+        ),
+        Milestone("all the way to the Moon", 238_900.0 * FEET_PER_MILE, short="the Moon"),
     ),
 )
 
