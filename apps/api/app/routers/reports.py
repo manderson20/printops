@@ -949,6 +949,21 @@ async def _explained_window(db: AsyncSession, period: str) -> tuple[date, date, 
         ReportFilters(
             start=datetime.combine(start_date, time.min, tzinfo=zone),
             end=datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=zone),
+            # Forwarded jobs only, for every explained view rather than
+            # only the activity list that used to set it alone. A job
+            # that never reached a printer is a queue question, not a
+            # usage one, and counting it here made the header disagree
+            # with the list beneath it: get_summary counts rows of every
+            # status, so a cancelled job added 1 to job_count while
+            # get_print_rows correctly refused to show it. Production
+            # currently has 180 cancelled jobs carrying 0 pages, so the
+            # pages agreed and only the counts drifted — which is exactly
+            # the kind of disagreement nobody notices until they count
+            # the rows by hand.
+            #
+            # Copies are unaffected: _apply_copier_filters has no status
+            # to apply, a counter delta having no such thing.
+            status="forwarded",
         ),
     )
 
@@ -1021,11 +1036,16 @@ async def report_explained_me(
     saying "you".
 
     The district median it compares against is computed from an unscoped
-    window, so the caller does get one number derived from everybody's
-    activity. That number is a median of page counts with no identities
-    attached (get_pages_per_person deliberately returns a list of
-    integers), which is the same shape the all-users district view is
-    built on.
+    window, so the caller does get two numbers derived from everybody's
+    activity — and those are withheld below the same contributor floor
+    /explained/district enforces.
+
+    That floor is the whole guard. Having no identities attached is not
+    sufficient and this docstring used to claim it was: get_pages_per_person
+    returning a bare list of integers protects against naming someone,
+    not against a list short enough that a statistic over it *is* one
+    person's number. Anonymity is a property of the population size, not
+    of the field names in the response.
     """
     start_date, end_date, filters = await _explained_window(db, period)
     filters = replace(filters, submitted_by=current_user.username)
@@ -1055,9 +1075,27 @@ async def report_explained_me(
     )
     additional = max(print_sheets - all_duplex_sheets, 0)
 
+    # The same floor /explained/district enforces, for the same reason
+    # and against the same disclosure. This endpoint is scoped to its
+    # caller in every other respect, which made it look exempt — but the
+    # median and mean below are computed over everybody, so they are a
+    # district disclosure sitting on a personal page, and a guard that
+    # protects one address and not the other protects neither.
+    #
+    # The count is len(per_person) rather than a second count_contributors
+    # query: per_person *is* the population the statistics are computed
+    # from, so guarding on its length cannot drift from what it guards.
+    # (The two agree — get_pages_per_person and count_contributors take
+    # the same union over the same activity_type == "copy" restriction.)
+    #
+    # Worked example from this district's own data: the week of
+    # 2026-06-29 had 3 contributors. At n=3 the median is one person's
+    # exact page count. At n=2 including the caller, the caller subtracts
+    # their own total from the mean and reads the other person's.
     per_person = await get_pages_per_person(db, replace(filters, submitted_by=None))
-    median = statistics.median(per_person) if per_person else 0.0
-    mean = statistics.fmean(per_person) if per_person else 0.0
+    has_district_comparison = len(per_person) >= MIN_CONTRIBUTORS_FOR_DISTRICT_FACTS
+    median = statistics.median(per_person) if has_district_comparison else None
+    mean = statistics.fmean(per_person) if has_district_comparison else None
 
     equivalencies = build_equivalencies(total_pages, sheets)
     facts = generate_equivalency_facts(equivalencies, collective=False)
@@ -1084,9 +1122,10 @@ async def report_explained_me(
         avg_pages_per_job=(
             round(summary.total_pages / summary.total_jobs, 1) if summary.total_jobs else 0.0
         ),
-        district_median_pages=round(median, 1),
-        district_mean_pages=round(mean, 1),
+        district_median_pages=round(median, 1) if median is not None else None,
+        district_mean_pages=round(mean, 1) if mean is not None else None,
         times_district_median=round(total_pages / median, 1) if median else None,
+        has_district_comparison=has_district_comparison,
         duplex_sheets_saved=saved,
         additional_sheets_if_all_duplex=additional,
         print_cost=round(print_overall.total_cost, 2),
@@ -1129,7 +1168,11 @@ async def report_my_activity(
         range_end=end_date,
         rows=[MyActivityRowOut(**vars(row)) for row in rows],
         total_rows=total,
-        includes_period_derived_copies=any(row.kind == "copy" for row in rows),
+        # Period-derived, not merely a copy: a row carrying occurred_at
+        # is an instant and needs no footnote explaining a window it
+        # doesn't have. window_start is the property being described, so
+        # it is the property tested.
+        includes_period_derived_copies=any(row.window_start is not None for row in rows),
     )
 
 
@@ -1303,7 +1346,8 @@ async def report_district_detail(
     # have no building set. Computed by subtracting the segments from the
     # whole rather than by querying "building is null", so the row is by
     # construction whatever the named rows are missing and the column
-    # totals always reconcile.
+    # totals always reconcile. That construction is why the same helper
+    # serves both breakdowns below without knowing which is which.
     #
     # `people` is the one field that cannot be derived this way and is
     # left at zero: the same person prints in more than one building, so
@@ -1318,18 +1362,31 @@ async def report_district_detail(
     district_sheets = _sheets_for(summary, combined.copy_pages)
     district_cost = district_print_cost.total_cost + district_copy_cost.total_cost
 
-    unassigned = DistrictSegmentOut(
-        key="__unassigned__",
-        label="Unassigned",
-        people=0,
-        print_pages=combined.print_pages - sum(s.print_pages for s in by_building),
-        copy_pages=combined.copy_pages - sum(s.copy_pages for s in by_building),
-        total_pages=combined.total_pages - sum(s.total_pages for s in by_building),
-        sheets=district_sheets - sum(s.sheets for s in by_building),
-        estimated_cost=round(district_cost - sum(s.estimated_cost for s in by_building), 2),
-    )
-    if unassigned.total_pages > 0:
-        by_building.append(unassigned)
+    def _unassigned(segments: list[DistrictSegmentOut]) -> DistrictSegmentOut:
+        return DistrictSegmentOut(
+            key="__unassigned__",
+            label="Unassigned",
+            people=0,
+            print_pages=combined.print_pages - sum(s.print_pages for s in segments),
+            copy_pages=combined.copy_pages - sum(s.copy_pages for s in segments),
+            total_pages=combined.total_pages - sum(s.total_pages for s in segments),
+            sheets=district_sheets - sum(s.sheets for s in segments),
+            estimated_cost=round(district_cost - sum(s.estimated_cost for s in segments), 2),
+        )
+
+    # Both breakdowns get the remainder, not just buildings. The
+    # department table had none and silently dropped everything it could
+    # not name: the 5 printers with no department set, plus every copy
+    # from a copier with no linked Printer to take a department from
+    # (_apply_copier_filters inner-joins Printer for a department filter,
+    # by design). A table the page introduces as a breakdown of the
+    # district total has to add up to the district total, or say why not.
+    unassigned_building = _unassigned(by_building)
+    if unassigned_building.total_pages > 0:
+        by_building.append(unassigned_building)
+    unassigned_department = _unassigned(by_department)
+    if unassigned_department.total_pages > 0:
+        by_department.append(unassigned_department)
 
     equivalencies = build_equivalencies(combined.total_pages, district_sheets)
     return DistrictDetailOut(

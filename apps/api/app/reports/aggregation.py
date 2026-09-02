@@ -798,13 +798,25 @@ async def count_contributors(db: AsyncSession, filters: ReportFilters) -> int:
     because the print and copy sides learn the same person's address
     from different rosters and do not always agree on its case — the
     same reason app/routers/reports.py:_may_report_on compares that way.
+
+    The copy half counts copying only, matching get_copier_usage_totals
+    and get_pages_per_person, which both restrict to activity_type ==
+    "copy". A guard has to count the people behind the number it is
+    guarding: scanning and faxing produce no printed page and are
+    excluded from total_pages (see CombinedSummary), so counting a
+    scan-only user as a contributor would let nine of them plus one
+    person copying clear a floor of ten over a total attributable
+    entirely to that one person. No such user exists in this district
+    today — every one of the 61 scan rows belongs to somebody who also
+    copies — which is exactly why this needed fixing before one does.
     """
     print_emails = _apply_filters(
         select(func.lower(Job.submitted_by)).where(Job.submitted_by.is_not(None)), filters
     )
     copy_emails = _apply_copier_filters(
         select(func.lower(CopierUsageRecord.staff_email)).where(
-            CopierUsageRecord.staff_email.is_not(None)
+            CopierUsageRecord.staff_email.is_not(None),
+            CopierUsageRecord.activity_type == "copy",
         ),
         filters,
     )
