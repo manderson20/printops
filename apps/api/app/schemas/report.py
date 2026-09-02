@@ -488,3 +488,43 @@ class DistrictDetailOut(BaseModel):
     by_department: list[DistrictSegmentOut]
 
     equivalencies: list[EquivalencyOut]
+
+
+class MyActivityRowOut(BaseModel):
+    """One line item in a person's own activity list.
+
+    A print and a copy are not the same kind of event and this model does
+    not flatten them into one. `at` is set for a print, which happened at
+    an instant; `window_start`/`window_end` are set for a copy, which is
+    the difference between two counter readings and therefore covers a
+    period. The other side is always null — see app/reports/activity.py.
+    """
+
+    kind: str  # print | copy
+    label: str
+    where: str
+    activity_type: str  # print | copy | scan | fax
+    pages: int
+    sheets: int
+
+    at: datetime | None = None
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+
+    color_mode: str | None = None
+    duplex: bool | None = None
+    color_pages: int | None = None
+    mono_pages: int | None = None
+
+
+class MyActivityOut(BaseModel):
+    period: str
+    range_start: date
+    range_end: date
+    rows: list[MyActivityRowOut]
+    # The true count before the cap, so the page can say "showing 50 of
+    # 213" rather than presenting a slice as the whole history.
+    total_rows: int
+    # True when any copy row is present, so the page can explain why some
+    # rows carry a time range instead of a time.
+    includes_period_derived_copies: bool

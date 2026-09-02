@@ -17,6 +17,7 @@ from app.models.mfp_device import MfpDevice
 from app.models.printer import Printer
 from app.models.report import ReportFormulaSettings, ReportSnapshot
 from app.models.user import User
+from app.reports.activity import get_my_activity
 from app.reports.aggregation import (
     CopyCostRawRow,
     CostRawRow,
@@ -79,6 +80,8 @@ from app.schemas.report import (
     LeaderboardEntryOut,
     MilestoneOut,
     MilestoneProgressOut,
+    MyActivityOut,
+    MyActivityRowOut,
     PeakTimesOut,
     PersonalExplainedOut,
     SnapshotCreate,
@@ -1093,6 +1096,40 @@ async def report_explained_me(
         facts=facts,
         includes_period_derived_copies=copy_pages > 0,
         time_of_day_available=copy_pages == 0,
+    )
+
+
+@router.get("/explained/me/activity", response_model=MyActivityOut)
+async def report_my_activity(
+    period: str = Query("year", description="week | month | semester | year"),
+    limit: int = Query(200, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+):
+    """A person's own printing and copying as line items.
+
+    Scoped to the caller the same way /explained/me is, and for the same
+    reason: this is "your activity", so an admin asking for it wants
+    their own rows rather than the district's. It builds its filters
+    directly instead of depending on _report_filters, which leaves an
+    admin unscoped.
+
+    Copy rows carry a window rather than a timestamp, because that is
+    what the hardware produces — see app/reports/activity.py's module
+    docstring, and docs/copier-capture-konica.md S3.6 for the firmware
+    test showing per-job copy data is not obtainable at all.
+    """
+    start_date, end_date, filters = await _explained_window(db, period)
+    filters = replace(filters, submitted_by=current_user.username)
+
+    rows, total = await get_my_activity(db, filters, limit=limit)
+    return MyActivityOut(
+        period=period,
+        range_start=start_date,
+        range_end=end_date,
+        rows=[MyActivityRowOut(**vars(row)) for row in rows],
+        total_rows=total,
+        includes_period_derived_copies=any(row.kind == "copy" for row in rows),
     )
 
 

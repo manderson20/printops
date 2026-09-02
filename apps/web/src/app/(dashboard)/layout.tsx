@@ -35,6 +35,7 @@ const VIEWER_NAV_LINKS = [
   // the response at all — see app/routers/reports.py's
   // report_explained_me and report_district_fun_facts.
   { href: "/insights/me", label: "My Printing" },
+  { href: "/insights/me/activity", label: "My Activity" },
   { href: "/insights/district", label: "Together" },
 ] as const;
 
@@ -44,6 +45,7 @@ const VIEWER_NAV_LINKS = [
 const OU_VIEWER_NAV_LINKS = [
   { href: "/insights", label: "Insights" },
   { href: "/insights/me", label: "My Printing" },
+  { href: "/insights/me/activity", label: "My Activity" },
   { href: "/insights/district", label: "Together" },
 ] as const;
 

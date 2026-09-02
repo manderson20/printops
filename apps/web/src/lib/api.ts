@@ -3265,3 +3265,43 @@ export async function getDistrictDetail(
   );
   return response.json();
 }
+
+export type MyActivityRow = {
+  kind: "print" | "copy";
+  label: string;
+  where: string;
+  activity_type: string;
+  pages: number;
+  sheets: number;
+  /** Set for a print, which happened at an instant. Null for a copy. */
+  at: string | null;
+  /** Set for a copy, which is a counter delta covering a period. Null
+   * for a print. Never render a copy as a single time — the machines
+   * cannot report one. */
+  window_start: string | null;
+  window_end: string | null;
+  color_mode: string | null;
+  duplex: boolean | null;
+  color_pages: number | null;
+  mono_pages: number | null;
+};
+
+export type MyActivity = {
+  period: ExplainedPeriod;
+  range_start: string;
+  range_end: string;
+  rows: MyActivityRow[];
+  /** True count before the cap, so the page can say "showing 50 of 213". */
+  total_rows: number;
+  includes_period_derived_copies: boolean;
+};
+
+export async function getMyActivity(
+  period: ExplainedPeriod,
+  limit = 200,
+): Promise<MyActivity> {
+  const response = await authorizedFetch(
+    `/api/v1/reports/explained/me/activity?period=${period}&limit=${limit}`,
+  );
+  return response.json();
+}

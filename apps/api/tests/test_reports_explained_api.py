@@ -597,3 +597,133 @@ def test_a_period_with_no_activity_produces_no_equivalencies(client, admin_heade
     assert body["total_pages"] == 0
     assert body["equivalencies"] == []
     assert body["facts"] == []
+
+
+# --- my activity: line items -------------------------------------------
+
+
+async def test_activity_lists_a_print_with_an_instant_not_a_window(
+    client, printer_id, db_session_factory, viewer_headers
+):
+    await _make_job(db_session_factory, printer_id, "viewer@example.org", 12)
+
+    body = client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers).json()
+    assert body["total_rows"] == 1
+    row = body["rows"][0]
+    assert row["kind"] == "print"
+    assert row["activity_type"] == "print"
+    assert row["pages"] == 12
+    assert row["at"] is not None
+    # A print is a moment; it must not claim a window it never had.
+    assert row["window_start"] is None
+    assert row["window_end"] is None
+
+
+async def test_activity_lists_a_copy_with_a_window_not_an_instant(
+    client, mfp_device_id, db_session_factory, viewer_headers
+):
+    """The whole reason this list exists in two shapes. A copy row that
+    carried a timestamp would be stating something nobody measured."""
+    await _make_copy(db_session_factory, mfp_device_id, "viewer@example.org", 47)
+
+    body = client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers).json()
+    row = body["rows"][0]
+    assert row["kind"] == "copy"
+    assert row["pages"] == 47
+    assert row["at"] is None
+    assert row["window_start"] is not None
+    assert row["window_end"] is not None
+    assert body["includes_period_derived_copies"] is True
+
+
+async def test_activity_gives_one_row_per_counter_delta(
+    client, mfp_device_id, db_session_factory, viewer_headers
+):
+    """Per-delta, not rolled up per day — rolling up would discard the
+    only timing information the hardware produces."""
+    for pages in (10, 20, 30):
+        await _make_copy(db_session_factory, mfp_device_id, "viewer@example.org", pages)
+
+    body = client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers).json()
+    assert body["total_rows"] == 3
+    assert sorted(row["pages"] for row in body["rows"]) == [10, 20, 30]
+
+
+async def test_activity_merges_both_sources_newest_first(
+    client, printer_id, mfp_device_id, db_session_factory, viewer_headers
+):
+    await _make_job(db_session_factory, printer_id, "viewer@example.org", 5)
+    await _make_copy(db_session_factory, mfp_device_id, "viewer@example.org", 9)
+
+    body = client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers).json()
+    assert body["total_rows"] == 2
+    assert {row["kind"] for row in body["rows"]} == {"print", "copy"}
+    keys = [row["at"] or row["window_end"] for row in body["rows"]]
+    assert keys == sorted(keys, reverse=True)
+
+
+async def test_activity_shows_only_the_callers_own_rows(
+    client, printer_id, mfp_device_id, db_session_factory, viewer_headers
+):
+    await _make_job(db_session_factory, printer_id, "viewer@example.org", 5)
+    await _make_job(db_session_factory, printer_id, "someone.else@example.org", 500)
+    await _make_copy(db_session_factory, mfp_device_id, "someone.else@example.org", 900)
+
+    response = client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers)
+    assert response.json()["total_rows"] == 1
+    assert "someone.else@example.org" not in response.text
+
+
+async def test_activity_scopes_an_admin_to_themselves_too(
+    client, printer_id, db_session_factory, admin_headers
+):
+    await _make_job(db_session_factory, printer_id, "someone.else@example.org", 500)
+
+    body = client.get(f"{EXPLAINED}/me/activity", headers=admin_headers).json()
+    assert body["total_rows"] == 0
+
+
+async def test_activity_reports_the_true_total_when_capped(
+    client, printer_id, db_session_factory, viewer_headers
+):
+    """A page must be able to say "showing 2 of 5" rather than presenting
+    a slice as the whole history."""
+    for index in range(5):
+        await _make_job(db_session_factory, printer_id, "viewer@example.org", index + 1)
+
+    body = client.get(
+        f"{EXPLAINED}/me/activity", params={"limit": 2}, headers=viewer_headers
+    ).json()
+    assert len(body["rows"]) == 2
+    assert body["total_rows"] == 5
+
+
+async def test_activity_names_the_document_and_the_machine(
+    client, printer_id, mfp_device_id, db_session_factory, viewer_headers
+):
+    await _make_job(db_session_factory, printer_id, "viewer@example.org", 3)
+    await _make_copy(db_session_factory, mfp_device_id, "viewer@example.org", 4)
+
+    rows = {
+        r["kind"]: r
+        for r in client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers).json()["rows"]
+    }
+    # A job created without a document name still gets something to show.
+    assert rows["print"]["label"] == "Untitled document"
+    assert rows["print"]["where"] == "Zebra Printer"
+    # A counter delta has no document, so the copier names the row.
+    assert rows["copy"]["label"] == "Zebra Copier"
+    assert rows["copy"]["where"] == "Zebra Copier"
+
+
+async def test_activity_is_empty_and_honest_with_no_copies(
+    client, printer_id, db_session_factory, viewer_headers
+):
+    await _make_job(db_session_factory, printer_id, "viewer@example.org", 3)
+
+    body = client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers).json()
+    assert body["includes_period_derived_copies"] is False
+
+
+async def test_activity_requires_auth(client):
+    assert client.get(f"{EXPLAINED}/me/activity").status_code == 401

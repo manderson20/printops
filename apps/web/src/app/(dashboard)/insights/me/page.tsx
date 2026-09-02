@@ -67,10 +67,17 @@ export default function MyPrintingPage() {
           <p className="mt-1 text-sm text-zinc-500">
             Your own numbers, and what they look like in the real world.{" "}
             <Link
+              href="/insights/me/activity"
+              className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-300"
+            >
+              See it job by job
+            </Link>
+            , or{" "}
+            <Link
               href="/insights/district"
               className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-300"
             >
-              See how the whole district is doing
+              how the whole district is doing
             </Link>
             .
           </p>
