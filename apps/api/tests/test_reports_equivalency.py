@@ -195,11 +195,21 @@ def test_show_progress_is_false_once_the_ladder_is_topped_out():
 
 
 def test_football_field_sorts_below_a_track_lap():
-    """The brief listed the track first; the field's perimeter is
-    actually shorter. Sorting by value is what keeps the bar monotonic."""
+    """The brief listed the track first; the field's perimeter (1,040 ft)
+    is actually shorter than a quarter-mile lap (1,320 ft). Sorting by
+    value is what keeps the bar monotonic."""
     result = pick_milestone(1_200.0, DISTANCE_LADDER)
     assert result.passed.name == "a lap of the football field"
-    assert result.upcoming.name == "a lap of the track"
+    assert result.upcoming.name == "a quarter-mile lap of the track"
+    # Mid-sentence the rung is just the distance: "42% of the way to a
+    # quarter mile", not "...to a quarter-mile lap of the track".
+    assert result.upcoming.label == "a quarter mile"
+
+
+def test_a_track_lap_is_exactly_a_quarter_mile():
+    lap = next(r for r in DISTANCE_LADDER.rungs if "track" in r.name)
+    assert lap.value == pytest.approx(0.25 * FEET_PER_MILE)
+    assert lap.value == pytest.approx(1_320.0)
 
 
 def test_district_scale_distance_lands_between_marceline_and_jefferson_city():

@@ -124,9 +124,9 @@ class Ladder:
 
 # Distance, in feet. Ordered by true value, which is not quite the order
 # the feature brief listed: a football field's perimeter (1,040 ft) is
-# shorter than a 400 m track lap (1,312 ft), so it comes first. Sorting
-# by the listed order instead would have made the progress bar run
-# backwards between those two rungs.
+# shorter than a quarter-mile track lap (1,320 ft), so it comes first.
+# Sorting by the listed order instead would have made the progress bar
+# run backwards between those two rungs.
 #
 # City distances are road miles from Brookfield and are the figures most
 # worth localizing — they are the ones a reader can check against their
@@ -136,7 +136,15 @@ DISTANCE_LADDER = Ladder(
     unit="feet",
     rungs=(
         Milestone("a lap of the football field", 1_040.0),  # 360x160 ft perimeter
-        Milestone("a lap of the track", 1_312.34),  # 400 m
+        # A quarter mile exactly (1,320 ft). A modern 400 m track is
+        # 1,312 ft, seven feet short of that, but nobody calls a lap
+        # "0.2485 miles" — the quarter mile is what the distance is known
+        # as, so the ladder uses the figure that matches the name.
+        Milestone(
+            "a quarter-mile lap of the track",
+            0.25 * FEET_PER_MILE,
+            short="a quarter mile",
+        ),
         Milestone("Brookfield to Marceline", 12.0 * FEET_PER_MILE, short="Marceline"),
         Milestone("Brookfield to Jefferson City", 120.0 * FEET_PER_MILE, short="Jefferson City"),
         Milestone("all the way across Missouri", 300.0 * FEET_PER_MILE, short="across Missouri"),
