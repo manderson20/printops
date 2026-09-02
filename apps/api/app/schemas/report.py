@@ -329,3 +329,202 @@ class SnapshotOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# --- "Your Printing, Explained" (app/reports/equivalency.py) ------------
+
+
+class MilestoneOut(BaseModel):
+    name: str
+    # The same rung named for mid-sentence use, where the full name would
+    # repeat something already said — "17% of the way to Jefferson City",
+    # not "...to Brookfield to Jefferson City". Equal to `name` unless the
+    # rung defines its own short form.
+    label: str
+    # In the ladder's own unit, never a display unit — the same rung
+    # reads naturally as feet on the personal view and miles on the
+    # district one, so the client picks the wording.
+    value: float
+
+
+class MilestoneProgressOut(BaseModel):
+    ladder_key: str
+    unit: str
+    total: float
+    # Null when the total hasn't reached the first rung yet.
+    passed: MilestoneOut | None = None
+    # Null once the top of the ladder is passed — there is no further
+    # target, which the client renders as an achievement rather than a bar.
+    upcoming: MilestoneOut | None = None
+    # 0.0-1.0 toward `upcoming`, measured from zero rather than from
+    # `passed` — see MilestoneProgress in app/reports/equivalency.py.
+    progress: float
+    # False when the bar would read as broken rather than encouraging.
+    show_progress: bool
+
+
+class EquivalencyOut(BaseModel):
+    key: str
+    value: float
+    unit: str
+    # Set only for the three ladder-backed facts (distance, stack
+    # height, weight).
+    milestone: MilestoneProgressOut | None = None
+
+
+class PersonalExplainedOut(BaseModel):
+    """One person's own numbers, with the equivalencies at their scale."""
+
+    period: str
+    range_start: date
+    range_end: date
+
+    print_pages: int
+    copy_pages: int
+    total_pages: int
+    job_count: int
+    sheets: int
+
+    color_pages: int
+    mono_pages: int
+    unknown_color_mode_pages: int
+    duplex_pages: int
+    simplex_pages: int
+    unknown_duplex_pages: int
+
+    largest_job_pages: int | None = None
+    avg_pages_per_job: float
+
+    # District context, as scalars only — a viewer never receives the
+    # per-person totals these were computed from.
+    district_median_pages: float
+    district_mean_pages: float
+    # Null rather than infinity when the median is 0, so the client shows
+    # nothing instead of a nonsense multiple.
+    times_district_median: float | None = None
+
+    # Framed as opportunity, never as blame.
+    duplex_sheets_saved: int
+    additional_sheets_if_all_duplex: int
+
+    print_cost: float
+    copy_cost: float
+    total_cost: float
+
+    equivalencies: list[EquivalencyOut]
+    facts: list[str]
+
+    # Honesty flags the UI renders as footnotes rather than hiding.
+    # True when any copy page is included: those come from counter deltas
+    # covering a period, not from timestamped events.
+    includes_period_derived_copies: bool
+    # False whenever copies are included, because a counter window has no
+    # hour — "busiest hour" would silently describe printing only.
+    time_of_day_available: bool
+
+
+class DistrictFunFactsOut(BaseModel):
+    """The all-users view. Aggregates only.
+
+    There is deliberately no field on this model that could hold a
+    person, a building or a department — the anonymity rule is carried by
+    the type, so it cannot be broken by forgetting to filter something
+    out later. See app/routers/reports.py:report_district_fun_facts.
+    """
+
+    period: str
+    range_start: date
+    range_end: date
+
+    print_pages: int
+    copy_pages: int
+    total_pages: int
+    sheets: int
+
+    # A count, never the people it counted.
+    contributors: int
+    # False when `contributors` is below the anonymity floor, in which
+    # case every list below is empty and the client says there isn't
+    # enough activity yet rather than showing a total two people could
+    # de-anonymize between them.
+    has_enough_activity: bool
+
+    equivalencies: list[EquivalencyOut]
+    facts: list[str]
+
+
+class DistrictSegmentOut(BaseModel):
+    """One building or department. Admin-only by construction — this
+    model is reachable only from DistrictDetailOut."""
+
+    key: str
+    label: str
+    people: int
+    print_pages: int
+    copy_pages: int
+    total_pages: int
+    sheets: int
+    estimated_cost: float
+
+
+class DistrictDetailOut(BaseModel):
+    """The admin breakdown — the same totals as the all-users view, plus
+    the segmentation that view must never carry."""
+
+    period: str
+    range_start: date
+    range_end: date
+
+    print_pages: int
+    copy_pages: int
+    total_pages: int
+    sheets: int
+    contributors: int
+
+    district_median_pages: float
+    district_mean_pages: float
+
+    by_building: list[DistrictSegmentOut]
+    by_department: list[DistrictSegmentOut]
+
+    equivalencies: list[EquivalencyOut]
+
+
+class MyActivityRowOut(BaseModel):
+    """One line item in a person's own activity list.
+
+    A print and a copy are not the same kind of event and this model does
+    not flatten them into one. `at` is set for a print, which happened at
+    an instant; `window_start`/`window_end` are set for a copy, which is
+    the difference between two counter readings and therefore covers a
+    period. The other side is always null — see app/reports/activity.py.
+    """
+
+    kind: str  # print | copy
+    label: str
+    where: str
+    activity_type: str  # print | copy | scan | fax
+    pages: int
+    sheets: int
+
+    at: datetime | None = None
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+
+    color_mode: str | None = None
+    duplex: bool | None = None
+    color_pages: int | None = None
+    mono_pages: int | None = None
+
+
+class MyActivityOut(BaseModel):
+    period: str
+    range_start: date
+    range_end: date
+    rows: list[MyActivityRowOut]
+    # The true count before the cap, so the page can say "showing 50 of
+    # 213" rather than presenting a slice as the whole history.
+    total_rows: int
+    # True when any copy row is present, so the page can explain why some
+    # rows carry a time range instead of a time.
+    includes_period_derived_copies: bool

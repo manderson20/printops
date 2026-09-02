@@ -782,6 +782,88 @@ async def get_combined_summary(db: AsyncSession, filters: ReportFilters) -> Comb
     )
 
 
+async def count_contributors(db: AsyncSession, filters: ReportFilters) -> int:
+    """How many distinct people printed or copied in the window.
+
+    Deliberately a scalar. The district fun-facts view is visible to
+    every signed-in user and must refuse to render when a total is
+    narrow enough that a reader could infer one person's usage from it —
+    but a guard that had to load the per-person rows in order to count
+    them would put exactly the data the guard exists to protect inside
+    the endpoint that must never hold it. The count is computed by the
+    database and nothing else comes back.
+
+    The two halves are unioned rather than added: someone who both
+    printed and copied is one contributor, not two. Compared lowercased
+    because the print and copy sides learn the same person's address
+    from different rosters and do not always agree on its case — the
+    same reason app/routers/reports.py:_may_report_on compares that way.
+    """
+    print_emails = _apply_filters(
+        select(func.lower(Job.submitted_by)).where(Job.submitted_by.is_not(None)), filters
+    )
+    copy_emails = _apply_copier_filters(
+        select(func.lower(CopierUsageRecord.staff_email)).where(
+            CopierUsageRecord.staff_email.is_not(None)
+        ),
+        filters,
+    )
+    combined = print_emails.union(copy_emails).subquery()
+    return (await db.execute(select(func.count()).select_from(combined))).scalar_one() or 0
+
+
+async def get_largest_job_pages(db: AsyncSession, filters: ReportFilters) -> int | None:
+    """The biggest single print job in the window, or None if there were
+    no jobs. Copies have no equivalent and are deliberately excluded: a
+    counter delta is a period's worth of walk-up activity, not one job,
+    so the largest of them would be measuring how long PrintOps went
+    between polls."""
+    stmt = _apply_filters(select(func.max(Job.page_count)), filters)
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def get_pages_per_person(db: AsyncSession, filters: ReportFilters) -> list[int]:
+    """Combined print + copy page totals, one per person, with the people
+    stripped off.
+
+    A list of numbers rather than a leaderboard, because the only thing
+    the "Your Printing, Explained" views need from it is a median and a
+    mean. Those are safe for anyone to see; the rows they are computed
+    from are not, and an endpoint that never receives the rows cannot
+    return them by mistake. Identities exist only inside this function,
+    long enough to add someone's printing to their copying.
+
+    Addresses are lowercased before merging for the reason
+    app/routers/reports.py:_may_report_on gives — the print and copy
+    sides learn the same person's address from different rosters.
+    """
+    print_stmt = _apply_filters(
+        select(
+            func.lower(Job.submitted_by),
+            func.sum(func.coalesce(Job.page_count, 0)),
+        ).where(Job.submitted_by.is_not(None)),
+        filters,
+    ).group_by(func.lower(Job.submitted_by))
+
+    copy_stmt = _apply_copier_filters(
+        select(
+            func.lower(CopierUsageRecord.staff_email),
+            func.sum(func.coalesce(CopierUsageRecord.page_count, 0)),
+        ).where(
+            CopierUsageRecord.staff_email.is_not(None),
+            CopierUsageRecord.activity_type == "copy",
+        ),
+        filters,
+    ).group_by(func.lower(CopierUsageRecord.staff_email))
+
+    totals: dict[str, int] = {}
+    for email, pages in (await db.execute(print_stmt)).all():
+        totals[email] = totals.get(email, 0) + (pages or 0)
+    for email, pages in (await db.execute(copy_stmt)).all():
+        totals[email] = totals.get(email, 0) + (pages or 0)
+    return sorted(totals.values())
+
+
 @dataclass
 class CombinedLeaderboardEntry:
     key: str  # staff email

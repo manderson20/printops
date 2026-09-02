@@ -1,6 +1,7 @@
 import csv
 import io
 import logging
+import statistics
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
@@ -12,18 +13,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.deps import get_current_user, require_role
+from app.models.mfp_device import MfpDevice
+from app.models.printer import Printer
 from app.models.report import ReportFormulaSettings, ReportSnapshot
 from app.models.user import User
+from app.reports.activity import get_my_activity
 from app.reports.aggregation import (
     CopyCostRawRow,
     CostRawRow,
     ReportFilters,
+    count_contributors,
     get_combined_summary,
     get_combined_user_leaderboard,
     get_copier_activity_by_device,
     get_copy_cost_raw_rows,
     get_cost_raw_rows,
     get_hourly_timeline,
+    get_largest_job_pages,
+    get_pages_per_person,
     get_peak_times,
     get_printer_leaderboard,
     get_raw_rows_for_export,
@@ -36,6 +43,14 @@ from app.reports.aggregation import (
     resolve_ou_scoped_emails,
 )
 from app.reports.cost_rates import load_printer_rates
+from app.reports.equivalency import (
+    build_equivalencies,
+    duplex_sheets_saved,
+    resolve_period,
+    sheets_from_totals,
+    sheets_if_all_duplex,
+)
+from app.reports.equivalency_config import MIN_CONTRIBUTORS_FOR_DISTRICT_FACTS
 from app.reports.formulas import (
     FormulaValues,
     JobCost,
@@ -44,7 +59,11 @@ from app.reports.formulas import (
     copy_cost,
     job_cost,
 )
-from app.reports.fun_facts import generate_fun_facts
+from app.reports.fun_facts import (
+    duplex_opportunity_fact,
+    generate_equivalency_facts,
+    generate_fun_facts,
+)
 from app.reports.tracked_copies import get_tracked_copy_summary
 from app.reports.untracked_copies import get_untracked_copy_summary
 from app.schemas.auth import UserOut
@@ -52,10 +71,19 @@ from app.schemas.report import (
     CombinedLeaderboardEntryOut,
     CombinedSummaryOut,
     CostEntryOut,
+    DistrictDetailOut,
+    DistrictFunFactsOut,
+    DistrictSegmentOut,
+    EquivalencyOut,
     FunFactsOut,
     HourlyBucketOut,
     LeaderboardEntryOut,
+    MilestoneOut,
+    MilestoneProgressOut,
+    MyActivityOut,
+    MyActivityRowOut,
     PeakTimesOut,
+    PersonalExplainedOut,
     SnapshotCreate,
     SnapshotOut,
     StaffCopierUsageOut,
@@ -893,6 +921,432 @@ async def report_fun_facts(
         period_label=period_label,
     )
     return FunFactsOut(facts=facts)
+
+
+# --- "Your Printing, Explained" ----------------------------------------
+
+
+async def _explained_window(db: AsyncSession, period: str) -> tuple[date, date, ReportFilters]:
+    """Resolve a named period into the filters every explained view uses.
+
+    Resolved against the district's configured zone rather than the
+    caller's clock, for the reason _report_filters gives at length: a
+    browser in another timezone would otherwise ask for one day's worth
+    of activity and have it bucketed as another. `resolve_period` returns
+    an inclusive end date and _apply_filters compares `< end`, so the
+    range is closed by advancing a day.
+    """
+    try:
+        zone = await _district_zone(db)
+        start_date, end_date = resolve_period(period, datetime.now(zone).date())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return (
+        start_date,
+        end_date,
+        ReportFilters(
+            start=datetime.combine(start_date, time.min, tzinfo=zone),
+            end=datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=zone),
+        ),
+    )
+
+
+def _milestone_out(milestone) -> MilestoneProgressOut | None:
+    if milestone is None:
+        return None
+    return MilestoneProgressOut(
+        ladder_key=milestone.ladder_key,
+        unit=milestone.unit,
+        total=round(milestone.total, 2),
+        passed=(
+            None
+            if milestone.passed is None
+            else MilestoneOut(
+                name=milestone.passed.name,
+                label=milestone.passed.label,
+                value=milestone.passed.value,
+            )
+        ),
+        upcoming=(
+            None
+            if milestone.upcoming is None
+            else MilestoneOut(
+                name=milestone.upcoming.name,
+                label=milestone.upcoming.label,
+                value=milestone.upcoming.value,
+            )
+        ),
+        progress=round(milestone.progress, 4),
+        show_progress=milestone.show_progress,
+    )
+
+
+def _equivalencies_out(equivalencies) -> list[EquivalencyOut]:
+    return [
+        EquivalencyOut(
+            key=e.key,
+            value=round(e.value, 2),
+            unit=e.unit,
+            milestone=_milestone_out(e.milestone),
+        )
+        for e in equivalencies
+    ]
+
+
+def _sheets_for(summary, copy_pages: int) -> int:
+    return sheets_from_totals(
+        duplex_pages=summary.duplex_pages,
+        simplex_pages=summary.simplex_pages,
+        unknown_duplex_pages=summary.unknown_duplex_pages,
+        copy_pages=copy_pages,
+    )
+
+
+@router.get("/explained/me", response_model=PersonalExplainedOut)
+async def report_explained_me(
+    period: str = Query("year", description="week | month | semester | year"),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+):
+    """One person's own printing and copying, with equivalencies at their
+    scale.
+
+    Always scoped to the caller, including for an admin — this is the
+    "your printing" page, so an admin asking for it wants their own
+    numbers, not the district's. That is why it builds its filters
+    directly instead of depending on _report_filters, which would leave
+    an admin unscoped and hand them the whole district under a heading
+    saying "you".
+
+    The district median it compares against is computed from an unscoped
+    window, so the caller does get one number derived from everybody's
+    activity. That number is a median of page counts with no identities
+    attached (get_pages_per_person deliberately returns a list of
+    integers), which is the same shape the all-users district view is
+    built on.
+    """
+    start_date, end_date, filters = await _explained_window(db, period)
+    filters = replace(filters, submitted_by=current_user.username)
+
+    formula_settings = await _get_or_create_formula_settings(db)
+    fallback = _formula_values(formula_settings)
+    cost_per_sheet = formula_settings.cost_per_sheet_paper
+
+    summary = await get_summary(db, filters)
+    *_, print_overall = await _compute_cost_accumulators(db, filters, cost_per_sheet, fallback)
+    *_, copy_overall = await _compute_copy_cost_accumulators(db, filters, cost_per_sheet, fallback)
+    largest_job = await get_largest_job_pages(db, filters)
+
+    copy_pages = copy_overall.page_count
+    total_pages = summary.total_pages + copy_pages
+    sheets = _sheets_for(summary, copy_pages)
+
+    # Print-only, both of them: nobody chooses a duplex setting at the
+    # glass in a way PrintOps can see, so copies belong in neither the
+    # saving already made nor the one still available.
+    saved = duplex_sheets_saved(summary.duplex_pages)
+    print_sheets = _sheets_for(summary, 0)
+    all_duplex_sheets = sheets_if_all_duplex(
+        duplex_pages=summary.duplex_pages,
+        simplex_pages=summary.simplex_pages,
+        unknown_duplex_pages=summary.unknown_duplex_pages,
+    )
+    additional = max(print_sheets - all_duplex_sheets, 0)
+
+    per_person = await get_pages_per_person(db, replace(filters, submitted_by=None))
+    median = statistics.median(per_person) if per_person else 0.0
+    mean = statistics.fmean(per_person) if per_person else 0.0
+
+    equivalencies = build_equivalencies(total_pages, sheets)
+    facts = generate_equivalency_facts(equivalencies, collective=False)
+    opportunity = duplex_opportunity_fact(additional, saved)
+    if opportunity is not None:
+        facts.append(opportunity)
+
+    return PersonalExplainedOut(
+        period=period,
+        range_start=start_date,
+        range_end=end_date,
+        print_pages=summary.total_pages,
+        copy_pages=copy_pages,
+        total_pages=total_pages,
+        job_count=summary.total_jobs,
+        sheets=sheets,
+        color_pages=summary.color_pages,
+        mono_pages=summary.mono_pages,
+        unknown_color_mode_pages=summary.unknown_color_mode_pages,
+        duplex_pages=summary.duplex_pages,
+        simplex_pages=summary.simplex_pages,
+        unknown_duplex_pages=summary.unknown_duplex_pages,
+        largest_job_pages=largest_job,
+        avg_pages_per_job=(
+            round(summary.total_pages / summary.total_jobs, 1) if summary.total_jobs else 0.0
+        ),
+        district_median_pages=round(median, 1),
+        district_mean_pages=round(mean, 1),
+        times_district_median=round(total_pages / median, 1) if median else None,
+        duplex_sheets_saved=saved,
+        additional_sheets_if_all_duplex=additional,
+        print_cost=round(print_overall.total_cost, 2),
+        copy_cost=round(copy_overall.total_cost, 2),
+        total_cost=round(print_overall.total_cost + copy_overall.total_cost, 2),
+        equivalencies=_equivalencies_out(equivalencies),
+        facts=facts,
+        includes_period_derived_copies=copy_pages > 0,
+        time_of_day_available=copy_pages == 0,
+    )
+
+
+@router.get("/explained/me/activity", response_model=MyActivityOut)
+async def report_my_activity(
+    period: str = Query("year", description="week | month | semester | year"),
+    limit: int = Query(200, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+):
+    """A person's own printing and copying as line items.
+
+    Scoped to the caller the same way /explained/me is, and for the same
+    reason: this is "your activity", so an admin asking for it wants
+    their own rows rather than the district's. It builds its filters
+    directly instead of depending on _report_filters, which leaves an
+    admin unscoped.
+
+    Copy rows carry a window rather than a timestamp, because that is
+    what the hardware produces — see app/reports/activity.py's module
+    docstring, and docs/copier-capture-konica.md S3.6 for the firmware
+    test showing per-job copy data is not obtainable at all.
+    """
+    start_date, end_date, filters = await _explained_window(db, period)
+    filters = replace(filters, submitted_by=current_user.username)
+
+    rows, total = await get_my_activity(db, filters, limit=limit)
+    return MyActivityOut(
+        period=period,
+        range_start=start_date,
+        range_end=end_date,
+        rows=[MyActivityRowOut(**vars(row)) for row in rows],
+        total_rows=total,
+        includes_period_derived_copies=any(row.kind == "copy" for row in rows),
+    )
+
+
+@router.get("/explained/district", response_model=DistrictFunFactsOut)
+async def report_district_fun_facts(
+    period: str = Query("year", description="week | month | semester | year"),
+    db: AsyncSession = Depends(get_db),
+):
+    """District fun facts, visible to every signed-in user, fully
+    anonymous.
+
+    This endpoint deliberately does **not** depend on _report_filters.
+    Every other report does, and must: that dependency is what forces a
+    viewer's own identity onto submitted_by and an ou_viewer's roster
+    onto submitted_by_in. Here the whole point is a district-wide total,
+    so the filters are built from the period alone and no identity is
+    ever attached to them. Taking _report_filters and then widening it
+    back out would be the same result reached by undoing a safety
+    measure, which is a much easier thing to get wrong later.
+
+    Nothing per-person is fetched at any point. There is no leaderboard
+    call, no display-name resolution, and DistrictFunFactsOut has no
+    field that could carry a person, a building or a department even if
+    one were computed by accident.
+
+    Below MIN_CONTRIBUTORS_FOR_DISTRICT_FACTS distinct contributors the
+    totals are withheld rather than merely unlabelled. A page count
+    shared between two people is not anonymous just because neither is
+    named — either of them can subtract their own and read the other's.
+    """
+    start_date, end_date, filters = await _explained_window(db, period)
+
+    contributors = await count_contributors(db, filters)
+    if contributors < MIN_CONTRIBUTORS_FOR_DISTRICT_FACTS:
+        return DistrictFunFactsOut(
+            period=period,
+            range_start=start_date,
+            range_end=end_date,
+            print_pages=0,
+            copy_pages=0,
+            total_pages=0,
+            sheets=0,
+            contributors=contributors,
+            has_enough_activity=False,
+            equivalencies=[],
+            facts=[],
+        )
+
+    summary = await get_summary(db, filters)
+    combined = await get_combined_summary(db, filters)
+    sheets = _sheets_for(summary, combined.copy_pages)
+
+    equivalencies = build_equivalencies(combined.total_pages, sheets)
+    return DistrictFunFactsOut(
+        period=period,
+        range_start=start_date,
+        range_end=end_date,
+        print_pages=combined.print_pages,
+        copy_pages=combined.copy_pages,
+        total_pages=combined.total_pages,
+        sheets=sheets,
+        contributors=contributors,
+        has_enough_activity=True,
+        equivalencies=_equivalencies_out(equivalencies),
+        facts=generate_equivalency_facts(equivalencies, collective=True),
+    )
+
+
+async def _segment_totals(
+    db: AsyncSession,
+    filters: ReportFilters,
+    label: str,
+    cost_per_sheet: float,
+    fallback: FormulaValues,
+) -> DistrictSegmentOut:
+    """One building's or department's row. Deliberately built by
+    re-running the same aggregation the district total uses with one
+    extra filter, rather than by a GROUP BY of its own: it costs a few
+    queries per segment on an admin-only page, and it guarantees a
+    segment can never disagree with the total it is a part of."""
+    summary = await get_summary(db, filters)
+    combined = await get_combined_summary(db, filters)
+    *_, print_overall = await _compute_cost_accumulators(db, filters, cost_per_sheet, fallback)
+    *_, copy_overall = await _compute_copy_cost_accumulators(db, filters, cost_per_sheet, fallback)
+    return DistrictSegmentOut(
+        key=label,
+        label=label,
+        people=await count_contributors(db, filters),
+        print_pages=combined.print_pages,
+        copy_pages=combined.copy_pages,
+        total_pages=combined.total_pages,
+        sheets=_sheets_for(summary, combined.copy_pages),
+        estimated_cost=round(print_overall.total_cost + copy_overall.total_cost, 2),
+    )
+
+
+@router.get(
+    "/explained/district/detail",
+    response_model=DistrictDetailOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def report_district_detail(
+    period: str = Query("year", description="week | month | semester | year"),
+    db: AsyncSession = Depends(get_db),
+):
+    """The admin breakdown — the same district totals, segmented.
+
+    Admin-only server-side, not merely hidden from the nav: this is the
+    one of the three views that returns data attributable to a group
+    small enough to be a person, and a building with one secretary in it
+    is a name to anyone who works there.
+
+    Buildings are collected from both printers and copiers, since a
+    building can have one without the other. Records with no building
+    set are grouped under an explicit "Unassigned" row rather than
+    dropped — 41 of 54 printers currently have a blank building, and a
+    breakdown that silently omitted most of the district would be worse
+    than one that shows the gap.
+    """
+    start_date, end_date, filters = await _explained_window(db, period)
+
+    formula_settings = await _get_or_create_formula_settings(db)
+    fallback = _formula_values(formula_settings)
+    cost_per_sheet = formula_settings.cost_per_sheet_paper
+
+    summary = await get_summary(db, filters)
+    combined = await get_combined_summary(db, filters)
+    per_person = await get_pages_per_person(db, filters)
+
+    printer_buildings = (
+        await db.execute(
+            select(Printer.building).where(Printer.building.is_not(None), Printer.building != "")
+        )
+    ).scalars()
+    device_buildings = (
+        await db.execute(
+            select(MfpDevice.building).where(
+                MfpDevice.building.is_not(None), MfpDevice.building != ""
+            )
+        )
+    ).scalars()
+    buildings = sorted(set(printer_buildings) | set(device_buildings))
+
+    departments = sorted(
+        set(
+            (
+                await db.execute(
+                    select(Printer.department).where(
+                        Printer.department.is_not(None), Printer.department != ""
+                    )
+                )
+            ).scalars()
+        )
+    )
+
+    by_building = [
+        await _segment_totals(db, replace(filters, building=b), b, cost_per_sheet, fallback)
+        for b in buildings
+    ]
+    by_department = [
+        await _segment_totals(db, replace(filters, department=d), d, cost_per_sheet, fallback)
+        for d in departments
+    ]
+    # A building that exists but saw no activity in this window is noise
+    # on a breakdown; a building with activity and no name is the point.
+    by_building = [s for s in by_building if s.total_pages > 0]
+    by_department = [s for s in by_department if s.total_pages > 0]
+
+    # What the named segments don't account for, shown rather than
+    # dropped — currently most of the district, because 41 of 54 printers
+    # have no building set. Computed by subtracting the segments from the
+    # whole rather than by querying "building is null", so the row is by
+    # construction whatever the named rows are missing and the column
+    # totals always reconcile.
+    #
+    # `people` is the one field that cannot be derived this way and is
+    # left at zero: the same person prints in more than one building, so
+    # contributor counts overlap and subtracting them would invent a
+    # number. The client shows a dash.
+    *_, district_print_cost = await _compute_cost_accumulators(
+        db, filters, cost_per_sheet, fallback
+    )
+    *_, district_copy_cost = await _compute_copy_cost_accumulators(
+        db, filters, cost_per_sheet, fallback
+    )
+    district_sheets = _sheets_for(summary, combined.copy_pages)
+    district_cost = district_print_cost.total_cost + district_copy_cost.total_cost
+
+    unassigned = DistrictSegmentOut(
+        key="__unassigned__",
+        label="Unassigned",
+        people=0,
+        print_pages=combined.print_pages - sum(s.print_pages for s in by_building),
+        copy_pages=combined.copy_pages - sum(s.copy_pages for s in by_building),
+        total_pages=combined.total_pages - sum(s.total_pages for s in by_building),
+        sheets=district_sheets - sum(s.sheets for s in by_building),
+        estimated_cost=round(district_cost - sum(s.estimated_cost for s in by_building), 2),
+    )
+    if unassigned.total_pages > 0:
+        by_building.append(unassigned)
+
+    equivalencies = build_equivalencies(combined.total_pages, district_sheets)
+    return DistrictDetailOut(
+        period=period,
+        range_start=start_date,
+        range_end=end_date,
+        print_pages=combined.print_pages,
+        copy_pages=combined.copy_pages,
+        total_pages=combined.total_pages,
+        sheets=district_sheets,
+        contributors=await count_contributors(db, filters),
+        district_median_pages=round(statistics.median(per_person), 1) if per_person else 0.0,
+        district_mean_pages=round(statistics.fmean(per_person), 1) if per_person else 0.0,
+        by_building=sorted(by_building, key=lambda s: s.total_pages, reverse=True),
+        by_department=sorted(by_department, key=lambda s: s.total_pages, reverse=True),
+        equivalencies=_equivalencies_out(equivalencies),
+    )
 
 
 @router.get("/export.csv")

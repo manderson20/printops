@@ -29,12 +29,25 @@ const VIEWER_NAV_LINKS = [
   // see app/routers/print_queue.py.
   { href: "/queue", label: "Print Queue" },
   { href: "/insights", label: "Insights" },
+  // Both of these are open to every role. "My Printing" is scoped to the
+  // caller for everyone including admins, and "Together" is district-wide
+  // aggregates with no per-person, per-building or per-department data in
+  // the response at all — see app/routers/reports.py's
+  // report_explained_me and report_district_fun_facts.
+  { href: "/insights/me", label: "My Printing" },
+  { href: "/insights/me/activity", label: "My Activity" },
+  { href: "/insights/district", label: "Together" },
 ] as const;
 
 // "ou_viewer" is read-only and scoped to Insights only — see
 // app/routers/reports.py's _report_filters and app/models/user.py's
 // granted_ou_paths docstring on the backend.
-const OU_VIEWER_NAV_LINKS = [{ href: "/insights", label: "Insights" }] as const;
+const OU_VIEWER_NAV_LINKS = [
+  { href: "/insights", label: "Insights" },
+  { href: "/insights/me", label: "My Printing" },
+  { href: "/insights/me/activity", label: "My Activity" },
+  { href: "/insights/district", label: "Together" },
+] as const;
 
 // Prefixes a non-admin role is allowed to navigate to directly (by URL,
 // not just nav clicks) — everything else bounces to that role's default
@@ -66,6 +79,17 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       : currentUser?.role === "ou_viewer"
         ? OU_VIEWER_NAV_LINKS
         : VIEWER_NAV_LINKS;
+
+  const activeNavHref = navLinks
+    .filter(
+      (link) =>
+        pathname === link.href || pathname.startsWith(`${link.href}/`),
+    )
+    .reduce<string | null>(
+      (best, link) =>
+        best === null || link.href.length > best.length ? link.href : best,
+      null,
+    );
 
   useEffect(() => {
     if (!currentUser) return;
@@ -132,8 +156,10 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
           <nav className="flex flex-1 flex-col gap-1">
             {navLinks.map((link) => {
-              const active =
-                pathname === link.href || pathname.startsWith(`${link.href}/`);
+              // Only the most specific matching link lights up. "/insights"
+              // is a prefix of "/insights/me", so a plain startsWith would
+              // highlight both at once now that Insights has sub-pages.
+              const active = link.href === activeNavHref;
               return (
                 <Link
                   key={link.href}
