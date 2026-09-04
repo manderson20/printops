@@ -11,7 +11,14 @@ import time
 from datetime import UTC, datetime, timedelta
 
 from app.models.printer import Printer
-from app.printers import cups_health, job_control, network_health, queue_recovery, queue_stall
+from app.printers import (
+    cups_health,
+    job_control,
+    network_health,
+    page_reconcile,
+    queue_recovery,
+    queue_stall,
+)
 from app.printers.discovery import refresh_printer_capabilities
 from app.printers.ipp_client import PrinterProbeError, PrinterStateResult, probe_printer_state
 from app.printers.queue_sync import QueueSyncError, sync_queue
@@ -194,6 +201,7 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
         return
     await _apply_queue_stall(printer)
     _apply_network_flap(printer, flap)
+    _apply_pages_not_printed(printer)
 
 
 async def _apply_queue_recovery(
@@ -370,6 +378,41 @@ def _apply_network_flap(printer: Printer, flap: network_health.NetworkFlap | Non
     printer.status_reasons = [
         *(printer.status_reasons or []),
         network_health.NETWORK_UNSTABLE_REASON,
+    ]
+    logger.warning("%s: %s", printer.name, reason)
+
+
+def _apply_pages_not_printed(printer: Printer) -> None:
+    """Reports pages this printer was sent that its own page counter never
+    recorded — the standing verdict from app/printers/page_reconcile.py, which
+    the half-hourly sweep wrote to the row.
+
+    Read here rather than computed here: the poll this sits in runs every sixty
+    seconds against every printer, and the question is a pair of table scans
+    whose answer changes only when a new counter reading lands.
+
+    Left reading `online` for the same reason _apply_network_flap is. The
+    printer is up and taking work; what is wrong is what happened to some of
+    that work, which is a warning rather than a fault on the device, and a red
+    badge on a machine that is printing normally right now would misdescribe
+    it. It does take the status message when it fires, including from the
+    network warning above — a lossy path is worth knowing about, and pages that
+    never came out is worth knowing about first. Both keywords stay, so neither
+    warning disappears from the badges.
+
+    Only for a printer that is currently online: one that is offline or in
+    error has told us something about right now, and burying that under an
+    account of yesterday's output would be the wrong order to read them in.
+    """
+    if printer.status != "online":
+        return
+    reason = page_reconcile.recorded_reason(printer.pages_not_printed)
+    if reason is None:
+        return
+    printer.status_message = reason
+    printer.status_reasons = [
+        *(printer.status_reasons or []),
+        page_reconcile.PAGES_NOT_PRINTED_REASON,
     ]
     logger.warning("%s: %s", printer.name, reason)
 

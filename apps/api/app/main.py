@@ -32,6 +32,7 @@ from app.models.syslog import PrinterSyslogEvent
 from app.printers import offline_holds
 from app.printers.discovery import refresh_printer_capabilities
 from app.printers.job_reconcile import reconcile_stuck_jobs
+from app.printers.page_reconcile import sweep_unprinted_pages
 from app.printers.snmp_counters import (
     SnmpProbeError,
     get_or_create_snmp_defaults,
@@ -312,6 +313,19 @@ async def _snmp_counter_poll_loop() -> None:
                     await asyncio.gather(
                         *(_refresh_one(p) for p in printers), return_exceptions=True
                     )
+                    # Runs here rather than on a loop of its own because this
+                    # is the moment the evidence changes: it compares counter
+                    # readings against jobs, and the readings only move when
+                    # the poll above takes one. The session's autoflush puts
+                    # this cycle's readings in front of its queries, so a
+                    # printer is assessed against the counter as of now and
+                    # not as of half an hour ago. Best-effort, like the toner
+                    # and wireless steps: a diagnostic failing must not cost
+                    # the fleet its counter poll.
+                    try:
+                        await sweep_unprinted_pages(db)
+                    except Exception:
+                        logger.exception("Unexpected error assessing unprinted pages")
                 await db.commit()
         except Exception:
             logger.exception("Unexpected error in SNMP counter poll loop")
