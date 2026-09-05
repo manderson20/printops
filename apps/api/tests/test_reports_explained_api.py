@@ -9,7 +9,7 @@ too few people contributed).
 """
 
 import uuid
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 
 import pytest
 import pytest_asyncio
@@ -226,11 +226,16 @@ async def _make_copy(
     page_count,
     activity_type="copy",
     occurred_at=None,
+    created_at=None,
 ):
     """A walk-up row. Counter-derived by default — a period, never an
     instant — since that is what every copier in this district produces.
     Pass occurred_at for the other shape the model allows: a generic-CSV
-    import of a single timestamped event, which carries no period pair."""
+    import of a single timestamped event, which carries no period pair.
+
+    `created_at` is when PrintOps recorded the row, which for an import is
+    the moment the file was uploaded and has nothing to do with when the
+    copy was made. Overridable so the two can be pulled apart."""
     async with db_session_factory() as session:
         session.add(
             CopierUsageRecord(
@@ -245,7 +250,7 @@ async def _make_copy(
                 occurred_at=occurred_at,
                 period_start=None if occurred_at else datetime.now(UTC),
                 period_end=None if occurred_at else datetime.now(UTC),
-                created_at=_in_window(),
+                created_at=created_at or _in_window(),
                 raw_payload={},
             )
         )
@@ -677,6 +682,61 @@ async def test_a_copy_with_an_event_timestamp_is_shown_as_an_instant(
     assert row["window_end"] is None
     # No window on the page means no footnote explaining one.
     assert body["includes_period_derived_copies"] is False
+
+
+async def test_a_copy_imported_this_period_but_made_before_it_does_not_count(
+    client, mfp_device_id, db_session_factory, viewer_headers
+):
+    """The other half of the instant fix.
+
+    My Activity was taught to *display* occurred_at, but the filter still
+    admitted rows on created_at — so a copy made in May and imported in
+    September was counted in September and displayed as May. The report
+    contradicted itself about the same row.
+    """
+    long_before = _in_window() - timedelta(days=400)
+    await _make_copy(
+        db_session_factory,
+        mfp_device_id,
+        "viewer@example.org",
+        12,
+        occurred_at=long_before,
+    )
+
+    body = client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers).json()
+    assert body["total_rows"] == 0
+
+
+async def test_a_copy_made_this_period_but_imported_later_still_counts(
+    client, mfp_device_id, db_session_factory, viewer_headers
+):
+    """And the mirror of it: an import that arrives after the period closes
+    does not take the copies with it."""
+    await _make_copy(
+        db_session_factory,
+        mfp_device_id,
+        "viewer@example.org",
+        12,
+        occurred_at=_in_window(),
+        created_at=_in_window() + timedelta(days=400),
+    )
+
+    body = client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers).json()
+    assert body["total_rows"] == 1
+
+
+async def test_a_counter_derived_copy_belongs_to_the_period_its_window_closed_in(
+    client, mfp_device_id, db_session_factory, viewer_headers
+):
+    """Nothing changes for the rows this district actually has. A counter
+    delta carries no occurred_at and no period pair from the poller, so
+    created_at — the moment of the poll, which is the end of the window it
+    measured — still decides."""
+    await _make_copy(db_session_factory, mfp_device_id, "viewer@example.org", 12)
+
+    body = client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers).json()
+    assert body["total_rows"] == 1
+    assert body["includes_period_derived_copies"] is True
 
 
 async def test_detail_department_rows_reconcile_with_the_district_total(
