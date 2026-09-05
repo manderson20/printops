@@ -207,7 +207,9 @@ def weight_pounds(sheets: int) -> float:
     return _divide(max(sheets, 0) * LB_PER_100_SHEETS, 100.0)
 
 
-def build_equivalencies(pages: int, sheets: int) -> list[Equivalency]:
+def build_equivalencies(
+    pages: int, sheets: int, *, distance_ladder: Ladder | None = None
+) -> list[Equivalency]:
     """Every equivalency the totals support, in display order.
 
     A fact whose headline would round to zero at the precision it shows
@@ -215,11 +217,23 @@ def build_equivalencies(pages: int, sheets: int) -> list[Equivalency]:
     on every returned Equivalency being worth rendering, which is what
     lets the district view rotate through them without checking each one
     itself.
+
+    `distance_ladder` is the one ladder a district owns: its road trip,
+    built from the `destinations` table by
+    app/reports/road_trip.py:ladder_from_destinations. It is injected
+    rather than read here because this module is pure by design — it does
+    not touch the database or the clock — and because passing None has to
+    keep working: that is the path an installation with nothing
+    configured takes, and it lands on the ladder compiled into
+    equivalency_config.py. Stack height and weight stay compiled in;
+    nobody's district has a different Gateway Arch.
     """
     pages = max(pages, 0)
     sheets = max(sheets, 0)
 
     ladders = {ladder.key: ladder for ladder in LADDERS}
+    if distance_ladder is not None:
+        ladders["distance"] = distance_ladder
     distance = distance_feet(pages)
     stack = stack_height_feet(sheets)
     weight = weight_pounds(sheets)

@@ -22,7 +22,9 @@ from app.db import get_db
 from app.main import app
 from app.models.base import Base
 from app.models.copier_usage import CopierUsageRecord
+from app.models.destination import Destination
 from app.models.job import Job
+from app.models.location import Location
 from app.models.mfp_device import MfpDevice
 from app.models.printer import Printer
 from app.reports.equivalency import resolve_period
@@ -339,7 +341,89 @@ async def test_district_response_has_no_field_that_could_carry_a_person(
         "has_enough_activity",
         "equivalencies",
         "facts",
+        # Configuration an admin typed in Settings — the same home and the
+        # same destinations for every viewer and every period — plus a
+        # mileage that is `total_pages` in different units. See
+        # DistrictFunFactsOut's docstring on why this does not weaken the
+        # rule, and test_the_route_carries_configuration_and_no_usage below.
+        "route",
     }
+
+
+async def _seed_a_road_trip(db_session_factory):
+    """A home and one reachable place, so the district page has a map."""
+    async with db_session_factory() as session:
+        session.add(
+            Location(
+                name="District Office",
+                latitude=39.7864,
+                longitude=-93.0735,
+                is_home=True,
+            )
+        )
+        session.add(
+            Destination(
+                name="Brookfield to Marceline",
+                short_name="Marceline",
+                miles=12.0,
+                latitude=39.7117,
+                longitude=-92.9477,
+            )
+        )
+        await session.commit()
+
+
+async def test_there_is_no_route_until_a_district_configures_one(
+    client, printer_id, db_session_factory, viewer_headers
+):
+    """A dashboard with no map, never a broken one."""
+    await _seed_a_crowd(db_session_factory, printer_id)
+
+    body = client.get(f"{EXPLAINED}/district", headers=viewer_headers).json()
+    assert body["route"] is None
+
+
+async def test_the_route_is_drawn_once_a_home_and_a_destination_exist(
+    client, printer_id, db_session_factory, viewer_headers
+):
+    await _seed_a_crowd(db_session_factory, printer_id)
+    await _seed_a_road_trip(db_session_factory)
+
+    route = client.get(f"{EXPLAINED}/district", headers=viewer_headers).json()["route"]
+    assert route["home_name"] == "District Office"
+    assert [stop["label"] for stop in route["stops"]] == ["Marceline"]
+    assert route["miles_travelled"] >= 0
+
+
+async def test_the_route_carries_configuration_and_no_usage(
+    client, printer_id, db_session_factory, viewer_headers
+):
+    """Every field of `route` is either something an admin typed or a unit
+    conversion of a total already in the response. Nothing in it varies
+    with who printed, so nothing in it can be a segment of the district's
+    printing."""
+    await _seed_a_crowd(db_session_factory, printer_id)
+    await _seed_a_road_trip(db_session_factory)
+
+    body = client.get(f"{EXPLAINED}/district", headers=viewer_headers).json()
+    route = body["route"]
+    assert set(route) == {
+        "home_name",
+        "home_latitude",
+        "home_longitude",
+        "miles_travelled",
+        "stops",
+        "position",
+    }
+    assert set(route["stops"][0]) == {
+        "name",
+        "label",
+        "miles",
+        "latitude",
+        "longitude",
+        "reached",
+    }
+    assert BUILDING not in client.get(f"{EXPLAINED}/district", headers=viewer_headers).text
 
 
 async def test_district_totals_are_everyones_not_the_callers(
