@@ -336,3 +336,35 @@ def test_status_poll_leaves_a_printer_with_a_live_fault_alone():
 
     assert printer.status_reasons is None
     assert printer.status_message == "No response from the printer."
+
+
+async def test_a_verdict_is_dated_by_its_readings_not_by_the_clock(db, printer):
+    """A printer whose SNMP poll has stopped answering still has yesterday's
+    readings inside the 24-hour window. Without this, every sweep would
+    re-decide the same old shortfall and stamp it as fresh, and STALE_AFTER
+    would never retire a warning about a printer nobody can currently see."""
+    last_seen_minutes = 6 * 60
+    await _reading(db, printer, last_seen_minutes + 30, 1000)
+    await _reading(db, printer, last_seen_minutes, 1000)
+    db.add(
+        Job(
+            printer_id=printer.id,
+            status="forwarded",
+            page_count=40,
+            completed_at=NOW - timedelta(minutes=last_seen_minutes + 10),
+            created_at=NOW - timedelta(minutes=last_seen_minutes + 10),
+        )
+    )
+    await db.commit()
+
+    await sweep_unprinted_pages(db, now=NOW)
+    await db.commit()
+    await db.refresh(printer)
+
+    record = printer.pages_not_printed
+    assert record is not None
+    assessed_at = datetime.fromisoformat(record["assessed_at"])
+    # The newest reading, six hours old — not NOW.
+    assert abs((assessed_at - (NOW - timedelta(minutes=last_seen_minutes))).total_seconds()) < 5
+    # And therefore already past the point where the status line retires it.
+    assert recorded_reason(record, now=NOW) is None

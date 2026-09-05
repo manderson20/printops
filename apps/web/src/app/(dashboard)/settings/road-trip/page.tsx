@@ -53,7 +53,21 @@ function draftFrom(destination: Destination): Draft {
 
 function coordinate(value: string): number | null {
   const trimmed = value.trim();
-  return trimmed === "" ? null : Number(trimmed);
+  if (trimmed === "") return null;
+  const parsed = Number(trimmed);
+  // Number("39.7864° N") is NaN, and NaN survives the both-or-neither check
+  // above only to be serialised as null — so a pasted coordinate with a
+  // degree sign or a compass letter would silently save as no coordinate at
+  // all. Refused here instead, where isValidCoordinates can say so.
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+/** Both present or both absent, and both actually numbers. */
+function coordinatesAreUsable(latitude: string, longitude: string): boolean {
+  const pairedness = latitude.trim() === "" ? longitude.trim() === "" : longitude.trim() !== "";
+  if (!pairedness) return false;
+  if (latitude.trim() === "") return true;
+  return Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude));
 }
 
 function toInput(draft: Draft): DestinationInput {
@@ -69,7 +83,7 @@ function toInput(draft: Draft): DestinationInput {
 }
 
 function coordinatesArePaired(draft: Draft): boolean {
-  return (draft.latitude.trim() === "") === (draft.longitude.trim() === "");
+  return coordinatesAreUsable(draft.latitude, draft.longitude);
 }
 
 /** Either somewhere to route to, or a distance already known. A rung with
@@ -830,7 +844,7 @@ export default function RoadTripSettingsPage() {
             </Button>
             {!coordinatesArePaired(draft) && (
               <span className="ml-3 text-xs text-amber-700 dark:text-amber-400">
-                Latitude and longitude go together — fill both, or clear both.
+                Latitude and longitude go together, and both must be plain numbers — no degree signs or compass letters.
               </span>
             )}
           </div>
