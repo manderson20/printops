@@ -25,6 +25,56 @@ jobs:
       - run: ruff check .
       - run: pytest
 
+  migrations:
+    # The gap that let two migration bugs reach production on 2026-09-05.
+    # pytest builds its schema from the models with `create_all` and never
+    # reads a migration, so a migration that builds a column differently
+    # from the model describing it passes every test and fails on the
+    # first insert. This job is the only place the two are compared.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: apps/api
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: printops
+          POSTGRES_PASSWORD: printops
+          POSTGRES_DB: printops
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PRINTOPS_DATABASE_URL: postgresql+asyncpg://printops:printops@localhost:5432/printops
+      PRINTOPS_JWT_SECRET: ci-not-a-secret
+      PRINTOPS_BACKEND_TOKEN: ci-not-a-secret
+      # A valid Fernet key is required to import the app at all; this is the
+      # same fixed test value tests/conftest.py uses and protects nothing.
+      PRINTOPS_ENCRYPTION_KEY: zovsKJRTibYW7qfTSaEux7Pz22nKwCqH2AhB6M0DuDU=
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - name: Migrate an empty database
+        run: alembic upgrade head
+      - name: Compare the migrated schema against the models
+        run: python scripts/check_schema_matches_models.py
+      - name: The newest migration goes back down and up again
+        run: |
+          alembic downgrade -1
+          alembic upgrade head
+      - name: And the schema still matches after that round trip
+        run: python scripts/check_schema_matches_models.py
+
   lint-test-web:
     runs-on: ubuntu-latest
     permissions:

@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Float, UniqueConstraint
+from sqlalchemy import Float, Index, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -28,7 +28,26 @@ class Location(Base, TimestampMixin):
     """
 
     __tablename__ = "locations"
-    __table_args__ = (UniqueConstraint("name", name="uq_locations_name"),)
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_locations_name"),
+        # At most one home, held by the database rather than by the code
+        # that sets it. Two "Make home" requests racing can each see a
+        # world with only the original home in it, each clear that one and
+        # each set their own; this is what stops the second one landing.
+        # Partial, so every other row is free to be false.
+        # Partial on both dialects. A dialect-specific `where` that the
+        # running database does not recognise is silently dropped, leaving
+        # a *full* unique index on a boolean — which would allow one home
+        # and exactly one other location. SQLite is what the tests build
+        # their schema on, so it needs saying there too.
+        Index(
+            "uq_locations_single_home",
+            "is_home",
+            unique=True,
+            postgresql_where=text("is_home"),
+            sqlite_where=text("is_home"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
 
@@ -50,10 +69,10 @@ class Location(Base, TimestampMixin):
     latitude: Mapped[float | None] = mapped_column(Float, default=None)
     longitude: Mapped[float | None] = mapped_column(Float, default=None)
 
-    # The one the road trip starts from. At most one row has this — the
-    # router clears it from the others when it is set, rather than a
-    # partial unique index, so the rule holds identically on every
-    # database this runs on and lives where the reader can see it.
+    # The one the road trip starts from. At most one row has this, and
+    # that is enforced twice on purpose: the router clears the flag from
+    # the others so "Make home" works rather than fails, and the partial
+    # unique index above is the guard for the case the clear did not see.
     is_home: Mapped[bool] = mapped_column(default=False, server_default="false")
 
     notes: Mapped[str | None] = mapped_column(default=None)

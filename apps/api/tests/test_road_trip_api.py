@@ -4,12 +4,14 @@ rungs measured from them."""
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.db import get_db
 from app.main import app
 from app.models.base import Base
+from app.models.location import Location
 from app.models.printer import Printer
 from app.roadtrip.routing import DrivingRoute, Itinerary, RoutingError
 
@@ -158,6 +160,41 @@ def test_setting_a_new_home_clears_the_old_one(client, auth_headers):
     assert first["id"] not in homes
 
 
+async def test_the_database_holds_the_district_to_one_home(
+    client, auth_headers, db_session_factory
+):
+    """The router clears the flag from the others so "Make home" works.
+    This is the guard underneath it, for two requests that each looked
+    before the other wrote — without it the district ends up with two
+    homes and the road trip raises on the next page load."""
+    _make_location(client, auth_headers, name="Admin", is_home=True)
+
+    async with db_session_factory() as session:
+        session.add(Location(name="Sneaked past the router", is_home=True))
+        with pytest.raises(IntegrityError):
+            await session.commit()
+
+
+def test_promoting_an_existing_location_to_home_does_not_collide(client, auth_headers):
+    """The unique index means the old home has to let go before the new one
+    takes hold. Assigning the flag first and clearing second autoflushes
+    the assignment straight into the index, and the failure lands outside
+    the endpoint's guard as a 500."""
+    _make_location(client, auth_headers, name="Admin", is_home=True)
+    other = _make_location(client, auth_headers, name="High School").json()
+
+    promoted = client.patch(
+        f"/api/v1/road-trip/locations/{other['id']}",
+        headers=auth_headers,
+        json={"is_home": True},
+    )
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json()["is_home"] is True
+
+    listed = client.get("/api/v1/road-trip/locations", headers=auth_headers).json()
+    assert [location["name"] for location in listed if location["is_home"]] == ["High School"]
+
+
 def test_home_is_listed_first(client, auth_headers):
     _make_location(client, auth_headers, name="Ainsworth")
     _make_location(client, auth_headers, name="Zion", is_home=True)
@@ -170,10 +207,11 @@ def test_a_location_can_be_deleted_even_when_it_is_home(client, auth_headers):
     """Refusing would mean a building that closed cannot be removed until
     another is nominated. The cost is the map, not the facts."""
     home = _make_location(client, auth_headers, is_home=True).json()
-    assert (
-        client.delete(f"/api/v1/road-trip/locations/{home['id']}", headers=auth_headers).status_code
-        == 204
-    )
+    # The call is its own statement: an API call inside an assert vanishes
+    # when Python is run with -O, taking the delete with it. Same reason
+    # #fix/side-effect-in-assert took them out of the rest of the suite.
+    response = client.delete(f"/api/v1/road-trip/locations/{home['id']}", headers=auth_headers)
+    assert response.status_code == 204
 
 
 def test_clearing_one_half_of_a_coordinate_pair_is_rejected(client, auth_headers):

@@ -52,7 +52,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from math import ceil
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job import Job
@@ -363,7 +363,24 @@ async def sweep_unprinted_pages(db: AsyncSession, now: datetime | None = None) -
             select(
                 Job.printer_id,
                 Job.completed_at,
-                Job.page_count,
+                # The printer's own count when it gave one, and the count
+                # taken from the document before delivery only when it did
+                # not.
+                #
+                # That order looks backwards for a check whose whole
+                # purpose is to doubt the printer, and it is deliberate.
+                # `submitted_pages` is every page of the PDF times copies,
+                # which is not always what the printer was asked to
+                # produce: someone printing pages 2-3 of a ten-page
+                # document sends two, and preferring the document's count
+                # would invent eight pages and report the printer for
+                # losing them. Reversing this trades a blind spot for
+                # false alarms, and a false alarm is the one thing this
+                # feature must never produce.
+                #
+                # So it fills the 11.5% of jobs that had no count at all
+                # rather than overruling the 88.5% that did.
+                func.coalesce(Job.page_count, Job.submitted_pages).label("pages"),
                 Job.duplex,
                 Job.document_name,
             ).where(
@@ -371,8 +388,8 @@ async def sweep_unprinted_pages(db: AsyncSession, now: datetime | None = None) -
                 Job.status == "forwarded",
                 Job.completed_at.is_not(None),
                 Job.completed_at >= since,
-                Job.page_count.is_not(None),
-                Job.page_count > 0,
+                func.coalesce(Job.page_count, Job.submitted_pages).is_not(None),
+                func.coalesce(Job.page_count, Job.submitted_pages) > 0,
                 # A retried job leaves a trail of rows for one delivery
                 # (app/printers/job_reconcile.py) and only the last of them
                 # describes what was actually sent. Counting the others would

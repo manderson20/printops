@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   listHeldJobs,
@@ -160,6 +160,21 @@ function JobsScreen({
   const [error, setError] = useState<string | null>(null);
   const [idleSince, setIdleSince] = useState(() => Date.now());
 
+  // Set the moment this screen stops belonging to the person who unlocked
+  // it — by Done, by the idle timer, or by unmounting. A release already
+  // sent still completes at the printer; what must not happen is its
+  // result landing on a screen the next person is now standing at, or
+  // Release All carrying on through somebody else's queue.
+  const finished = useRef(false);
+  useEffect(() => () => {
+    finished.current = true;
+  }, []);
+
+  function finish(leave: () => void) {
+    finished.current = true;
+    leave();
+  }
+
   // Releasing counts as activity, so the timer restarts on every state
   // change that matters as well as on touch. It is deliberately not
   // cancelled while a release is in flight — that request either finishes
@@ -167,7 +182,10 @@ function JobsScreen({
   // showing a name because one request hung is the failure this exists to
   // prevent.
   useEffect(() => {
-    const timer = setTimeout(onLogOut, IDLE_LOGOUT_MS);
+    const timer = setTimeout(() => {
+      finished.current = true;
+      onLogOut();
+    }, IDLE_LOGOUT_MS);
     return () => clearTimeout(timer);
   }, [idleSince, jobs, onLogOut]);
 
@@ -176,30 +194,39 @@ function JobsScreen({
     setError(null);
     try {
       await releaseHeldJob(token, jobId, pin);
+      if (finished.current) return;
       const remaining = jobs.filter((job) => job.id !== jobId);
       setJobs(remaining);
       if (remaining.length === 0) {
         onDone("Job released — check the printer.");
       }
     } catch (err) {
+      if (finished.current) return;
       setError(err instanceof ReleaseApiError ? err.message : "Release failed.");
     } finally {
-      setReleasingId(null);
+      if (!finished.current) setReleasingId(null);
     }
   }
 
   async function handleReleaseAll() {
     setError(null);
     for (const job of jobs) {
+      // Checked before each one rather than only at the top: Release All
+      // walks a queue one request at a time, and somebody pressing Done
+      // partway through means the rest are not theirs to release. What has
+      // already been sent still prints.
+      if (finished.current) return;
       setReleasingId(job.id);
       try {
         await releaseHeldJob(token, job.id, pin);
       } catch (err) {
+        if (finished.current) return;
         setError(err instanceof ReleaseApiError ? err.message : "Release failed.");
         setReleasingId(null);
         return;
       }
     }
+    if (finished.current) return;
     setReleasingId(null);
     onDone("All jobs released — check the printer.");
   }
@@ -225,7 +252,7 @@ function JobsScreen({
             are going to the office. */}
         <button
           type="button"
-          onClick={onLogOut}
+          onClick={() => finish(onLogOut)}
           className="shrink-0 rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-white/10"
         >
           Done
