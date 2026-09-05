@@ -55,6 +55,11 @@ class PrintQueueHeldJobOut(BaseModel):
     people's would be exposure without purpose."""
 
     job_id: UUID
+    # The number CUPS gave the job, which is the reference an admin sees on
+    # the Jobs page and at the kiosk — the one worth quoting when asking the
+    # office to release this job and not the others. Null on a row held
+    # before CUPS numbered it.
+    cups_job_id: int | None = None
     printer_id: UUID
     printer_name: str
     document_name: str | None = None

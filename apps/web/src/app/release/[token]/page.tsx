@@ -7,14 +7,37 @@ import {
   releaseHeldJob,
   ReleaseApiError,
   type HeldJob,
+  type HeldJobsResult,
 } from "@/lib/api";
 
 const AUTO_RETURN_MS = 8000;
 
+// A kiosk sits in a hallway, so the jobs screen cannot be left standing
+// there with someone's name and document titles on it. Any touch restarts
+// this; running out returns to the ID screen exactly as Done does. Long
+// enough to read a list and think about it, short enough that the next
+// person along finds the ID screen and not the last person's documents.
+const IDLE_LOGOUT_MS = 60_000;
+
 type Screen =
   | { view: "pin" }
-  | { view: "jobs"; pin: string; jobs: HeldJob[] }
+  | {
+      view: "jobs";
+      pin: string;
+      personName: string | null;
+      jobs: HeldJob[];
+    }
   | { view: "done"; message: string };
+
+// What to call a job out loud. CUPS's number is the one an admin sees on
+// the Jobs page, so it is the one worth reading down the phone to the
+// office; a row CUPS hasn't numbered yet falls back to the head of its own
+// id, which is at least unambiguous when there are two of them.
+function jobRef(job: HeldJob): string {
+  return job.cups_job_id !== null
+    ? `Job ${job.cups_job_id}`
+    : `Job ${job.id.slice(0, 8)}`;
+}
 
 function KeyPad({ onDigit, onBackspace, onSubmit, disabled }: {
   onDigit: (digit: string) => void;
@@ -68,7 +91,7 @@ function PinScreen({
   onResolved,
 }: {
   token: string;
-  onResolved: (pin: string, jobs: HeldJob[]) => void;
+  onResolved: (pin: string, result: HeldJobsResult) => void;
 }) {
   const [pin, setPin] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -79,13 +102,13 @@ function PinScreen({
     setSubmitting(true);
     setError(null);
     try {
-      const jobs = await listHeldJobs(token, pin);
-      if (jobs.length === 0) {
+      const result = await listHeldJobs(token, pin);
+      if (result.jobs.length === 0) {
         setError("No held jobs found for that ID at this printer.");
         setPin("");
         return;
       }
-      onResolved(pin, jobs);
+      onResolved(pin, result);
     } catch (err) {
       setError(err instanceof ReleaseApiError ? err.message : "Something went wrong.");
       setPin("");
@@ -120,17 +143,33 @@ function PinScreen({
 function JobsScreen({
   token,
   pin,
+  personName,
   initialJobs,
   onDone,
+  onLogOut,
 }: {
   token: string;
   pin: string;
+  personName: string | null;
   initialJobs: HeldJob[];
   onDone: (message: string) => void;
+  onLogOut: () => void;
 }) {
   const [jobs, setJobs] = useState(initialJobs);
   const [releasingId, setReleasingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [idleSince, setIdleSince] = useState(() => Date.now());
+
+  // Releasing counts as activity, so the timer restarts on every state
+  // change that matters as well as on touch. It is deliberately not
+  // cancelled while a release is in flight — that request either finishes
+  // or fails long before a minute is out, and a kiosk that can get stuck
+  // showing a name because one request hung is the failure this exists to
+  // prevent.
+  useEffect(() => {
+    const timer = setTimeout(onLogOut, IDLE_LOGOUT_MS);
+    return () => clearTimeout(timer);
+  }, [idleSince, jobs, onLogOut]);
 
   async function handleRelease(jobId: string) {
     setReleasingId(jobId);
@@ -166,8 +205,32 @@ function JobsScreen({
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center gap-6 px-6 py-10">
-      <h1 className="text-xl font-semibold text-white">Your held jobs</h1>
+    <div
+      className="flex flex-1 flex-col items-center gap-6 px-6 py-10"
+      onPointerDown={() => setIdleSince(Date.now())}
+    >
+      <div className="flex w-full max-w-md items-start justify-between gap-4">
+        <div className="flex flex-col text-left">
+          <h1 className="text-xl font-semibold text-white">Your held jobs</h1>
+          {/* The resolved name, not the ID that was typed: this is the
+              check that catches a digit entered wrong before someone
+              releases a stranger's documents. */}
+          <p className="text-sm text-white/60">
+            {personName ? `Signed in as ${personName}` : "Signed in"}
+          </p>
+        </div>
+        {/* Release only what you came for and leave. Without this the
+            screen stayed on this person until every one of their jobs had
+            been released, which is not what someone wants when the rest
+            are going to the office. */}
+        <button
+          type="button"
+          onClick={onLogOut}
+          className="shrink-0 rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-white/10"
+        >
+          Done
+        </button>
+      </div>
 
       <div className="flex w-full max-w-md flex-col gap-3">
         {jobs.map((job) => (
@@ -175,9 +238,11 @@ function JobsScreen({
             key={job.id}
             className="flex items-center justify-between gap-3 rounded-2xl border border-white/15 bg-white/5 px-4 py-3"
           >
-            <div className="flex flex-col text-left">
+            <div className="flex min-w-0 flex-col text-left">
               <span className="font-medium text-white">{job.document_name ?? "Untitled document"}</span>
               <span className="text-xs text-white/50">
+                <span className="font-mono text-white/70">{jobRef(job)}</span>
+                {" · "}
                 {new Date(job.created_at).toLocaleString()}
                 {job.page_count ? ` · ${job.page_count} pages` : ""}
               </span>
@@ -228,15 +293,30 @@ export default function ReleaseKioskPage() {
       {screen.view === "pin" && (
         <PinScreen
           token={params.token}
-          onResolved={(pin, jobs) => setScreen({ view: "jobs", pin, jobs })}
+          onResolved={(pin, result) =>
+            setScreen({
+              view: "jobs",
+              pin,
+              personName: result.person_name,
+              jobs: result.jobs,
+            })
+          }
         />
       )}
       {screen.view === "jobs" && (
         <JobsScreen
           token={params.token}
           pin={screen.pin}
+          personName={screen.personName}
           initialJobs={screen.jobs}
           onDone={(message) => setScreen({ view: "done", message })}
+          // Straight back to the ID screen rather than via the "done"
+          // confirmation: nothing was released, so there is nothing to
+          // confirm, and the next person should not have to wait out a
+          // tick and a message that isn't about them. Dropping this state
+          // is what forgets the PIN — see app/routers/release.py, there is
+          // no server session to end.
+          onLogOut={() => setScreen({ view: "pin" })}
         />
       )}
       {screen.view === "done" && (
