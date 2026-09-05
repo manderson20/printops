@@ -3174,11 +3174,18 @@ export type PersonalExplained = {
   unknown_duplex_pages: number;
   largest_job_pages: number | null;
   avg_pages_per_job: number;
-  district_median_pages: number;
-  district_mean_pages: number;
+  /** Null when the window had too few contributors to compare against
+   * — see has_district_comparison. */
+  district_median_pages: number | null;
+  district_mean_pages: number | null;
   /** Null when the district median is 0 — show nothing rather than a
    * nonsense multiple. */
   times_district_median: number | null;
+  /** False when fewer people were active in the window than the
+   * anonymity floor allows to be summarised. The three fields above are
+   * then all null: a median over two people is one subtraction away from
+   * the other person's exact total. */
+  has_district_comparison: boolean;
   duplex_sheets_saved: number;
   additional_sheets_if_all_duplex: number;
   print_cost: number;

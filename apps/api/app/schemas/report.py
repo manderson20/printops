@@ -397,11 +397,21 @@ class PersonalExplainedOut(BaseModel):
 
     # District context, as scalars only — a viewer never receives the
     # per-person totals these were computed from.
-    district_median_pages: float
-    district_mean_pages: float
+    #
+    # Null, not zero, when the window is too thin to disclose them:
+    # withholding has to be distinguishable from a real result, and a
+    # median of 0.0 is a number a reader would believe. has_district_
+    # comparison says which of the two happened.
+    district_median_pages: float | None = None
+    district_mean_pages: float | None = None
     # Null rather than infinity when the median is 0, so the client shows
     # nothing instead of a nonsense multiple.
     times_district_median: float | None = None
+    # False when fewer than MIN_CONTRIBUTORS_FOR_DISTRICT_FACTS people
+    # were active in the window, in which case the three fields above are
+    # all null. A median over two people is one subtraction away from the
+    # other person's exact total.
+    has_district_comparison: bool = True
 
     # Framed as opportunity, never as blame.
     duplex_sheets_saved: int

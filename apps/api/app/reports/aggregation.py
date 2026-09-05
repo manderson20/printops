@@ -290,14 +290,18 @@ async def _fetch_raw_copy_rows(
     reporting section below) so this agrees with every other copier
     report on what start/end filtering means."""
     stmt = _apply_copier_filters(
-        select(CopierUsageRecord.created_at, CopierUsageRecord.page_count),
+        # The same instant the filter above admits the row on, not
+        # created_at: a row let in by its occurred_at and then bucketed by
+        # its import date lands outside every bucket and is silently
+        # dropped by the caller.
+        select(COPY_INSTANT.label("at"), CopierUsageRecord.page_count),
         ReportFilters(start=start, end=end),
     ).where(
         CopierUsageRecord.activity_type == "copy",
         CopierUsageRecord.page_count.is_not(None),
     )
     rows = (await db.execute(stmt)).all()
-    return [_CopyRawRow(created_at=r.created_at, page_count=r.page_count or 0) for r in rows]
+    return [_CopyRawRow(created_at=r.at, page_count=r.page_count or 0) for r in rows]
 
 
 async def get_hourly_timeline(
@@ -546,6 +550,34 @@ async def get_raw_rows_for_export(db: AsyncSession, filters: ReportFilters):
 # is the one timestamp every row always has.
 
 
+# When a copy happened, for the purpose of deciding which period it
+# belongs to.
+#
+# A copy belongs to the period its window *ended* in, and these three
+# columns are that instant in descending order of how directly they say
+# it:
+#
+#   occurred_at   a genuine single event, from a generic-CSV import that
+#                 carried one (app/copiers/generic_csv.py)
+#   period_end    the close of an accounting period, for an aggregate
+#                 export row
+#   created_at    the moment PrintOps recorded it — which for a
+#                 counter-derived row *is* the end of the window, because
+#                 the row is a delta observed at that poll
+#
+# created_at alone was wrong for the first two: it is the import's
+# timestamp, not the event's. A copy made in May and imported in
+# September counted as September while My Activity displayed it as May —
+# the two halves of the same report disagreeing about the same row.
+# Filtering here and displaying in app/reports/activity.py now read the
+# same instant.
+COPY_INSTANT = func.coalesce(
+    CopierUsageRecord.occurred_at,
+    CopierUsageRecord.period_end,
+    CopierUsageRecord.created_at,
+)
+
+
 def _apply_copier_filters(stmt: Select, filters: ReportFilters) -> Select:
     """The copier-side mirror of _apply_filters, so both halves of a combined
     report agree on what a given filter set means."""
@@ -556,9 +588,9 @@ def _apply_copier_filters(stmt: Select, filters: ReportFilters) -> Select:
     # adding its own.
     stmt = stmt.join(MfpDevice, MfpDevice.id == CopierUsageRecord.mfp_device_id)
     if filters.start is not None:
-        stmt = stmt.where(CopierUsageRecord.created_at >= filters.start)
+        stmt = stmt.where(COPY_INSTANT >= filters.start)
     if filters.end is not None:
-        stmt = stmt.where(CopierUsageRecord.created_at < filters.end)
+        stmt = stmt.where(COPY_INSTANT < filters.end)
     if filters.building is not None:
         stmt = stmt.where(CopierUsageRecord.location_building == filters.building)
     if filters.submitted_by is not None:
@@ -798,13 +830,25 @@ async def count_contributors(db: AsyncSession, filters: ReportFilters) -> int:
     because the print and copy sides learn the same person's address
     from different rosters and do not always agree on its case — the
     same reason app/routers/reports.py:_may_report_on compares that way.
+
+    The copy half counts copying only, matching get_copier_usage_totals
+    and get_pages_per_person, which both restrict to activity_type ==
+    "copy". A guard has to count the people behind the number it is
+    guarding: scanning and faxing produce no printed page and are
+    excluded from total_pages (see CombinedSummary), so counting a
+    scan-only user as a contributor would let nine of them plus one
+    person copying clear a floor of ten over a total attributable
+    entirely to that one person. No such user exists in this district
+    today — every one of the 61 scan rows belongs to somebody who also
+    copies — which is exactly why this needed fixing before one does.
     """
     print_emails = _apply_filters(
         select(func.lower(Job.submitted_by)).where(Job.submitted_by.is_not(None)), filters
     )
     copy_emails = _apply_copier_filters(
         select(func.lower(CopierUsageRecord.staff_email)).where(
-            CopierUsageRecord.staff_email.is_not(None)
+            CopierUsageRecord.staff_email.is_not(None),
+            CopierUsageRecord.activity_type == "copy",
         ),
         filters,
     )

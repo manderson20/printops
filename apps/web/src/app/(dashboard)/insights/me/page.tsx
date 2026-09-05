@@ -174,13 +174,18 @@ function Explained({ data }: { data: PersonalExplained }) {
           <StatCard
             label="Compared to the district"
             value={
+              !data.has_district_comparison ||
               data.times_district_median === null
                 ? "—"
                 : `${data.times_district_median}×`
             }
-            caption={`The median is ${formatNumber(
-              data.district_median_pages,
-            )} pages. Roles differ — this isn't a ranking.`}
+            caption={
+              !data.has_district_comparison
+                ? "Too few people printed in this period to compare against without singling someone out. Try a longer period."
+                : `The median is ${formatNumber(
+                    data.district_median_pages ?? 0,
+                  )} pages. Roles differ — this isn't a ranking.`
+            }
           />
           <StatCard
             label="Estimated cost"

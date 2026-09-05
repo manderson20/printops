@@ -95,12 +95,6 @@ export default function DistrictDetailPage() {
 }
 
 function Detail({ data }: { data: DistrictDetail }) {
-  const unassigned = data.by_building.find((s) => s.key === "__unassigned__");
-  const unassignedShare =
-    unassigned && data.total_pages > 0
-      ? Math.round((unassigned.total_pages / data.total_pages) * 100)
-      : 0;
-
   return (
     <div className="flex flex-col gap-8">
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -131,22 +125,15 @@ function Detail({ data }: { data: DistrictDetail }) {
         />
       </section>
 
-      {unassigned && unassignedShare >= 10 ? (
-        <p className="rounded-lg border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200">
-          <strong>{unassignedShare}% of pages sit in “Unassigned.”</strong>{" "}
-          Those came from printers and copiers with no building recorded, so
-          the breakdown below only covers what is left. Setting a building on
-          those devices is what moves them into the right row.
-        </p>
-      ) : null}
-
       <SegmentTable
         title="By building"
+        noun="building"
         segments={data.by_building}
         total={data.total_pages}
       />
       <SegmentTable
         title="By department"
+        noun="department"
         segments={data.by_department}
         total={data.total_pages}
       />
@@ -154,20 +141,41 @@ function Detail({ data }: { data: DistrictDetail }) {
   );
 }
 
+// The warning belongs to the table it describes, not to the page. Both
+// breakdowns now carry an Unassigned row, and they are unassigned for
+// different reasons — a device with no building set, versus a copier with
+// no linked printer to take a department from — so one shared sentence
+// above both tables would have been wrong about one of them.
 function SegmentTable({
   title,
+  noun,
   segments,
   total,
 }: {
   title: string;
+  noun: "building" | "department";
   segments: DistrictSegment[];
   total: number;
 }) {
+  const unassigned = segments.find((s) => s.key === "__unassigned__");
+  const unassignedShare =
+    unassigned && total > 0
+      ? Math.round((unassigned.total_pages / total) * 100)
+      : 0;
+
   return (
     <section className="flex flex-col gap-3">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
         {title}
       </h2>
+      {unassigned && unassignedShare >= 10 ? (
+        <p className="rounded-lg border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200">
+          <strong>{unassignedShare}% of pages sit in “Unassigned.”</strong>{" "}
+          {noun === "building"
+            ? "Those came from printers and copiers with no building recorded, so the rows below only cover what is left. Setting a building on those devices is what moves them into the right row."
+            : "Those came from printers with no department recorded, and from copiers not linked to a printer to take one from, so the rows below only cover what is left."}
+        </p>
+      ) : null}
       {segments.length === 0 ? (
         <EmptyState>Nothing recorded for this period.</EmptyState>
       ) : (

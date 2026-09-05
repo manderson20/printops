@@ -9,7 +9,7 @@ too few people contributed).
 """
 
 import uuid
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 
 import pytest
 import pytest_asyncio
@@ -202,13 +202,14 @@ async def _make_job(
     page_count,
     duplex=None,
     color_mode=None,
+    status="forwarded",
 ):
     async with db_session_factory() as session:
         session.add(
             Job(
                 printer_id=uuid.UUID(printer_id),
                 submitted_by=submitted_by,
-                status="forwarded",
+                status=status,
                 page_count=page_count,
                 duplex=duplex,
                 color_mode=color_mode,
@@ -218,7 +219,23 @@ async def _make_job(
         await session.commit()
 
 
-async def _make_copy(db_session_factory, device_id, staff_email, page_count):
+async def _make_copy(
+    db_session_factory,
+    device_id,
+    staff_email,
+    page_count,
+    activity_type="copy",
+    occurred_at=None,
+    created_at=None,
+):
+    """A walk-up row. Counter-derived by default — a period, never an
+    instant — since that is what every copier in this district produces.
+    Pass occurred_at for the other shape the model allows: a generic-CSV
+    import of a single timestamped event, which carries no period pair.
+
+    `created_at` is when PrintOps recorded the row, which for an import is
+    the moment the file was uploaded and has nothing to do with when the
+    copy was made. Overridable so the two can be pulled apart."""
     async with db_session_factory() as session:
         session.add(
             CopierUsageRecord(
@@ -228,12 +245,12 @@ async def _make_copy(db_session_factory, device_id, staff_email, page_count):
                 staff_email=staff_email,
                 external_identity_used=staff_email or "unknown",
                 source_connector="konica_bizhub",
-                activity_type="copy",
+                activity_type=activity_type,
                 page_count=page_count,
-                # Counter-derived: a period, never an instant.
-                period_start=datetime.now(UTC),
-                period_end=datetime.now(UTC),
-                created_at=_in_window(),
+                occurred_at=occurred_at,
+                period_start=None if occurred_at else datetime.now(UTC),
+                period_end=None if occurred_at else datetime.now(UTC),
+                created_at=created_at or _in_window(),
                 raw_payload={},
             )
         )
@@ -406,21 +423,81 @@ async def test_personal_view_compares_against_the_district_without_exposing_it(
     client, printer_id, db_session_factory, viewer_headers
 ):
     """The median is computed from everybody, but only the median comes
-    back — no addresses, no per-person rows."""
-    for index in range(4):
+    back — no addresses, no per-person rows.
+
+    Seeds a crowd rather than the four people this used to use: the
+    comparison is now withheld below the anonymity floor, so four
+    would have been testing the guard instead of the median.
+    """
+    for index in range(MIN_CONTRIBUTORS_FOR_DISTRICT_FACTS):
         await _make_job(db_session_factory, printer_id, f"person{index}@example.org", 100)
     await _make_job(db_session_factory, printer_id, "viewer@example.org", 200)
 
     response = client.get(f"{EXPLAINED}/me", headers=viewer_headers)
     body = response.json()
+    assert body["has_district_comparison"] is True
     assert body["district_median_pages"] == 100.0
     assert body["times_district_median"] == 2.0
     assert "person0@example.org" not in response.text
 
 
-def test_personal_view_reports_no_multiple_when_the_median_is_zero(client, viewer_headers):
+async def test_personal_view_withholds_the_district_comparison_below_the_floor(
+    client, printer_id, db_session_factory, viewer_headers
+):
+    """The disclosure /explained/district refuses to make, refused here too.
+
+    This endpoint is scoped to its caller everywhere else, which is what
+    made it look exempt — but the median and mean are computed over
+    everybody, so they are a district disclosure on a personal page.
+
+    Three contributors is not a hypothetical: the week of 2026-06-29 had
+    exactly that many in this district. At n=3 the median *is* the middle
+    person's exact page count, and the caller is not that person.
+    """
+    await _make_job(db_session_factory, printer_id, "viewer@example.org", 50)
+    await _make_job(db_session_factory, printer_id, "someone@example.org", 300)
+    await _make_job(db_session_factory, printer_id, "other@example.org", 900)
+
+    response = client.get(f"{EXPLAINED}/me", headers=viewer_headers)
+    body = response.json()
+    assert body["has_district_comparison"] is False
+    assert body["district_median_pages"] is None
+    assert body["district_mean_pages"] is None
+    assert body["times_district_median"] is None
+    # The caller's own numbers are theirs and stay.
+    assert body["total_pages"] == 50
+    # Nothing derived from the other two survives anywhere in the payload.
+    assert "300" not in response.text
+    assert "900" not in response.text
+
+
+async def test_personal_view_compares_exactly_at_the_floor(
+    client, printer_id, db_session_factory, viewer_headers
+):
+    """The boundary itself, so the guard can't quietly become off-by-one.
+
+    The caller is one of the contributors, which is what makes the count
+    land exactly on the floor rather than one above it.
+    """
+    for index in range(MIN_CONTRIBUTORS_FOR_DISTRICT_FACTS - 1):
+        await _make_job(db_session_factory, printer_id, f"person{index}@example.org", 100)
+    await _make_job(db_session_factory, printer_id, "viewer@example.org", 100)
+
     body = client.get(f"{EXPLAINED}/me", headers=viewer_headers).json()
-    assert body["district_median_pages"] == 0.0
+    assert body["has_district_comparison"] is True
+    assert body["district_median_pages"] == 100.0
+
+
+def test_personal_view_reports_no_multiple_when_the_median_is_zero(client, viewer_headers):
+    """An empty district withholds rather than reporting a median of zero.
+
+    This used to assert 0.0, which was a number a reader would believe.
+    Nobody printed, so there is no median — and with no contributors at
+    all the floor is what answers first.
+    """
+    body = client.get(f"{EXPLAINED}/me", headers=viewer_headers).json()
+    assert body["has_district_comparison"] is False
+    assert body["district_median_pages"] is None
     assert body["times_district_median"] is None
 
 
@@ -524,6 +601,166 @@ async def test_detail_shows_activity_with_no_building_as_unassigned(
     # Contributor counts overlap across buildings, so this row can't
     # derive one and says so with a zero the client renders as a dash.
     assert unassigned[0]["people"] == 0
+
+
+async def test_a_scan_only_user_does_not_help_clear_the_anonymity_floor(
+    client, printer_id, mfp_device_id, db_session_factory, viewer_headers
+):
+    """The guard counts the people behind the number it guards.
+
+    Scanning produces no printed page and is excluded from total_pages,
+    so a scan-only user contributes nothing to the disclosure. Counting
+    them anyway let nine of them plus one person copying clear a floor of
+    ten over a total attributable entirely to that one person.
+    """
+    for index in range(MIN_CONTRIBUTORS_FOR_DISTRICT_FACTS - 1):
+        await _make_copy(
+            db_session_factory,
+            mfp_device_id,
+            f"scanner{index}@example.org",
+            40,
+            activity_type="scan",
+        )
+    await _make_copy(db_session_factory, mfp_device_id, "lonecopier@example.org", 500)
+
+    body = client.get(f"{EXPLAINED}/district", headers=viewer_headers).json()
+    assert body["has_enough_activity"] is False
+    assert body["contributors"] == 1
+    assert body["total_pages"] == 0
+
+
+async def test_a_cancelled_job_is_counted_by_neither_the_summary_nor_the_list(
+    client, printer_id, db_session_factory, viewer_headers
+):
+    """The header and the list below it count the same thing.
+
+    get_summary counts rows of every status, so before the window carried
+    status="forwarded" a cancelled job added 1 to job_count while
+    get_print_rows correctly refused to show it — a header claiming one
+    more job than the list it sits above. Production carries 180 such
+    jobs at 0 pages apiece, which is why only the counts drifted and
+    nobody caught it by looking at a page total.
+    """
+    await _make_job(db_session_factory, printer_id, "viewer@example.org", 40)
+    await _make_job(db_session_factory, printer_id, "viewer@example.org", 25, status="cancelled")
+
+    summary = client.get(f"{EXPLAINED}/me", headers=viewer_headers).json()
+    activity = client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers).json()
+
+    assert summary["job_count"] == 1
+    assert summary["print_pages"] == 40
+    assert summary["avg_pages_per_job"] == 40.0
+    assert summary["job_count"] == activity["total_rows"] == len(activity["rows"])
+
+
+async def test_a_copy_with_an_event_timestamp_is_shown_as_an_instant(
+    client, mfp_device_id, db_session_factory, viewer_headers
+):
+    """A copy is a window because a counter delta is, not because it is a
+    copy. A generic-CSV row carrying occurred_at is a real instant and is
+    shown as one.
+
+    Reading created_at for it — the column this used to fall back to —
+    stated three wrong things at once: the import's date rather than the
+    event's, a window of zero length, and a footnote calling it
+    period-derived.
+    """
+    occurred = _in_window()
+    await _make_copy(
+        db_session_factory,
+        mfp_device_id,
+        "viewer@example.org",
+        12,
+        occurred_at=occurred,
+    )
+
+    body = client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers).json()
+    row = body["rows"][0]
+    assert row["kind"] == "copy"
+    assert row["at"] is not None and row["at"].startswith(occurred.strftime("%Y-%m-%dT%H:%M"))
+    assert row["window_start"] is None
+    assert row["window_end"] is None
+    # No window on the page means no footnote explaining one.
+    assert body["includes_period_derived_copies"] is False
+
+
+async def test_a_copy_imported_this_period_but_made_before_it_does_not_count(
+    client, mfp_device_id, db_session_factory, viewer_headers
+):
+    """The other half of the instant fix.
+
+    My Activity was taught to *display* occurred_at, but the filter still
+    admitted rows on created_at — so a copy made in May and imported in
+    September was counted in September and displayed as May. The report
+    contradicted itself about the same row.
+    """
+    long_before = _in_window() - timedelta(days=400)
+    await _make_copy(
+        db_session_factory,
+        mfp_device_id,
+        "viewer@example.org",
+        12,
+        occurred_at=long_before,
+    )
+
+    body = client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers).json()
+    assert body["total_rows"] == 0
+
+
+async def test_a_copy_made_this_period_but_imported_later_still_counts(
+    client, mfp_device_id, db_session_factory, viewer_headers
+):
+    """And the mirror of it: an import that arrives after the period closes
+    does not take the copies with it."""
+    await _make_copy(
+        db_session_factory,
+        mfp_device_id,
+        "viewer@example.org",
+        12,
+        occurred_at=_in_window(),
+        created_at=_in_window() + timedelta(days=400),
+    )
+
+    body = client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers).json()
+    assert body["total_rows"] == 1
+
+
+async def test_a_counter_derived_copy_belongs_to_the_period_its_window_closed_in(
+    client, mfp_device_id, db_session_factory, viewer_headers
+):
+    """Nothing changes for the rows this district actually has. A counter
+    delta carries no occurred_at and no period pair from the poller, so
+    created_at — the moment of the poll, which is the end of the window it
+    measured — still decides."""
+    await _make_copy(db_session_factory, mfp_device_id, "viewer@example.org", 12)
+
+    body = client.get(f"{EXPLAINED}/me/activity", headers=viewer_headers).json()
+    assert body["total_rows"] == 1
+    assert body["includes_period_derived_copies"] is True
+
+
+async def test_detail_department_rows_reconcile_with_the_district_total(
+    client, db_session_factory, admin_headers
+):
+    """The department table is introduced as a breakdown of the district
+    total, so it has to add up to one. It had no Unassigned row at all
+    and silently dropped every printer with no department set."""
+    async with db_session_factory() as session:
+        printer = Printer(name="Departmentless Printer", ip_address="10.0.0.12", building=BUILDING)
+        session.add(printer)
+        await session.commit()
+        await session.refresh(printer)
+        departmentless_id = str(printer.id)
+
+    for index in range(10):
+        await _make_job(db_session_factory, departmentless_id, f"person{index}@example.org", 10)
+
+    body = client.get(f"{EXPLAINED}/district/detail", headers=admin_headers).json()
+    unassigned = [s for s in body["by_department"] if s["key"] == "__unassigned__"]
+    assert len(unassigned) == 1
+    assert unassigned[0]["total_pages"] == 100
+    assert sum(s["total_pages"] for s in body["by_department"]) == body["total_pages"]
+    assert sum(s["print_pages"] for s in body["by_department"]) == body["print_pages"]
 
 
 def test_detail_omits_a_building_with_no_activity(

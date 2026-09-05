@@ -18,9 +18,15 @@ history WebAPI answers `Nack "Webapi not supported."` on this firmware
 generation even with MFP.JobLog.Enable on (docs/copier-capture-konica.md
 S3.6), so this is the finest grain the hardware can produce.
 
-ActivityRow therefore carries `at` for prints and `window_start`/
-`window_end` for copies, and never invents the other. A UI that showed a
-copy at "14:23" would be stating something nobody measured.
+ActivityRow therefore carries `at` for an instant and `window_start`/
+`window_end` for a window, and never invents the other. A UI that showed
+a counter-derived copy at "14:23" would be stating something nobody
+measured.
+
+Which side a copy lands on is a property of its source, not of copying:
+a counter delta is a window, while a generic-CSV row carrying
+occurred_at is an instant and is shown as one. Konica's counters, the
+only copy source in this district today, produce windows exclusively.
 """
 
 from dataclasses import dataclass
@@ -125,6 +131,7 @@ async def get_copy_rows(db: AsyncSession, filters: ReportFilters) -> list[Activi
             CopierUsageRecord.color_page_count,
             CopierUsageRecord.monochrome_page_count,
             CopierUsageRecord.activity_type,
+            CopierUsageRecord.occurred_at,
             CopierUsageRecord.period_start,
             CopierUsageRecord.period_end,
             CopierUsageRecord.created_at,
@@ -139,6 +146,7 @@ async def get_copy_rows(db: AsyncSession, filters: ReportFilters) -> list[Activi
         color_pages,
         mono_pages,
         activity_type,
+        occurred_at,
         period_start,
         period_end,
         created_at,
@@ -159,11 +167,25 @@ async def get_copy_rows(db: AsyncSession, filters: ReportFilters) -> list[Activi
                 # them as simplex — the same conservative rule
                 # app/reports/formulas.py:copy_cost documents.
                 sheets=physical_sheets_used(pages, duplex),
-                # created_at is the fallback for a row whose source gave
-                # no period at all, so a window always has two ends to
-                # show rather than a blank.
-                window_start=period_start or created_at,
-                window_end=period_end or created_at,
+                # A copy is usually a counter delta covering a window,
+                # but not always: a generic-CSV import may carry
+                # occurred_at instead of a period pair, and the model
+                # validates that one or the other is set
+                # (app/models/copier_usage.py). Such a row is a genuine
+                # instant and gets `at`, the same field a print uses.
+                #
+                # Reading created_at for it, as this did, printed the
+                # moment PrintOps imported the file — so a copy made in
+                # May and imported in September appeared under September,
+                # as a window of zero length, described by the footnote
+                # as period-derived. Three wrong statements from one
+                # missing column.
+                #
+                # created_at remains the fallback for a row with neither,
+                # so a window always has two ends rather than a blank.
+                at=occurred_at,
+                window_start=None if occurred_at else (period_start or created_at),
+                window_end=None if occurred_at else (period_end or created_at),
                 color_pages=color_pages,
                 mono_pages=mono_pages,
             )
