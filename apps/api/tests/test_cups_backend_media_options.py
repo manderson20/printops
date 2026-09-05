@@ -3,7 +3,7 @@
 infra/cups/backends/printops removes the page-size options from jobs bound for
 a printer whose firmware cannot parse the media-col collection CUPS builds out
 of them (see app/printers/media_col_probe.py). Everything else in that string
-— the job UUID attribution depends on, the colour mode, the vendor's own
+— the job UUID attribution depends on, the color mode, the vendor's own
 options — has to survive untouched, and an options string can quote a value
 containing a space, so this cannot be a naive split or a regex over the whole
 string.

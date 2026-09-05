@@ -52,12 +52,12 @@ function rowDate(row: MyActivityRow): string {
 function details(row: MyActivityRow): string {
   const parts: string[] = [];
   if (row.kind === "print") {
-    if (row.color_mode === "color") parts.push("colour");
+    if (row.color_mode === "color") parts.push("color");
     else if (row.color_mode === "monochrome") parts.push("mono");
     if (row.duplex === true) parts.push("double-sided");
     else if (row.duplex === false) parts.push("single-sided");
   } else {
-    if (row.color_pages) parts.push(`${formatNumber(row.color_pages)} colour`);
+    if (row.color_pages) parts.push(`${formatNumber(row.color_pages)} color`);
     if (row.mono_pages) parts.push(`${formatNumber(row.mono_pages)} mono`);
   }
   return parts.join(", ");

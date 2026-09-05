@@ -69,7 +69,7 @@ class ActivityRow:
     # Print-only: the device reports one mode for the whole job.
     color_mode: str | None = None
     duplex: bool | None = None
-    # Copy-only: a counter delta covers many copies, so colour arrives as
+    # Copy-only: a counter delta covers many copies, so color arrives as
     # a split rather than a mode. Both can be 0 on a real row — the
     # device reported a total and no breakdown.
     color_pages: int | None = None

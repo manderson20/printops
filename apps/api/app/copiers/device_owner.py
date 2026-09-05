@@ -1,7 +1,7 @@
 """Attributes a whole device's copies to one named person.
 
 For the copier nobody logs in to. A desk machine with one regular user —
-the IT department's colour copier, a nurse's office unit — has no Account
+the IT department's color copier, a nurse's office unit — has no Account
 Track, no PIN, no per-user anything, so every attribution path in
 PrintOps skips it: app/copiers/account_counters.py has no per-account
 counters to read, and app/reports/untracked_copies.py deliberately
@@ -37,11 +37,11 @@ someone to rediscover:
   data is strictly better where it exists (it names real people), so this
   stands down rather than competing with it.
 
-- **No colour split.** SNMP's copy meter is a single count; it does not
-  say how many of those pages were colour. The rows are written with
-  colour and mono both null, which prices them at the mono rate — the
+- **No color split.** SNMP's copy meter is a single count; it does not
+  say how many of those pages were color. The rows are written with
+  color and mono both null, which prices them at the mono rate — the
   same conservative rule job_cost and compute_environmental_impact
-  already apply to a page whose colour mode nobody reported. On a colour
+  already apply to a page whose color mode nobody reported. On a color
   copier that understates cost, and is the honest direction to be wrong
   in.
 """
@@ -175,9 +175,9 @@ def _usage_row(
         authentication_method=None,
         activity_type="copy",
         page_count=pages,
-        # Null colour split — see the module docstring. Left null rather
+        # Null color split — see the module docstring. Left null rather
         # than guessed so the cost side applies its own documented rule
-        # for unknown colour instead of inheriting a guess made here.
+        # for unknown color instead of inheriting a guess made here.
         color_page_count=None,
         monochrome_page_count=None,
         duplex=None,

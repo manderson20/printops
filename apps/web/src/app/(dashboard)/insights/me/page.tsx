@@ -138,14 +138,14 @@ function Explained({ data }: { data: PersonalExplained }) {
             caption="What actually came out of the tray."
           />
           <StatCard
-            label="Colour"
+            label="Color"
             value={percent(colorPages, knownColorPages)}
             caption={
               knownColorPages > 0
                 ? `${formatNumber(colorPages)} of ${formatNumber(
                     knownColorPages,
                   )} pages where the printer reported it.`
-                : "No printer reported a colour mode this period."
+                : "No printer reported a color mode this period."
             }
           />
           <StatCard

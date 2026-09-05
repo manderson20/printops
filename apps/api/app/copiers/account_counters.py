@@ -40,9 +40,9 @@ from app.models.mfp_device import MfpDevice
 
 logger = logging.getLogger(__name__)
 
-# Konica's colour modes are disjoint page counts, not a hierarchy: a page
+# Konica's color modes are disjoint page counts, not a hierarchy: a page
 # is counted under exactly one of these or under Bw.
-COLOUR_TYPES = ("FullColor", "BiColor", "MonoColor")
+COLOR_TYPES = ("FullColor", "BiColor", "MonoColor")
 MONO_TYPES = ("Bw",)
 
 # Counter types that are not a count of pages produced, and would inflate
@@ -201,7 +201,7 @@ def _usage_rows(
     """One row per walk-up activity that actually moved."""
     rows: list[CopierUsageRecord] = []
 
-    def add(activity_type: str, pages: int, colour: int | None, mono: int | None) -> None:
+    def add(activity_type: str, pages: int, color: int | None, mono: int | None) -> None:
         rows.append(
             CopierUsageRecord(
                 mfp_device_id=device.id,
@@ -219,7 +219,7 @@ def _usage_rows(
                 authentication_method="account_track",
                 activity_type=activity_type,
                 page_count=pages,
-                color_page_count=colour,
+                color_page_count=color,
                 monochrome_page_count=mono,
                 period_start=period_start,
                 period_end=period_end,
@@ -240,7 +240,7 @@ def _usage_rows(
         add(
             "copy",
             copy_pages,
-            delta.pages("copy", COLOUR_TYPES) or None,
+            delta.pages("copy", COLOR_TYPES) or None,
             delta.pages("copy", MONO_TYPES) or None,
         )
 

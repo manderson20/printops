@@ -229,7 +229,7 @@ async def update_job(job_id: UUID, payload: JobUpdate, db: AsyncSession = Depend
     if payload.file_size_bytes is not None:
         job.file_size_bytes = payload.file_size_bytes
     job.page_count = payload.page_count
-    # CUPS reports the mode the job asked for; a mono printer prints a colour
+    # CUPS reports the mode the job asked for; a mono printer prints a color
     # job in grey and says nothing. See recorded_color_mode's docstring.
     printer = await db.get(Printer, job.printer_id)
     job.color_mode = recorded_color_mode(

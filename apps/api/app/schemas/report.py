@@ -75,7 +75,7 @@ class CombinedLeaderboardEntryOut(BaseModel):
     copy_pages: int
     total_pages: int
     # color/mono/duplex/simplex describe the print side only; the copy
-    # side has its own colour split (copy_*) because a copy arrives as a
+    # side has its own color split (copy_*) because a copy arrives as a
     # counter delta with no per-job duplex flag at all.
     color_pages: int
     mono_pages: int
@@ -112,7 +112,7 @@ class StaffCopierUsageOut(BaseModel):
     """One copier's worth of one person's walk-up activity.
 
     color_pages + mono_pages can be less than `pages`: `measured_color`
-    is false when the device reported a copy total with no colour split,
+    is false when the device reported a copy total with no color split,
     in which case the unsplit remainder is priced at the mono rate and
     the UI should say so rather than implying the copies were mono."""
 

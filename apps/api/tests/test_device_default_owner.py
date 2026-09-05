@@ -129,7 +129,7 @@ async def test_copies_since_the_baseline_belong_to_the_owner(db, device, printer
     # The window is the two readings it was measured between, not "now".
     assert _utc(rows[0].period_start) == NOW
     assert _utc(rows[0].period_end) == NOW + timedelta(hours=1)
-    # No colour split exists on an SNMP copy meter, and inventing one
+    # No color split exists on an SNMP copy meter, and inventing one
     # would misprice the row — see the module docstring.
     assert rows[0].color_page_count is None
     assert rows[0].monochrome_page_count is None

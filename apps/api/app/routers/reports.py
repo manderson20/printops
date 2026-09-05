@@ -340,7 +340,7 @@ class _CopyCostAccumulator:
     """The copy-side counterpart of _CostAccumulator.
 
     Not the same class, because the two are not the same shape: a print
-    row has one colour mode and contributes to exactly one of mono/colour,
+    row has one color mode and contributes to exactly one of mono/color,
     while a copy row is a counter delta carrying both at once, plus a
     remainder the device never split. That remainder is tracked in its own
     field rather than folded into mono — it is priced at the mono rate,
@@ -362,7 +362,7 @@ class _CopyCostAccumulator:
 
     @property
     def measured_color(self) -> bool:
-        """False when nothing in this bucket was broken out by colour, so
+        """False when nothing in this bucket was broken out by color, so
         every page in it is being priced at the mono rate by default."""
         return self.unsplit_pages == 0 or bool(self.color_pages or self.mono_pages)
 

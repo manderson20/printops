@@ -231,14 +231,14 @@ export function RouteMap({ route }: { route: DistrictRoute }) {
       // Numbered, because the order is the one thing a drawn line cannot
       // say when a trip doubles back over its own road.
       for (const stop of route.stops) {
-        const colour = stop.reached ? TRAVELLED : AHEAD;
+        const color = stop.reached ? TRAVELLED : AHEAD;
         L.marker([stop.latitude, stop.longitude], {
           icon: L.divIcon({
             className: "",
             html:
               `<div style="width:20px;height:20px;border-radius:9999px;` +
-              `background:${stop.reached ? colour : "#ffffff"};` +
-              `border:2px solid ${colour};color:${stop.reached ? "#ffffff" : colour};` +
+              `background:${stop.reached ? color : "#ffffff"};` +
+              `border:2px solid ${color};color:${stop.reached ? "#ffffff" : color};` +
               `font:600 11px/16px system-ui,sans-serif;text-align:center;` +
               `box-shadow:0 0 0 1px rgba(0,0,0,.15)">${stop.position}</div>`,
             iconSize: [20, 20],

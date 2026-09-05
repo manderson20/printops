@@ -37,7 +37,7 @@ STALL_THRESHOLD = timedelta(minutes=30)
 # ...but "ordinary office traffic" is not what every printer sees. The LCACTC
 # graphic-arts printer's normal workload is Photoshop output: the job at the
 # centre of the 2026-08-20 incident was a 26 MB JPEG on 11x14 borderless media
-# which, at 600dpi 8-bit colour, Ghostscript expands to a ~166 MB raster before
+# which, at 600dpi 8-bit color, Ghostscript expands to a ~166 MB raster before
 # a byte reaches the printer. Judging that by the same clock as a 60 KB memo
 # gives a choice between crying wolf at a whole class's normal work and setting
 # the threshold so high it never catches anything.

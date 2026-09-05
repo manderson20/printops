@@ -218,8 +218,8 @@ async def reconcile_stuck_jobs(
 
     superseded = await _superseding_job_ids(db, list(candidates))
     # One lookup for the whole batch: _resolve needs to know whether each
-    # job's printer can print colour at all before believing what CUPS says
-    # the job's colour mode was (see recorded_color_mode).
+    # job's printer can print color at all before believing what CUPS says
+    # the job's color mode was (see recorded_color_mode).
     capabilities_by_printer = {
         row.id: row.capabilities
         for row in (
