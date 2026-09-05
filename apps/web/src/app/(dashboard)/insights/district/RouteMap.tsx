@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
-import type { DistrictRoute } from "@/lib/api";
+import type { DistrictRoute, RouteStop } from "@/lib/api";
 
 // Leaflet reads `window` as it loads, and a client component is still
 // rendered on the server first, so the library is imported inside the
@@ -20,6 +20,60 @@ const TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const TILE_ATTRIBUTION =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
+const TRAVELLED = "#2563eb";
+const AHEAD = "#94a3b8";
+
+type Point = [number, number];
+
+/** The road to a stop, or the straight line to it when no route was ever
+ *  fetched. A visibly poorer drawing of a real fact, which is the right
+ *  failure: the milestone is still true, it is just drawn as the crow
+ *  flies until somebody presses Refresh route in Settings. */
+function pathTo(home: Point, stop: RouteStop): { points: Point[]; isRoad: boolean } {
+  if (stop.geometry && stop.geometry.length > 1) {
+    return { points: stop.geometry, isRoad: true };
+  }
+  return { points: [home, [stop.latitude, stop.longitude]], isRoad: false };
+}
+
+/** The first `fraction` of a polyline, measured by the polyline's own
+ *  length rather than by its point count — a simplified route carries far
+ *  more points through a city than across two hundred miles of interstate,
+ *  so "the first half of the points" is not the first half of the drive.
+ *
+ *  This is the same rule the server applies to place the marker
+ *  (app/reports/road_trip.py:_along), so the line ends exactly where the
+ *  marker sits. */
+function travelledPortion(points: Point[], fraction: number): Point[] {
+  if (points.length < 2 || fraction <= 0) return [];
+  if (fraction >= 1) return points;
+
+  const lengths = points
+    .slice(1)
+    .map((point, index) => Math.hypot(point[0] - points[index][0], point[1] - points[index][1]));
+  const total = lengths.reduce((sum, length) => sum + length, 0);
+  if (total <= 0) return [];
+
+  let remaining = total * fraction;
+  const walked: Point[] = [points[0]];
+  for (let index = 0; index < lengths.length; index += 1) {
+    const length = lengths[index];
+    if (remaining <= length) {
+      const share = length > 0 ? remaining / length : 0;
+      const from = points[index];
+      const to = points[index + 1];
+      walked.push([
+        from[0] + (to[0] - from[0]) * share,
+        from[1] + (to[1] - from[1]) * share,
+      ]);
+      return walked;
+    }
+    walked.push(points[index + 1]);
+    remaining -= length;
+  }
+  return walked;
+}
+
 function caption(route: DistrictRoute): string {
   const miles = `${route.miles_travelled.toLocaleString()} miles so far`;
   const position = route.position;
@@ -30,6 +84,14 @@ function caption(route: DistrictRoute): string {
   if (position.to_label) return `${miles} — on the way to ${position.to_label}`;
   if (position.from_label) return `${miles} — past ${position.from_label}`;
   return miles;
+}
+
+function footnote(route: DistrictRoute): string | null {
+  const straightLegs = route.stops.filter((stop) => !stop.geometry).length;
+  if (straightLegs === 0) return null;
+  return straightLegs === route.stops.length
+    ? "Drawn as straight lines — no driving routes have been fetched yet."
+    : `${straightLegs} of these are drawn as straight lines, having no driving route yet.`;
 }
 
 export function RouteMap({ route }: { route: DistrictRoute }) {
@@ -44,11 +106,7 @@ export function RouteMap({ route }: { route: DistrictRoute }) {
       const L = await import("leaflet");
       if (cancelled || !container.current) return;
 
-      const home: [number, number] = [route.home_latitude, route.home_longitude];
-      const stops: [number, number][] = route.stops.map((stop) => [
-        stop.latitude,
-        stop.longitude,
-      ]);
+      const home: Point = [route.home_latitude, route.home_longitude];
 
       const instance = L.map(container.current, {
         // A lobby screen has nobody standing at it to pan a map back after
@@ -66,48 +124,55 @@ export function RouteMap({ route }: { route: DistrictRoute }) {
 
       L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 18 }).addTo(instance);
 
-      // The whole journey, then the part of it already travelled drawn
-      // over the top — so "how far along are we" is readable at a glance
-      // from across a room.
-      L.polyline([home, ...stops], {
-        color: "#94a3b8",
-        weight: 3,
-        opacity: 0.8,
-        dashArray: "6 6",
-      }).addTo(instance);
-
-      const travelled: [number, number][] = [home];
+      // Every road out of town, faint. Each one runs from home rather than
+      // from the previous stop, because that is what a milestone means:
+      // "far enough to have reached Chicago", measured from home, not "via
+      // Des Moines". Chaining them would quietly turn 410 miles into 1,200.
+      const bounds: Point[] = [home];
       for (const stop of route.stops) {
-        if (stop.reached) travelled.push([stop.latitude, stop.longitude]);
+        const { points, isRoad } = pathTo(home, stop);
+        bounds.push(...points);
+        L.polyline(points, {
+          color: AHEAD,
+          weight: isRoad ? 3 : 2,
+          opacity: 0.65,
+          // A leg with no fetched route is dashed, so a straight line
+          // never passes itself off as a road.
+          dashArray: isRoad ? undefined : "5 7",
+        }).addTo(instance);
       }
-      if (route.position) {
-        travelled.push([route.position.latitude, route.position.longitude]);
-      }
-      if (travelled.length > 1) {
-        L.polyline(travelled, { color: "#2563eb", weight: 5, opacity: 0.9 }).addTo(instance);
+
+      // And the one being driven, picked out up to where the district has
+      // actually got to.
+      const target = route.stops.find((stop) => stop.is_target);
+      if (target && route.position) {
+        const { points } = pathTo(home, target);
+        const fraction = target.miles > 0 ? route.miles_travelled / target.miles : 1;
+        const travelled = travelledPortion(points, fraction);
+        if (travelled.length > 1) {
+          L.polyline(travelled, { color: TRAVELLED, weight: 5, opacity: 0.95 }).addTo(instance);
+        }
       }
 
       L.circleMarker(home, {
         radius: 7,
-        color: "#2563eb",
-        fillColor: "#2563eb",
+        color: TRAVELLED,
+        fillColor: TRAVELLED,
         fillOpacity: 1,
         weight: 2,
       })
-        .bindTooltip(route.home_name, { permanent: false })
+        .bindTooltip(route.home_name)
         .addTo(instance);
 
       for (const stop of route.stops) {
         L.circleMarker([stop.latitude, stop.longitude], {
           radius: 6,
-          color: stop.reached ? "#2563eb" : "#94a3b8",
-          fillColor: stop.reached ? "#2563eb" : "#ffffff",
+          color: stop.reached ? TRAVELLED : AHEAD,
+          fillColor: stop.reached ? TRAVELLED : "#ffffff",
           fillOpacity: 1,
           weight: 2,
         })
-          .bindTooltip(`${stop.label} — ${stop.miles.toLocaleString()} miles`, {
-            permanent: false,
-          })
+          .bindTooltip(`${stop.label} — ${stop.miles.toLocaleString()} miles`)
           .addTo(instance);
       }
 
@@ -124,13 +189,14 @@ export function RouteMap({ route }: { route: DistrictRoute }) {
           }),
           keyboard: false,
         })
-          .bindTooltip("We are here", { permanent: false })
+          .bindTooltip("We are here")
           .addTo(instance);
       }
 
       // Padded so a pin never sits under the attribution notice or hard
-      // against an edge.
-      instance.fitBounds(L.latLngBounds([home, ...stops]), { padding: [32, 32] });
+      // against an edge. Bounds cover the roads, not just the pins — a
+      // route that swings wide would otherwise run off the map.
+      instance.fitBounds(L.latLngBounds(bounds), { padding: [32, 32] });
     })().catch(() => {
       if (!cancelled) setFailed(true);
     });
@@ -143,6 +209,8 @@ export function RouteMap({ route }: { route: DistrictRoute }) {
 
   if (failed) return null;
 
+  const note = footnote(route);
+
   return (
     <div className="flex flex-col gap-2">
       <div
@@ -152,7 +220,10 @@ export function RouteMap({ route }: { route: DistrictRoute }) {
         // height with the viewport makes that column jump on a phone.
         className="h-[22rem] w-full overflow-hidden rounded-2xl border border-black/[.08] bg-zinc-100 dark:border-white/[.145] dark:bg-zinc-900"
       />
-      <p className="text-xs text-zinc-500">{caption(route)}</p>
+      <p className="text-xs text-zinc-500">
+        {caption(route)}
+        {note && <span className="ml-2 text-zinc-400">{note}</span>}
+      </p>
     </div>
   );
 }

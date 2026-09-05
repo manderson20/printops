@@ -24,6 +24,7 @@ from app.models.quota import PrinterUserQuota, QuotaSettings
 from app.models.release import PrintReleaseSettings
 from app.models.release_bypass import PrinterReleaseBypass
 from app.models.report import PrinterTonerCartridge, ReportFormulaSettings, ReportSnapshot
+from app.models.road_trip_settings import RoadTripSettings
 from app.models.snmp import PrinterCounterReading, SnmpDefaultsSettings
 from app.models.staff_copier_identity import StaffCopierIdentity
 from app.models.untracked_copies import UntrackedCopySettings
@@ -60,6 +61,7 @@ __all__ = [
     "PrinterUserQuota",
     "PrintReleaseSettings",
     "QuotaSettings",
+    "RoadTripSettings",
     "ReportFormulaSettings",
     "ReportSnapshot",
     "SnmpDefaultsSettings",

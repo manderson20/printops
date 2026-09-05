@@ -5,13 +5,20 @@ import Link from "next/link";
 import {
   ApiError,
   createDestination,
+  createDestinations,
   deleteDestination,
+  getRoadTripSettings,
   listDestinations,
   listLocations,
+  refreshDestinationRoute,
+  suggestDestinations,
   updateDestination,
+  updateRoadTripSettings,
   type Destination,
   type DestinationInput,
+  type DestinationSuggestion,
   type Location,
+  type RoadTripSettings,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -49,7 +56,9 @@ function toInput(draft: Draft): DestinationInput {
   return {
     name: draft.name.trim(),
     short_name: draft.short_name.trim() || null,
-    miles: Number(draft.miles),
+    // Left out when blank so the road network measures it. Typing a
+    // number here is the deliberate override.
+    miles: draft.miles.trim() === "" ? null : Number(draft.miles),
     latitude: coordinate(draft.latitude),
     longitude: coordinate(draft.longitude),
   };
@@ -59,12 +68,13 @@ function coordinatesArePaired(draft: Draft): boolean {
   return (draft.latitude.trim() === "") === (draft.longitude.trim() === "");
 }
 
+/** Either somewhere to route to, or a distance already known. A rung with
+ *  neither is not a rung. */
 function isComplete(draft: Draft): boolean {
-  return (
-    draft.name.trim().length > 0 &&
-    Number(draft.miles) > 0 &&
-    coordinatesArePaired(draft)
-  );
+  if (!draft.name.trim() || !coordinatesArePaired(draft)) return false;
+  const hasCoordinates = draft.latitude.trim() !== "";
+  const hasMiles = draft.miles.trim() !== "" && Number(draft.miles) > 0;
+  return hasCoordinates || hasMiles;
 }
 
 function DraftFields({
@@ -89,21 +99,18 @@ function DraftFields({
           placeholder="Brookfield to Jefferson City"
         />
       </Field>
-      <Field label={<>Short name <span className="text-zinc-500">(mid-sentence)</span></>}>
+      <Field
+        label={
+          <>
+            Short name <span className="text-zinc-500">(mid-sentence)</span>
+          </>
+        }
+      >
         <Input
           value={draft.short_name}
           onChange={set("short_name")}
           disabled={disabled}
           placeholder="Jefferson City"
-        />
-      </Field>
-      <Field label="Driving miles">
-        <Input
-          value={draft.miles}
-          onChange={set("miles")}
-          disabled={disabled}
-          placeholder="120"
-          inputMode="decimal"
         />
       </Field>
       <Field label="Latitude">
@@ -121,6 +128,21 @@ function DraftFields({
           onChange={set("longitude")}
           disabled={disabled}
           placeholder="-92.1735"
+          inputMode="decimal"
+        />
+      </Field>
+      <Field
+        label={
+          <>
+            Driving miles <span className="text-zinc-500">(optional)</span>
+          </>
+        }
+      >
+        <Input
+          value={draft.miles}
+          onChange={set("miles")}
+          disabled={disabled}
+          placeholder="measured for you"
           inputMode="decimal"
         />
       </Field>
@@ -160,22 +182,36 @@ function DestinationRow({
     destination.straight_line_miles !== null &&
     destination.miles < destination.straight_line_miles;
 
+  const overridden =
+    destination.route_miles !== null &&
+    Math.abs(destination.route_miles - destination.miles) > 0.05;
+
   return (
     <li className="border-b border-black/[.06] py-3 last:border-0 dark:border-white/[.1]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`font-medium ${destination.enabled ? "" : "text-zinc-500 line-through"}`}>
+            <span
+              className={`font-medium ${destination.enabled ? "" : "text-zinc-500 line-through"}`}
+            >
               {destination.name}
             </span>
             {destination.short_name && (
-              <span className="text-xs text-zinc-500">“{destination.short_name}”</span>
+              <span className="text-xs text-zinc-500">&ldquo;{destination.short_name}&rdquo;</span>
             )}
             {!destination.enabled && <Badge tone="neutral">Paused</Badge>}
-            {destination.latitude === null && <Badge tone="neutral">Not on the map</Badge>}
+            {destination.latitude === null ? (
+              <Badge tone="neutral">Not on the map</Badge>
+            ) : destination.has_route ? (
+              <Badge tone="info">Driving route</Badge>
+            ) : (
+              <Badge tone="warning">Straight line</Badge>
+            )}
           </div>
           <p className="text-xs text-zinc-500">
             {destination.miles.toLocaleString()} miles
+            {destination.has_route && !overridden && " — measured by road"}
+            {overridden && ` — your figure; the road measures ${destination.route_miles}`}
             {destination.straight_line_miles !== null && (
               <span className="ml-2">
                 · {destination.straight_line_miles.toLocaleString()} in a straight line
@@ -187,8 +223,25 @@ function DestinationRow({
               Shorter than the straight-line distance, which no road can be.
             </p>
           )}
+          {destination.route_error && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              No driving route: {destination.route_error}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
+          {destination.latitude !== null && (
+            <Button
+              variant="secondary"
+              className="!px-2 !py-1 text-xs"
+              disabled={saving}
+              onClick={() =>
+                run(() => refreshDestinationRoute(destination.id), "Couldn't fetch the route")
+              }
+            >
+              {saving ? "Measuring…" : destination.has_route ? "Refresh route" : "Get route"}
+            </Button>
+          )}
           <Button
             variant="secondary"
             className="!px-2 !py-1 text-xs"
@@ -230,7 +283,9 @@ function DestinationRow({
           <div>
             <Button
               disabled={saving || !isComplete(draft)}
-              onClick={() => run(() => updateDestination(destination.id, toInput(draft)), "Couldn't save")}
+              onClick={() =>
+                run(() => updateDestination(destination.id, toInput(draft)), "Couldn't save")
+              }
             >
               {saving ? "Saving…" : "Save"}
             </Button>
@@ -238,6 +293,215 @@ function DestinationRow({
         </div>
       )}
     </li>
+  );
+}
+
+function SuggestionsCard({ onAdded }: { onAdded: () => void }) {
+  const [suggestions, setSuggestions] = useState<DestinationSuggestion[] | null>(null);
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  async function shuffle() {
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const body = await suggestDestinations();
+      setSuggestions(body.suggestions);
+      // Everything ticked to start with: the common case is "yes, all of
+      // those", and unticking two is less work than ticking four.
+      setChosen(new Set(body.suggestions.map((s) => s.name)));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't get suggestions");
+      setSuggestions(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function add() {
+    if (!suggestions) return;
+    setAdding(true);
+    setError(null);
+    try {
+      const picked = suggestions.filter((s) => chosen.has(s.name));
+      const outcome = await createDestinations(
+        picked.map((s) => ({
+          name: s.name,
+          short_name: s.short_name,
+          latitude: s.latitude,
+          longitude: s.longitude,
+        })),
+      );
+      const parts = [`Added ${outcome.added.length}.`];
+      for (const skip of outcome.skipped) {
+        parts.push(`${skip.name} — ${skip.reason}`);
+      }
+      setResult(parts.join(" "));
+      setSuggestions(null);
+      setChosen(new Set());
+      onAdded();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't add those");
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardTitle>Suggest some places</CardTitle>
+      <p className="mb-4 text-xs text-zinc-500">
+        Picks a place at each of a series of distances from home, each band further out than the
+        last, from a bundled list of North American cities of 15,000 people or more. Nothing is
+        saved until you add it, and the driving distance is measured when you do.
+      </p>
+      <p className="mb-4 text-xs text-zinc-500">
+        It won&apos;t offer anywhere closer than about 25 miles — the list starts at 15,000
+        people, so the small town down the road isn&apos;t in it. Those are the ones worth adding
+        by hand, because you know them and this doesn&apos;t.
+      </p>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Button variant="secondary" disabled={loading || adding} onClick={shuffle}>
+          {loading ? "Thinking…" : suggestions ? "Try a different trip" : "Suggest places"}
+        </Button>
+        {suggestions && suggestions.length > 0 && (
+          <Button disabled={adding || chosen.size === 0} onClick={add}>
+            {adding
+              ? "Measuring the drives…"
+              : `Add ${chosen.size} destination${chosen.size === 1 ? "" : "s"}`}
+          </Button>
+        )}
+      </div>
+
+      {suggestions && suggestions.length === 0 && (
+        <EmptyState>
+          Nothing left to suggest — every place in range is already on the list.
+        </EmptyState>
+      )}
+
+      {suggestions && suggestions.length > 0 && (
+        <ul className="flex flex-col gap-2">
+          {suggestions.map((suggestion) => (
+            <li
+              key={suggestion.name}
+              className="flex flex-wrap items-center gap-3 rounded-lg border border-black/[.08] px-3 py-2 text-sm dark:border-white/[.145]"
+            >
+              <input
+                type="checkbox"
+                checked={chosen.has(suggestion.name)}
+                onChange={(event) =>
+                  setChosen((previous) => {
+                    const next = new Set(previous);
+                    if (event.target.checked) next.add(suggestion.name);
+                    else next.delete(suggestion.name);
+                    return next;
+                  })
+                }
+                className="h-4 w-4"
+              />
+              <span className="min-w-0 flex-1">
+                {suggestion.short_name}
+                <span className="ml-2 text-xs text-zinc-500">
+                  about {suggestion.straight_line_miles.toLocaleString()} miles away ·{" "}
+                  {suggestion.population.toLocaleString()} people
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {result && (
+        <p className="mt-3 text-xs text-emerald-700 dark:text-emerald-400">{result}</p>
+      )}
+      {error && <ErrorState>{error}</ErrorState>}
+    </Card>
+  );
+}
+
+function RoutingCard({ onChanged }: { onChanged: () => void }) {
+  const [settings, setSettings] = useState<RoadTripSettings | null>(null);
+  const [url, setUrl] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getRoadTripSettings()
+      .then((value) => {
+        setSettings(value);
+        setUrl(value.routing_base_url);
+      })
+      .catch(() => setSettings(null));
+  }, []);
+
+  async function save(changes: Partial<RoadTripSettings>) {
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await updateRoadTripSettings(changes);
+      setSettings(updated);
+      setUrl(updated.routing_base_url);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't save that");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!settings) return null;
+
+  return (
+    <Card>
+      <CardTitle>Routing service</CardTitle>
+      <p className="mb-4 text-xs text-zinc-500">
+        Where PrintOps asks how far it really is by road, and which way the road goes. Asked once
+        when you save a destination — never while a dashboard is on screen, so a lobby display
+        never waits on it.
+      </p>
+      <p className="mb-4 text-xs text-zinc-500">
+        The default is the public OSRM demo server, whose operators ask that it not be leaned on.
+        PrintOps asks it a handful of questions when you edit a destination and none at any other
+        time, but if you would rather not depend on it, point this at your own OSRM instance.
+      </p>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Base URL" className="min-w-[20rem] flex-1">
+          <Input
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+            disabled={saving || !settings.routing_enabled}
+          />
+        </Field>
+        <Button
+          disabled={saving || url === settings.routing_base_url}
+          onClick={() => save({ routing_base_url: url.trim() })}
+        >
+          {saving ? "Saving…" : "Save"}
+        </Button>
+        <Button
+          variant="secondary"
+          disabled={saving}
+          onClick={() => save({ routing_enabled: !settings.routing_enabled })}
+        >
+          {settings.routing_enabled ? "Turn routing off" : "Turn routing on"}
+        </Button>
+      </div>
+
+      {!settings.routing_enabled && (
+        <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
+          Routing is off. Distances stay whatever you type and every leg of the map is drawn as a
+          straight line — which is the honest setting for a server with no way out to the
+          internet.
+        </p>
+      )}
+      {error && <ErrorState>{error}</ErrorState>}
+    </Card>
   );
 }
 
@@ -275,6 +539,8 @@ export default function RoadTripSettingsPage() {
   }
 
   const enabledCount = destinations?.filter((destination) => destination.enabled).length ?? 0;
+  const withoutRoutes =
+    destinations?.filter((d) => d.latitude !== null && !d.has_route).length ?? 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -283,14 +549,14 @@ export default function RoadTripSettingsPage() {
         <p className="mb-4 text-xs text-zinc-500">
           Laid end to end, the district&apos;s pages stretch a certain distance — and this is the
           list of places that distance is measured against. Every one of them becomes a milestone
-          on <strong>Our Printing</strong>: “that&apos;s Brookfield to Jefferson City”, “we&apos;re
-          17% of the way to Chicago”. The ones with coordinates are also the pins on the map.
+          on <strong>Our Printing</strong>: &ldquo;that&apos;s Brookfield to Jefferson
+          City&rdquo;, &ldquo;we&apos;re 17% of the way to Chicago&rdquo;. The ones with
+          coordinates are also the pins on the map, and the roads drawn between them.
         </p>
         <p className="mb-4 text-xs text-zinc-500">
-          Miles are <strong>driving</strong> miles, because that is what the sentence claims and
-          what a reader will check against their own drive. The straight-line figure shown beside
-          each one is computed from the coordinates and is always shorter — it is a floor, not an
-          answer.
+          Miles are <strong>driving</strong> miles, measured by a routing service when you save a
+          destination — 123 to Jefferson City, not the 96 a crow would fly. Type a figure of your
+          own only if you want to override that; it will survive every later refresh.
         </p>
 
         {home === null && (
@@ -333,6 +599,15 @@ export default function RoadTripSettingsPage() {
           </ul>
         )}
 
+        {withoutRoutes > 0 && (
+          <p className="mb-4 text-xs text-amber-700 dark:text-amber-400">
+            {withoutRoutes} destination{withoutRoutes === 1 ? " has" : "s have"} no driving route
+            yet, so {withoutRoutes === 1 ? "its leg is" : "their legs are"} drawn as straight
+            lines and the distance is whatever was typed. <strong>Get route</strong> measures the
+            real drive.
+          </p>
+        )}
+
         {destinations !== null && destinations.length > 0 && enabledCount === 0 && (
           <p className="mb-4 text-xs text-amber-700 dark:text-amber-400">
             Every destination is paused, so the built-in ladder is being used instead.
@@ -344,7 +619,7 @@ export default function RoadTripSettingsPage() {
           <DraftFields draft={draft} onChange={setDraft} disabled={saving} />
           <div>
             <Button disabled={saving || !isComplete(draft)} onClick={handleAdd}>
-              {saving ? "Adding…" : "Add destination"}
+              {saving ? "Measuring the drive…" : "Add destination"}
             </Button>
             {!coordinatesArePaired(draft) && (
               <span className="ml-3 text-xs text-amber-700 dark:text-amber-400">
@@ -356,6 +631,10 @@ export default function RoadTripSettingsPage() {
 
         {error && <ErrorState>{error}</ErrorState>}
       </Card>
+
+      {home && home.latitude !== null && <SuggestionsCard onAdded={load} />}
+
+      <RoutingCard onChanged={load} />
     </div>
   );
 }

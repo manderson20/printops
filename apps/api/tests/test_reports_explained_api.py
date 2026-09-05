@@ -405,6 +405,11 @@ async def test_the_route_carries_configuration_and_no_usage(
         "latitude",
         "longitude",
         "reached",
+        # The shape of the road to this stop, fetched when an admin saved
+        # the destination. Configuration like every other field here — it
+        # describes a public highway, not anybody's printing.
+        "geometry",
+        "is_target",
     }
     assert BUILDING not in client.get(f"{EXPLAINED}/district", headers=viewer_headers).text
 

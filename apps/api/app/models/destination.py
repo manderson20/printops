@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Float, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Float, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -49,10 +50,44 @@ class Destination(Base, TimestampMixin):
     latitude: Mapped[float | None] = mapped_column(Float, default=None)
     longitude: Mapped[float | None] = mapped_column(Float, default=None)
 
+    # --- the drive ------------------------------------------------
+    #
+    # Fetched from a routing service when the destination is saved, never
+    # while a dashboard is rendered (app/roadtrip/routing.py explains
+    # why). All three are null on a rung with no coordinates, and on one
+    # whose route could not be fetched — in which case `route_error` says
+    # what went wrong, so the settings page can show it rather than
+    # leaving a silent blank.
+
+    # The real driving distance. `miles` above is what the ladder and the
+    # sentences use and stays editable; saving a destination copies this
+    # into it, because a figure a road network measured beats one
+    # somebody estimated. They are kept apart so that an admin who
+    # deliberately overrides the distance does not have it overwritten by
+    # the next refetch.
+    route_miles: Mapped[float | None] = mapped_column(Float, default=None)
+
+    # [[latitude, longitude], ...] along the roads, thinned to something
+    # a whole-trip overview can draw. This is what makes the map show the
+    # drive instead of a straight line between two pins.
+    route_geometry: Mapped[list | None] = mapped_column(JSON, default=None)
+
+    route_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # Why the last attempt failed, or null. Kept on the row rather than
+    # only reported in the response that failed, because the admin who
+    # needs to see it is often not the one who was there when it happened.
+    route_error: Mapped[str | None] = mapped_column(default=None)
+
     # Off keeps a rung out of the ladder without deleting it — the way to
     # drop "the Moon" for a term and get it back, without losing the
     # figure someone looked up.
     enabled: Mapped[bool] = mapped_column(default=True, server_default="true")
+
+    @property
+    def has_route(self) -> bool:
+        """Whether the map can draw this leg along real roads rather than
+        as a straight dashed line."""
+        return bool(self.route_geometry)
 
     @property
     def plottable(self) -> bool:

@@ -424,7 +424,7 @@ class PersonalExplainedOut(BaseModel):
 
 
 class RouteStopOut(BaseModel):
-    """One pin on the road-trip map."""
+    """One pin on the road-trip map, and the road that gets to it."""
 
     name: str
     label: str
@@ -432,12 +432,21 @@ class RouteStopOut(BaseModel):
     latitude: float
     longitude: float
     reached: bool
+    # [[latitude, longitude], ...] from home along real roads, fetched
+    # once when the destination was configured and stored on the row —
+    # never requested while this response is being built. Null when no
+    # route was ever fetched, and the client draws a straight line for
+    # that leg instead.
+    geometry: list[list[float]] | None = None
+    # The stop being driven towards: the nearest one not yet reached.
+    is_target: bool = False
 
 
 class RoutePositionOut(BaseModel):
-    """Where the district has got to. Interpolated by mileage along a
-    straight line between pins — see app/reports/road_trip.py on why the
-    distance is exact and the point on the ground is not."""
+    """Where the district has got to — a point on the road to the stop it
+    is driving towards, placed by mileage. See app/reports/road_trip.py:
+    the progress is exact, the point on the ground is approximate, and
+    that is the right way round for a picture."""
 
     latitude: float
     longitude: float

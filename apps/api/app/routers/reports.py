@@ -1033,6 +1033,8 @@ def _route_out(route) -> RouteOut | None:
                 latitude=stop.latitude,
                 longitude=stop.longitude,
                 reached=stop.reached,
+                geometry=stop.geometry,
+                is_target=stop.is_target,
             )
             for stop in route.stops
         ],

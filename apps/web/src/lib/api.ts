@@ -3234,6 +3234,12 @@ export type RouteStop = {
   latitude: number;
   longitude: number;
   reached: boolean;
+  /** [[latitude, longitude], ...] from home along real roads, fetched
+   *  once when the destination was configured. Null when no route was
+   *  ever fetched, and the map draws a straight line for that leg. */
+  geometry: [number, number][] | null;
+  /** The stop being driven towards — the nearest one not yet reached. */
+  is_target: boolean;
 };
 
 export type RoutePosition = {
@@ -3387,7 +3393,8 @@ export type Destination = {
   name: string;
   short_name: string | null;
   /** Road miles from home — what the sentence claims, and what a reader
-   *  checks against their own drive. */
+   *  checks against their own drive. Normally a copy of route_miles; the
+   *  two differ only when an admin has typed a distance of their own. */
   miles: number;
   latitude: number | null;
   longitude: number | null;
@@ -3396,15 +3403,52 @@ export type Destination = {
    *  shorter than the drive, so it is a floor to correct upward and
    *  never an answer to accept. */
   straight_line_miles: number | null;
+  /** What the road network measured, if it has been asked. */
+  route_miles: number | null;
+  /** Whether the map can draw this leg along real roads. */
+  has_route: boolean;
+  route_fetched_at: string | null;
+  /** Why the last attempt failed, or null. */
+  route_error: string | null;
 };
 
 export type DestinationInput = {
   name: string;
   short_name?: string | null;
-  miles: number;
+  /** Leave out and let the road network measure it. Give it to override
+   *  that, or when the rung has nowhere to route to. */
+  miles?: number | null;
   latitude?: number | null;
   longitude?: number | null;
   enabled?: boolean;
+};
+
+/** A place the district could drive to, not yet a destination. Nothing is
+ *  written when these are generated. */
+export type DestinationSuggestion = {
+  name: string;
+  short_name: string;
+  latitude: number;
+  longitude: number;
+  straight_line_miles: number;
+  population: number;
+};
+
+export type DestinationSuggestions = {
+  /** Echoed back so the same set can be asked for again — a reload should
+   *  not reshuffle a list somebody is reading. */
+  seed: number;
+  suggestions: DestinationSuggestion[];
+};
+
+export type DestinationBulkResult = {
+  added: Destination[];
+  skipped: { name: string; reason: string }[];
+};
+
+export type RoadTripSettings = {
+  routing_base_url: string;
+  routing_enabled: boolean;
 };
 
 export async function listLocations(): Promise<Location[]> {
@@ -3474,4 +3518,48 @@ export async function deleteDestination(id: string): Promise<void> {
   await authorizedFetch(`/api/v1/road-trip/destinations/${id}`, {
     method: "DELETE",
   });
+}
+
+export async function suggestDestinations(
+  seed?: number,
+): Promise<DestinationSuggestions> {
+  const query = seed === undefined ? "" : `?seed=${seed}`;
+  const response = await authorizedFetch(
+    `/api/v1/road-trip/destinations/suggest${query}`,
+    { method: "POST" },
+  );
+  return response.json();
+}
+
+export async function createDestinations(
+  destinations: DestinationInput[],
+): Promise<DestinationBulkResult> {
+  const response = await authorizedFetch("/api/v1/road-trip/destinations/bulk", {
+    method: "POST",
+    body: JSON.stringify({ destinations }),
+  });
+  return response.json();
+}
+
+export async function refreshDestinationRoute(id: string): Promise<Destination> {
+  const response = await authorizedFetch(
+    `/api/v1/road-trip/destinations/${id}/route`,
+    { method: "POST" },
+  );
+  return response.json();
+}
+
+export async function getRoadTripSettings(): Promise<RoadTripSettings> {
+  const response = await authorizedFetch("/api/v1/road-trip/settings");
+  return response.json();
+}
+
+export async function updateRoadTripSettings(
+  input: Partial<RoadTripSettings>,
+): Promise<RoadTripSettings> {
+  const response = await authorizedFetch("/api/v1/road-trip/settings", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
 }
