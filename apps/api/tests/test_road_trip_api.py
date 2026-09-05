@@ -4,12 +4,14 @@ rungs measured from them."""
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.db import get_db
 from app.main import app
 from app.models.base import Base
+from app.models.location import Location
 from app.models.printer import Printer
 from app.roadtrip.routing import DrivingRoute, Itinerary, RoutingError
 
@@ -156,6 +158,21 @@ def test_setting_a_new_home_clears_the_old_one(client, auth_headers):
     homes = [location["id"] for location in listed if location["is_home"]]
     assert homes == [second["id"]]
     assert first["id"] not in homes
+
+
+async def test_the_database_holds_the_district_to_one_home(
+    client, auth_headers, db_session_factory
+):
+    """The router clears the flag from the others so "Make home" works.
+    This is the guard underneath it, for two requests that each looked
+    before the other wrote — without it the district ends up with two
+    homes and the road trip raises on the next page load."""
+    _make_location(client, auth_headers, name="Admin", is_home=True)
+
+    async with db_session_factory() as session:
+        session.add(Location(name="Sneaked past the router", is_home=True))
+        with pytest.raises(IntegrityError):
+            await session.commit()
 
 
 def test_home_is_listed_first(client, auth_headers):

@@ -17,7 +17,7 @@ import random
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,15 +63,26 @@ async def _home(db: AsyncSession) -> Location | None:
     ).scalar_one_or_none()
 
 
-async def _clear_other_homes(db: AsyncSession, keep: UUID) -> None:
-    """At most one home, enforced here rather than by a partial unique
-    index so the rule reads the same on every database this runs on and
-    sits where somebody changing it will see it."""
-    others = (
-        await db.execute(select(Location).where(Location.is_home.is_(True), Location.id != keep))
-    ).scalars()
-    for location in others:
-        location.is_home = False
+async def _clear_other_homes(db: AsyncSession, keep: UUID | None = None) -> None:
+    """Take the flag off everything else, so setting a new home works
+    rather than colliding with the old one.
+
+    Issued as a statement and flushed immediately rather than by mutating
+    loaded rows, because the order matters now: the partial unique index
+    on `is_home` (app/models/location.py) means the old home must be
+    cleared *before* the new one reaches the database, and a session flush
+    gives no promise about doing its UPDATEs before its INSERTs.
+
+    The index is the rule; this is what makes the common path succeed
+    rather than collide. Two requests racing past each other still cannot
+    both land — the second fails on commit instead of leaving the district
+    with two homes.
+    """
+    statement = update(Location).where(Location.is_home.is_(True)).values(is_home=False)
+    if keep is not None:
+        statement = statement.where(Location.id != keep)
+    await db.execute(statement)
+    await db.flush()
 
 
 # --- locations ---------------------------------------------------------
@@ -118,14 +129,24 @@ async def list_unmatched_buildings(db: AsyncSession = Depends(get_db)):
 @router.post("/locations", response_model=LocationOut, status_code=status.HTTP_201_CREATED)
 async def create_location(payload: LocationCreate, db: AsyncSession = Depends(get_db)):
     location = Location(**payload.model_dump())
-    db.add(location)
     try:
+        # The old home goes first, and before the new row joins the
+        # session: the index allows exactly one row where `is_home`, so
+        # inserting the new one while the old still holds the flag is a
+        # collision rather than a replacement.
+        #
+        # Before `db.add`, not merely before the flush, because executing
+        # a statement autoflushes whatever is pending — the new home would
+        # be inserted ahead of the UPDATE and then cleared by it, which is
+        # a location that quietly comes back not being home.
+        if location.is_home:
+            await _clear_other_homes(db)
+        db.add(location)
         # Flushed inside the guard, not before it: the unique name is
         # enforced by the database, and on SQLite it is the flush that
         # raises, not the commit.
         await db.flush()
         if location.is_home:
-            await _clear_other_homes(db, location.id)
             # Every leg starts from home, so a new home makes every stored
             # distance and every drawn road describe a journey from
             # somewhere the trip no longer begins.
