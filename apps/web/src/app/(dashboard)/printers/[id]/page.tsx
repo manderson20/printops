@@ -14,6 +14,7 @@ import { capabilityBadges } from "@/lib/capabilities";
 import { formatRelativeTime } from "@/lib/format";
 import {
   NETWORK_UNSTABLE_REASON,
+  PAGES_NOT_PRINTED_REASON,
   UNREACHABLE_WITH_JOBS_REASON,
   printerStatusInfo,
 } from "@/lib/printerStatus";
@@ -349,16 +350,19 @@ export default function PrinterOverviewTab() {
                         <Badge
                           key={reason}
                           tone={
-                            reason === NETWORK_UNSTABLE_REASON
+                            reason === NETWORK_UNSTABLE_REASON ||
+                            reason === PAGES_NOT_PRINTED_REASON
                               ? "warning"
                               : "danger"
                           }
                         >
                           {reason === NETWORK_UNSTABLE_REASON
                             ? "Network unstable"
-                            : reason === UNREACHABLE_WITH_JOBS_REASON
-                              ? "Jobs waiting"
-                              : reason}
+                            : reason === PAGES_NOT_PRINTED_REASON
+                              ? "Pages not printed"
+                              : reason === UNREACHABLE_WITH_JOBS_REASON
+                                ? "Jobs waiting"
+                                : reason}
                         </Badge>
                       ))}
                     </div>

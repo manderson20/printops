@@ -34,3 +34,15 @@ export const UNREACHABLE_WITH_JOBS_REASON = "printops-unreachable-with-jobs";
 export function hasWaitingJobsWarning(reasons: string[] | null | undefined) {
   return (reasons ?? []).includes(UNREACHABLE_WITH_JOBS_REASON);
 }
+
+// Pages PrintOps handed to this printer that its own page counter never
+// recorded (app/printers/page_reconcile.py). Amber for the same reason the
+// network warning is: the printer is online and printing, and what is wrong is
+// what became of work already sent, not the state the machine is in now. It is
+// still the most important thing on the row when it appears — somebody's
+// printing did not come out and nobody has been told.
+export const PAGES_NOT_PRINTED_REASON = "printops-pages-not-printed";
+
+export function hasUnprintedPagesWarning(reasons: string[] | null | undefined) {
+  return (reasons ?? []).includes(PAGES_NOT_PRINTED_REASON);
+}

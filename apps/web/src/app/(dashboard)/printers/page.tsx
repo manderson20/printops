@@ -12,6 +12,7 @@ import { capabilityBadges } from "@/lib/capabilities";
 import { formatRelativeTime } from "@/lib/format";
 import {
   hasNetworkWarning,
+  hasUnprintedPagesWarning,
   hasWaitingJobsWarning,
   printerStatusInfo,
 } from "@/lib/printerStatus";
@@ -429,6 +430,19 @@ export default function PrintersPage() {
                                       }
                                     >
                                       Network
+                                    </Badge>
+                                  )}
+                                  {hasUnprintedPagesWarning(
+                                    printer.status_reasons,
+                                  ) && (
+                                    <Badge
+                                      tone="warning"
+                                      title={
+                                        printer.status_message ??
+                                        "Pages sent to this printer are unaccounted for"
+                                      }
+                                    >
+                                      Pages missing
                                     </Badge>
                                   )}
                                   {printer.queue_sync_error && (

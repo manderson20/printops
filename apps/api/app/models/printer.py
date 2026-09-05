@@ -167,6 +167,15 @@ class Printer(Base, TimestampMixin):
     # hand a lossy printer a fresh hour of looking healthy.
     network_probe_log: Mapped[list | None] = mapped_column(JSON, default=None)
 
+    # The standing verdict from app/printers/page_reconcile.py: pages this
+    # printer was sent in the last day that its own page counter never
+    # recorded. Written by the half-hourly sweep and rendered by the 60s status
+    # poll, which rebuilds status_reasons from scratch every cycle and so
+    # cannot be the thing that computes it. Null means "nothing to report" —
+    # including for a printer with no usable counter, which is not the same
+    # claim but is the same silence (migration 0071).
+    pages_not_printed: Mapped[dict | None] = mapped_column(JSON, default=None)
+
     # Print-and-release. When true, the CUPS backend script
     # (infra/cups/backends/printops) holds every job sent to this printer's
     # queue instead of forwarding it immediately — see app/routers/release.py
