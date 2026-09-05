@@ -171,6 +171,15 @@ async def update_location(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found.")
 
     fields = payload.model_dump(exclude_unset=True)
+
+    # The old home is cleared before this row is dirtied, not after.
+    # Assigning is_home first and clearing second cannot work: executing
+    # the clear autoflushes the pending change, so this row's UPDATE
+    # reaches the unique index while the old home still holds the flag,
+    # and the IntegrityError lands outside the guard below as a 500.
+    if fields.get("is_home") and not location.is_home:
+        await _clear_other_homes(db, location.id)
+
     for key, value in fields.items():
         setattr(location, key, value)
 
@@ -187,8 +196,6 @@ async def update_location(
     home_moved = bool(fields.get("is_home")) or (
         location.is_home and any(key in fields for key in ("latitude", "longitude"))
     )
-    if fields.get("is_home"):
-        await _clear_other_homes(db, location.id)
     if home_moved:
         await db.flush()
         await recompute_itinerary(db)

@@ -36,6 +36,28 @@ if ! python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$SRC"; th
     exit 1
 fi
 
+# pdfinfo is how the backend counts the pages of a job before handing it to
+# the printer (count_submitted_pages). Without it every count comes back
+# null and the unprinted-pages check keeps the blind spot it was added to
+# close — silently, since a missing count is indistinguishable from a job
+# the backend chose not to count. Installed if the package manager can, and
+# warned about loudly if not: printing itself works fine without it, so
+# this must not be fatal.
+if ! command -v pdfinfo >/dev/null 2>&1; then
+    echo "pdfinfo not found — it is what counts a job's pages before delivery."
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "Installing poppler-utils..."
+        sudo apt-get install -y poppler-utils || true
+    fi
+    if ! command -v pdfinfo >/dev/null 2>&1; then
+        echo "WARNING: pdfinfo is still missing. The backend will install and print" >&2
+        echo "         normally, but every job's submitted page count will be null," >&2
+        echo "         and printers that report no page count of their own stay" >&2
+        echo "         invisible to the unprinted-pages check. Install poppler-utils" >&2
+        echo "         to close that." >&2
+    fi
+fi
+
 if sudo cmp -s "$SRC" "$DEST" 2>/dev/null; then
     echo "PrintOps CUPS backend already up to date at $DEST"
     exit 0

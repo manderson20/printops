@@ -175,6 +175,26 @@ async def test_the_database_holds_the_district_to_one_home(
             await session.commit()
 
 
+def test_promoting_an_existing_location_to_home_does_not_collide(client, auth_headers):
+    """The unique index means the old home has to let go before the new one
+    takes hold. Assigning the flag first and clearing second autoflushes
+    the assignment straight into the index, and the failure lands outside
+    the endpoint's guard as a 500."""
+    _make_location(client, auth_headers, name="Admin", is_home=True)
+    other = _make_location(client, auth_headers, name="High School").json()
+
+    promoted = client.patch(
+        f"/api/v1/road-trip/locations/{other['id']}",
+        headers=auth_headers,
+        json={"is_home": True},
+    )
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json()["is_home"] is True
+
+    listed = client.get("/api/v1/road-trip/locations", headers=auth_headers).json()
+    assert [location["name"] for location in listed if location["is_home"]] == ["High School"]
+
+
 def test_home_is_listed_first(client, auth_headers):
     _make_location(client, auth_headers, name="Ainsworth")
     _make_location(client, auth_headers, name="Zion", is_home=True)

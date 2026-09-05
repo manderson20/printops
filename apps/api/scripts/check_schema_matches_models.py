@@ -18,9 +18,9 @@ tables in the database whose models are not imported into the metadata,
 indexes nobody declared — so gating on it would mean fixing all of that
 first. What is checked here is the agreement that actually broke:
 
-  * a column the model gives a server default must have one in the
-    database, and
-  * a column the model says is NOT NULL must be NOT NULL there.
+  * every table and column a model declares must exist,
+  * a column the model gives a server default must have one there, and
+  * nullability must agree.
 
 Run against a database already at head. Exits non-zero and prints every
 disagreement.
@@ -33,8 +33,11 @@ import sys
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import app.models  # noqa: F401  — registers every model on Base.metadata
-from app.models.base import Base
+# Importing the package is what registers every model on the metadata;
+# taking Base from it rather than from app.models.base means the name is
+# genuinely used, instead of an import that only looks unused to a reader
+# and to CodeQL.
+from app.models import Base
 
 
 async def main() -> int:
@@ -62,14 +65,23 @@ async def main() -> int:
         (table, column): (default, nullable == "YES") for table, column, default, nullable in rows
     }
 
+    tables_present = {table for table, _ in actual}
+
     problems: list[str] = []
     for table in Base.metadata.sorted_tables:
+        if table.name not in tables_present:
+            # A model whose table no migration creates at all. Reported
+            # once for the table rather than once per column, and not
+            # skipped: it is the same drift, just further along.
+            problems.append(f"{table.name}: the model has this table and the database does not")
+            continue
         for column in table.columns:
             found = actual.get((table.name, column.name))
             if found is None:
-                # A model whose table no migration creates is its own kind
-                # of wrong, but it is not this script's question and it
-                # would fire on anything mid-rename.
+                problems.append(
+                    f"{table.name}.{column.name}: the model has this column and the "
+                    f"database does not — every query naming it will fail"
+                )
                 continue
             db_default, db_nullable = found
 

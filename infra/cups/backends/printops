@@ -83,7 +83,25 @@ def parse_job_uuid(job_options: str) -> str | None:
     return None
 
 
-def count_submitted_pages(filename: str | None, copies: int | None) -> int | None:
+# Options that make the pages handed over differ from the pages in the
+# file. `page-ranges` and `page-set` select part of it; `number-up` puts
+# several on a sheet. Spelled both ways CUPS passes them.
+_PARTIAL_DOCUMENT_OPTIONS = (
+    "page-ranges",
+    "page-set",
+    "number-up",
+    "Nup",
+)
+
+
+def _job_prints_something_other_than_the_whole_document(options: str) -> bool:
+    lowered = options.lower()
+    return any(name.lower() in lowered for name in _PARTIAL_DOCUMENT_OPTIONS)
+
+
+def count_submitted_pages(
+    filename: str | None, copies: int | None, options: str = ""
+) -> int | None:
     """How many pages this job contains, counted from the document itself.
 
     Everything else PrintOps records about a job's size is the printer's
@@ -105,8 +123,19 @@ def count_submitted_pages(filename: str | None, copies: int | None) -> int | Non
     is not PDF, pdfinfo missing or slow, or output that does not parse. A
     missing count is exactly the state this improves on; a wrong one would
     have the check report a printer for pages nobody sent it.
+
+    Also refused whenever the job asks for anything other than all of the
+    document, once. Pages 2-3 of a ten-page file is two pages sent, and
+    four-up is four pages to a sheet; counting the document would inflate
+    both, and an inflated count is a printer reported for losing work it
+    was never given. Those cases could be arithmetic instead of a refusal
+    — page-ranges parsed, number-up divided — but every one of them is a
+    chance to be confidently wrong, and the value of this number is that
+    it can be trusted when it is present.
     """
     if not filename:
+        return None
+    if _job_prints_something_other_than_the_whole_document(options):
         return None
     try:
         with open(filename, "rb") as handle:
@@ -528,7 +557,7 @@ def main() -> int:
                 "cups_job_uuid": parse_job_uuid(job_options),
                 "document_name": job_title or None,
                 "copy_count": copy_count,
-                "submitted_pages": count_submitted_pages(filename, copy_count),
+                "submitted_pages": count_submitted_pages(filename, copy_count, job_options),
             },
         )
     except (urllib.error.URLError, urllib.error.HTTPError) as exc:
