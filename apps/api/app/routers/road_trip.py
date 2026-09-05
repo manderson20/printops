@@ -126,6 +126,10 @@ async def create_location(payload: LocationCreate, db: AsyncSession = Depends(ge
         await db.flush()
         if location.is_home:
             await _clear_other_homes(db, location.id)
+            # Every leg starts from home, so a new home makes every stored
+            # distance and every drawn road describe a journey from
+            # somewhere the trip no longer begins.
+            await recompute_itinerary(db)
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
@@ -159,8 +163,14 @@ async def update_location(
             detail="latitude and longitude must be given together.",
         )
 
+    home_moved = bool(fields.get("is_home")) or (
+        location.is_home and any(key in fields for key in ("latitude", "longitude"))
+    )
     if fields.get("is_home"):
         await _clear_other_homes(db, location.id)
+    if home_moved:
+        await db.flush()
+        await recompute_itinerary(db)
     try:
         await db.commit()
     except IntegrityError as exc:
@@ -186,7 +196,13 @@ async def delete_location(location_id: UUID, db: AsyncSession = Depends(get_db))
     location = await db.get(Location, location_id)
     if location is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found.")
+    was_home = location.is_home
     await db.delete(location)
+    await db.flush()
+    if was_home:
+        # No home means no trip to draw. The recompute records that on
+        # every waypoint rather than leaving legs that start nowhere.
+        await recompute_itinerary(db)
     await db.commit()
 
 
@@ -333,7 +349,10 @@ async def create_destination(payload: DestinationCreate, db: AsyncSession = Depe
     happens to be. Its distance is whatever the trip works out to once it
     has been driven.
     """
-    destination = Destination(**payload.model_dump())
+    fields = payload.model_dump()
+    typed_miles = fields.pop("miles", None)
+    destination = Destination(**fields, miles_override=typed_miles)
+    destination.miles = typed_miles
     if destination.plottable and destination.miles is None:
         # A placeholder so the row is valid before the trip is driven. It
         # is replaced by the real cumulative figure moments later, and if
@@ -352,8 +371,6 @@ async def create_destination(payload: DestinationCreate, db: AsyncSession = Depe
 
     if destination.plottable:
         result = await recompute_itinerary(db)
-        if payload.miles is not None:
-            destination.miles = payload.miles
         if _needs_a_distance(destination):
             await db.rollback()
             raise HTTPException(
@@ -391,7 +408,10 @@ async def create_destinations(payload: DestinationBulkCreate, db: AsyncSession =
         if item.name in existing:
             skipped.append(DestinationSkipped(name=item.name, reason="Already on the list."))
             continue
-        destination = Destination(**item.model_dump())
+        item_fields = item.model_dump()
+        typed = item_fields.pop("miles", None)
+        destination = Destination(**item_fields, miles_override=typed)
+        destination.miles = typed
         if destination.plottable and destination.miles is None:
             destination.miles = 0.0
         db.add(destination)
@@ -405,18 +425,42 @@ async def create_destinations(payload: DestinationBulkCreate, db: AsyncSession =
     await db.flush()
     result = await recompute_itinerary(db)
 
-    # A place no road reaches fails the whole trip, because OSRM is being
-    # asked for one route through all of them. Rather than lose the good
-    # ones, the trip is re-driven without whatever could not be reached.
+    # A place no road reaches fails the whole trip, because OSRM is asked
+    # for one route through all of them — and the failure names the trip,
+    # not the stop. So the good ones are found by elimination: take them
+    # all back out, then put them back one at a time and keep whichever
+    # ones the road can still be driven with.
+    #
+    # That is one routing request per new waypoint, which is exactly what
+    # this endpoint exists to avoid — but only on the failure path, and
+    # only for the handful somebody just added. Losing five valid places
+    # because the sixth was on an island is the worse trade.
     if not result.ok:
-        unreachable = [d for d in added if d.plottable]
-        for destination in unreachable:
+        candidates = [d for d in added if d.plottable]
+        for destination in candidates:
             await db.delete(destination)
-            skipped.append(
-                DestinationSkipped(name=destination.name, reason=result.error or "No route.")
-            )
-        added = [d for d in added if not d.plottable]
         await db.flush()
+
+        kept: list[Destination] = []
+        for item in payload.destinations:
+            candidate = next((d for d in candidates if d.name == item.name), None)
+            if candidate is None:
+                continue
+            item_fields = item.model_dump()
+            typed = item_fields.pop("miles", None)
+            retry = Destination(**item_fields, miles_override=typed)
+            retry.miles = typed if typed is not None else 0.0
+            db.add(retry)
+            await db.flush()
+            attempt = await recompute_itinerary(db)
+            if attempt.ok:
+                kept.append(retry)
+                continue
+            await db.delete(retry)
+            await db.flush()
+            skipped.append(DestinationSkipped(name=item.name, reason=attempt.error or "No route."))
+
+        added = [d for d in added if not d.plottable] + kept
         await recompute_itinerary(db)
 
     await db.commit()
@@ -531,8 +575,25 @@ async def update_destination(
 
     fields = payload.model_dump(exclude_unset=True)
     moved = any(key in fields for key in ("latitude", "longitude"))
+
+    # `miles` on this model is the ladder's answer, not a field to assign
+    # to. The edit form resubmits whatever is currently displayed, so a
+    # coordinate change would otherwise arrive carrying a measured figure
+    # and be mistaken for somebody insisting on it. Only a value that
+    # differs from what the road last said is an intention; null clears
+    # the override and hands the ladder back to the measurement.
+    if "miles" in fields:
+        typed = fields.pop("miles")
+        if typed is None or (
+            destination.route_miles is not None and abs(typed - destination.route_miles) <= 0.05
+        ):
+            destination.miles_override = None
+        else:
+            destination.miles_override = typed
+
     for key, value in fields.items():
         setattr(destination, key, value)
+    destination.settle_miles()
 
     if (destination.latitude is None) != (destination.longitude is None):
         await db.rollback()
@@ -553,10 +614,11 @@ async def update_destination(
     # Moving a waypoint changes its leg and every leg after it. Renaming
     # one does not, and re-driving the whole trip to change a label would
     # be a routing request bought for nothing.
-    if moved:
+    # Pausing or resuming changes which places are on the road, so the
+    # trip has to be re-driven for the same reason moving one does.
+    if moved or "enabled" in fields:
         await recompute_itinerary(db)
-        if "miles" in fields and fields["miles"]:
-            destination.miles = fields["miles"]
+    destination.settle_miles()
 
     await db.commit()
     await db.refresh(destination)

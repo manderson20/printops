@@ -40,11 +40,10 @@ class Destination(Base, TimestampMixin):
     # Jefferson City" is. Null when the two are the same.
     short_name: Mapped[str | None] = mapped_column(default=None)
 
-    # Road miles from home, not great-circle. The settings page computes
-    # the straight-line distance from the coordinates as a starting
-    # point, but what goes in here is what an admin decides the journey
-    # is, because the sentence claims a drive and a reader will check it
-    # against their own.
+    # The ladder's distance, and the only one the fun facts read: the
+    # admin's override if they set one, otherwise what the road measured.
+    # Stored rather than computed because the ladder sorts and filters on
+    # it in SQL.
     miles: Mapped[float] = mapped_column(Float)
 
     latitude: Mapped[float | None] = mapped_column(Float, default=None)
@@ -75,13 +74,23 @@ class Destination(Base, TimestampMixin):
     leg_miles: Mapped[float | None] = mapped_column(Float, default=None)
 
     # Every leg up to and including this one, added up: how far the
-    # district has to have driven to have reached this place on this
-    # trip. `miles` above is what the ladder and the sentences use and
-    # stays editable; a recompute copies this into it, because a figure a
-    # road network measured beats one somebody estimated. They are kept
-    # apart so an admin who deliberately overrides a distance does not
-    # have it overwritten by the next recompute.
+    # district has to have driven to have reached this place on this trip.
+    # Owned entirely by the recompute — nothing else writes it.
     route_miles: Mapped[float | None] = mapped_column(Float, default=None)
+
+    # A distance an admin typed, when they wanted one. Null means "use
+    # what the road measured".
+    #
+    # Kept as its own column rather than inferred from `miles` differing
+    # from `route_miles`, which is what the first version did and got
+    # wrong: every recompute rewrote `miles` from the route, so an
+    # override survived exactly until the next time anything changed. A
+    # value nobody can distinguish from a stale copy is not a setting.
+    #
+    # `miles` above stays the one thing the ladder and the sentences read,
+    # and is maintained as `miles_override or route_miles` wherever either
+    # of those changes.
+    miles_override: Mapped[float | None] = mapped_column(Float, default=None)
 
     # [[latitude, longitude], ...] along the roads for *this leg only* —
     # from the previous waypoint to this one. Drawn in order, so a trip
@@ -99,6 +108,25 @@ class Destination(Base, TimestampMixin):
     # drop "the Moon" for a term and get it back, without losing the
     # figure someone looked up.
     enabled: Mapped[bool] = mapped_column(default=True, server_default="true")
+
+    @property
+    def is_overridden(self) -> bool:
+        """Whether the ladder is following a typed figure rather than the
+        road. Drives the one line on the settings page that admits the two
+        can disagree."""
+        return self.miles_override is not None
+
+    def settle_miles(self) -> None:
+        """Point `miles` at whichever figure currently governs.
+
+        Called after anything writes an override or a measured distance,
+        so there is one place that knows the precedence rather than four
+        that each remember it.
+        """
+        if self.miles_override is not None:
+            self.miles = self.miles_override
+        elif self.route_miles is not None:
+            self.miles = self.route_miles
 
     @property
     def has_route(self) -> bool:

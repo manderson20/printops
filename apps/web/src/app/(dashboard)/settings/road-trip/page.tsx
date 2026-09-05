@@ -74,8 +74,9 @@ function toInput(draft: Draft): DestinationInput {
   return {
     name: draft.name.trim(),
     short_name: draft.short_name.trim() || null,
-    // Left out when blank so the road network measures it. Typing a
-    // number here is the deliberate override.
+    // Null when blank, which the API reads as "drop the override and go
+    // back to what the road measured" — the way out of an override, and
+    // the reason this is null rather than simply omitted.
     miles: draft.miles.trim() === "" ? null : Number(draft.miles),
     latitude: coordinate(draft.latitude),
     longitude: coordinate(draft.longitude),
@@ -200,9 +201,7 @@ function DestinationRow({
     }
   }
 
-  const overridden =
-    destination.route_miles !== null &&
-    Math.abs(destination.route_miles - destination.miles) > 0.05;
+  const overridden = destination.miles_override !== null;
 
   return (
     <li className="border-b border-black/[.06] py-3 last:border-0 dark:border-white/[.1]">
@@ -240,7 +239,10 @@ function DestinationRow({
             )}
             <strong>{destination.miles.toLocaleString()}</strong> miles into the trip
             {destination.has_route && !overridden && " — measured by road"}
-            {overridden && ` — your figure; the trip measures ${destination.route_miles}`}
+            {overridden &&
+              (destination.route_miles !== null
+                ? ` — your figure; the road measures ${destination.route_miles}`
+                : " — your figure")}
           </p>
           {destination.route_error && (
             <p className="text-xs text-amber-700 dark:text-amber-400">

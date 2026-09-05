@@ -203,10 +203,15 @@ export function RouteMap({ route }: { route: DistrictRoute }) {
           return;
         }
         if (!stop.is_target || !route.position) return;
-        // How far into *this leg* the district has got — the trip total
-        // minus everything before it, over the leg's own length.
-        const before = stop.miles - stop.leg_miles;
-        const fraction = stop.leg_miles > 0 ? (route.miles_travelled - before) / stop.leg_miles : 1;
+        // How far into *this leg* the district has got, measured against
+        // the interval the ladder shows rather than the road's own length.
+        // The two differ when a distance was typed over the measured one,
+        // and this has to match what the server used to place the marker
+        // (app/reports/road_trip.py) or the line would stop somewhere the
+        // pin is not.
+        const before = index === 0 ? 0 : route.stops[index - 1].miles;
+        const shownLeg = stop.miles - before;
+        const fraction = shownLeg > 0 ? (route.miles_travelled - before) / shownLeg : 1;
         const travelled = travelledPortion(points, fraction);
         if (travelled.length > 1) {
           L.polyline(travelled, { color: TRAVELLED, weight: 5, opacity: 0.95 }).addTo(instance);

@@ -312,7 +312,14 @@ def _position_on(
     for stop in stops:
         if stop.is_target:
             into_leg = miles_travelled - previous_miles
-            fraction = into_leg / stop.leg_miles if stop.leg_miles > 0 else 1.0
+            # Measured against the interval the *ladder* shows, not the
+            # road's own length. Those differ when a distance was typed
+            # over the measured one, and the marker has to agree with the
+            # numbers beside it: a bar that says 60% of the way to
+            # Jefferson City with the pin already sitting on Jefferson
+            # City is the picture contradicting its own caption.
+            shown_leg = stop.miles - previous_miles
+            fraction = into_leg / shown_leg if shown_leg > 0 else 1.0
             if stop.geometry:
                 latitude, longitude = _along(stop.geometry, fraction)
             else:

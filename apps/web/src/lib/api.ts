@@ -3416,6 +3416,10 @@ export type Destination = {
   leg_miles: number | null;
   /** The measured running total to here, if the trip has been driven. */
   route_miles: number | null;
+  /** A distance an admin typed. Null means the ladder follows the road.
+   *  Sending null on an update clears it and hands the ladder back to the
+   *  measurement. */
+  miles_override: number | null;
   /** Whether the map can draw this leg along real roads. */
   has_route: boolean;
   route_fetched_at: string | null;
@@ -3426,8 +3430,9 @@ export type Destination = {
 export type DestinationInput = {
   name: string;
   short_name?: string | null;
-  /** Leave out and let the road network measure it. Give it to override
-   *  that, or when the rung has nowhere to route to. */
+  /** Leave out and let the road network measure it. Give a number to
+   *  override that, or when the rung has nowhere to route to. Send null on
+   *  an update to clear an override. */
   miles?: number | null;
   latitude?: number | null;
   longitude?: number | null;

@@ -52,11 +52,19 @@ async def waypoints_in_order(db: AsyncSession) -> list[Destination]:
     a place is on the ladder but not on the road. Rows with no position
     yet sort last by their own distance, so a waypoint added before its
     first recompute joins the end rather than silently jumping the queue.
+
+    Paused waypoints are left out, because the report leaves them out too
+    (app/reports/road_trip.py filters on `enabled`). Routing through a
+    stop the map never draws would give every waypoint after it a leg
+    starting from a place nobody can see — disconnected roads, and a
+    marker positioned along a journey that is not the one on screen.
     """
     rows = (
         await db.execute(
             select(Destination).where(
-                Destination.latitude.is_not(None), Destination.longitude.is_not(None)
+                Destination.latitude.is_not(None),
+                Destination.longitude.is_not(None),
+                Destination.enabled.is_(True),
             )
         )
     ).scalars()
@@ -128,7 +136,11 @@ async def recompute(db: AsyncSession) -> ItineraryResult:
         waypoint.route_geometry = leg.geometry
         waypoint.route_fetched_at = now
         waypoint.route_error = None
-        waypoint.miles = waypoint.route_miles
+        # Never assigns over an override. `settle_miles` knows the
+        # precedence; this loop only reports what the road said.
+        waypoint.settle_miles()
+
+    await _clear_routes_of_paused_waypoints(db)
 
     for waypoint in ordered[MAX_WAYPOINTS:]:
         waypoint.leg_miles = None
@@ -151,3 +163,26 @@ def _fail(waypoints: list[Destination], reason: str) -> ItineraryResult:
     for waypoint in waypoints:
         waypoint.route_error = reason
     return ItineraryResult(waypoints=len(waypoints), total_miles=None, error=reason)
+
+
+async def _clear_routes_of_paused_waypoints(db: AsyncSession) -> None:
+    """A paused waypoint keeps its coordinates and its typed distance and
+    loses its leg.
+
+    It is not on the trip any more, so the road it used to be reached by
+    starts from a place that is no longer before it. Keeping that shape
+    would draw a leg the itinerary does not contain the moment somebody
+    un-pauses something else.
+    """
+    paused = (
+        await db.execute(
+            select(Destination).where(
+                Destination.enabled.is_(False), Destination.route_geometry.is_not(None)
+            )
+        )
+    ).scalars()
+    for waypoint in paused:
+        waypoint.leg_miles = None
+        waypoint.route_miles = None
+        waypoint.route_geometry = None
+        waypoint.route_fetched_at = None

@@ -24,11 +24,11 @@ class DestinationOut(BaseModel):
     straight_line_miles: float | None = None
     # The drive from the previous waypoint, or from home for the first.
     leg_miles: float | None = None
-    # The measured running total to here. `miles` is normally a copy of
-    # this; the two differ when an admin has typed a distance of their
-    # own, which is the one case where the ladder should not follow the
-    # trip.
+    # The measured running total to here, owned by the recompute.
     route_miles: float | None = None
+    # A distance an admin typed, or null when the ladder follows the road.
+    # `miles` above is whichever of the two governs.
+    miles_override: float | None = None
     # Whether the map can draw this leg along real roads. The shape
     # itself is not sent here — it can be a few hundred points per leg,
     # and a settings page listing nine destinations has no use for it.

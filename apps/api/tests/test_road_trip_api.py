@@ -420,13 +420,99 @@ def test_the_trip_comes_before_the_rungs_beyond_it(client, auth_headers, trip_an
 
 def test_a_typed_distance_survives_the_trip_being_driven(client, auth_headers, trip_answers):
     """An admin who types a figure because that is what the road signs say
-    keeps it."""
+    keeps it — through this drive and every later one."""
     _home_with_coordinates(client, auth_headers)
     trip_answers(_trip(LEG_ONE))
 
     body = _add(client, auth_headers, "Marceline", miles=15.0, **MARCELINE).json()
     assert body["miles"] == 15.0
+    assert body["miles_override"] == 15.0
     assert body["route_miles"] == 12.1
+
+    # The bug this column exists to stop: every recompute used to rewrite
+    # `miles` from the route, so an override lasted until the next time
+    # anything moved.
+    client.post("/api/v1/road-trip/itinerary/route", headers=auth_headers)
+    listed = client.get("/api/v1/road-trip/destinations", headers=auth_headers).json()
+    assert listed[0]["miles"] == 15.0
+    assert listed[0]["route_miles"] == 12.1
+
+
+def test_an_override_can_be_cleared_to_go_back_to_the_road(client, auth_headers, trip_answers):
+    """The edit form submits an empty distance field as null, and there has
+    to be a way back from a figure somebody regrets."""
+    _home_with_coordinates(client, auth_headers)
+    trip_answers(_trip(LEG_ONE))
+    created = _add(client, auth_headers, "Marceline", miles=15.0, **MARCELINE).json()
+
+    cleared = client.patch(
+        f"/api/v1/road-trip/destinations/{created['id']}",
+        headers=auth_headers,
+        json={"miles": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["miles_override"] is None
+    assert cleared.json()["miles"] == 12.1
+
+
+def test_resubmitting_a_measured_distance_is_not_an_override(client, auth_headers, trip_answers):
+    """The edit form resubmits whatever is displayed. A coordinate change
+    must not arrive carrying a measured figure and be mistaken for
+    somebody insisting on it."""
+    _home_with_coordinates(client, auth_headers)
+    trip_answers(_trip(LEG_ONE))
+    created = _add(client, auth_headers, "Marceline", **MARCELINE).json()
+    assert created["miles"] == 12.1
+
+    updated = client.patch(
+        f"/api/v1/road-trip/destinations/{created['id']}",
+        headers=auth_headers,
+        json={"miles": 12.1, "short_name": "Marceline"},
+    ).json()
+    assert updated["miles_override"] is None
+
+
+def test_a_paused_waypoint_leaves_the_road(client, auth_headers, trip_answers):
+    """The report hides a paused stop, so routing through it would give
+    every later waypoint a leg starting from a place nobody can see."""
+    _home_with_coordinates(client, auth_headers)
+    trip_answers(_trip(LEG_ONE, LEG_TWO))
+    first = _add(client, auth_headers, "Marceline", **MARCELINE).json()
+    _add(client, auth_headers, "Jefferson City", **JEFFERSON_CITY)
+
+    trip_answers(_trip(LEG_TWO))
+    client.patch(
+        f"/api/v1/road-trip/destinations/{first['id']}",
+        headers=auth_headers,
+        json={"enabled": False},
+    )
+
+    listed = client.get("/api/v1/road-trip/destinations", headers=auth_headers).json()
+    paused = next(d for d in listed if d["name"] == "Marceline")
+    still_on = next(d for d in listed if d["name"] == "Jefferson City")
+    assert paused["has_route"] is False
+    # Jefferson City is now the first stop on the road, so its running
+    # total is its own leg rather than a total that counted a hidden stop.
+    assert still_on["miles"] == 117.8
+
+
+def test_moving_home_re_drives_the_trip(client, auth_headers, trip_answers):
+    """Every leg starts from home, so a new home makes every stored
+    distance describe a journey from somewhere the trip no longer
+    begins."""
+    home = _home_with_coordinates(client, auth_headers)
+    trip_answers(_trip(LEG_ONE))
+    _add(client, auth_headers, "Marceline", **MARCELINE)
+
+    trip_answers(_trip(LEG_TWO))
+    client.patch(
+        f"/api/v1/road-trip/locations/{home['id']}",
+        headers=auth_headers,
+        json={"latitude": 38.5767, "longitude": -92.1735},
+    )
+
+    listed = client.get("/api/v1/road-trip/destinations", headers=auth_headers).json()
+    assert listed[0]["miles"] == 117.8
 
 
 def test_a_waypoint_with_no_reachable_trip_is_refused(client, auth_headers, trip_answers):
@@ -441,10 +527,21 @@ def test_a_waypoint_with_no_reachable_trip_is_refused(client, auth_headers, trip
 
 
 def test_the_whole_trip_can_be_driven_again(client, auth_headers, trip_answers):
-    """The seeded rungs all start with an estimate, because 0073 and 0074
-    deliberately make no HTTP calls."""
+    """A waypoint added without a distance follows the road the first time
+    the trip is driven — which is what the seeded rungs do, since 0073 and
+    0074 deliberately make no HTTP calls."""
     _home_with_coordinates(client, auth_headers)
-    _add(client, auth_headers, "Marceline", miles=12.0, **MARCELINE)
+    trip_answers(RoutingError("not yet"))
+    created = _add(client, auth_headers, "Marceline", miles=12.0, **MARCELINE).json()
+    # Typed only because there was no road to measure; not an override.
+    assert created["miles_override"] == 12.0
+
+    # Clear it, the way the edit form does with an empty distance field.
+    client.patch(
+        f"/api/v1/road-trip/destinations/{created['id']}",
+        headers=auth_headers,
+        json={"miles": None},
+    )
 
     trip_answers(_trip(LEG_ONE))
     summary = client.post("/api/v1/road-trip/itinerary/route", headers=auth_headers).json()
@@ -454,6 +551,7 @@ def test_the_whole_trip_can_be_driven_again(client, auth_headers, trip_answers):
 
     listed = client.get("/api/v1/road-trip/destinations", headers=auth_headers).json()
     assert listed[0]["miles"] == 12.1
+    assert listed[0]["miles_override"] is None
 
 
 def test_a_failed_trip_keeps_the_distances_it_had(client, auth_headers, trip_answers):
