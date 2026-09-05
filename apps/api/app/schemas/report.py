@@ -434,20 +434,37 @@ class PersonalExplainedOut(BaseModel):
 
 
 class RouteStopOut(BaseModel):
-    """One pin on the road-trip map."""
+    """One pin on the road-trip map, and the road that gets to it."""
 
     name: str
     label: str
+    # Where it falls in the trip, counting from 1 — the number on the pin,
+    # which is what makes a doubled-back route readable without drawing
+    # the same road twice.
+    position: int
+    # Every leg up to and including this one: how far the district must
+    # have driven to have got here on this trip.
     miles: float
+    # Just this leg, from the previous waypoint.
+    leg_miles: float
     latitude: float
     longitude: float
     reached: bool
+    # [[latitude, longitude], ...] along real roads for this leg, fetched
+    # once when the trip was last driven and stored on the row — never
+    # requested while this response is being built. Null when the trip has
+    # never been driven, and the client draws a straight line for that leg
+    # instead.
+    geometry: list[list[float]] | None = None
+    # The waypoint being driven towards: the nearest one not yet reached.
+    is_target: bool = False
 
 
 class RoutePositionOut(BaseModel):
-    """Where the district has got to. Interpolated by mileage along a
-    straight line between pins — see app/reports/road_trip.py on why the
-    distance is exact and the point on the ground is not."""
+    """Where the district has got to — a point on the road to the stop it
+    is driving towards, placed by mileage. See app/reports/road_trip.py:
+    the progress is exact, the point on the ground is approximate, and
+    that is the right way round for a picture."""
 
     latitude: float
     longitude: float

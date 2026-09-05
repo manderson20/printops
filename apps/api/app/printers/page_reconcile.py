@@ -420,7 +420,15 @@ async def sweep_unprinted_pages(db: AsyncSession, now: datetime | None = None) -
                 printer.pages_not_printed = None
                 result.cleared += 1
             continue
-        printer.pages_not_printed = to_record(verdict, now)
+        # Stamped with the newest reading the verdict was actually computed
+        # from, not with the clock. A printer whose SNMP poll has stopped
+        # answering still has yesterday's readings inside the 24-hour window,
+        # so a sweep every thirty minutes would keep re-deciding the same old
+        # shortfall and stamping it as fresh — and STALE_AFTER would never
+        # retire a warning about a printer nobody can currently see. A healthy
+        # printer's newest reading is at most one poll old, which is well
+        # inside that timeout, so this costs nothing in the normal case.
+        printer.pages_not_printed = to_record(verdict, printer_readings[-1][0])
         result.flagged += 1
         logger.warning(
             "%s: %d pages sent in the last 24h are unaccounted for by its page counter (%s).",

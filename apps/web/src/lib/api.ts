@@ -3252,10 +3252,22 @@ export type DistrictRoute = {
 export type RouteStop = {
   name: string;
   label: string;
+  /** Where it falls in the trip, counting from 1 — the number on the pin. */
+  position: number;
+  /** Every leg up to and including this one: how far the district must
+   *  have driven to have got here on this trip. */
   miles: number;
+  /** Just this leg, from the previous waypoint. */
+  leg_miles: number;
   latitude: number;
   longitude: number;
   reached: boolean;
+  /** [[latitude, longitude], ...] along real roads for *this leg* — from
+   *  the previous waypoint to this one. Null when the trip has never been
+   *  driven, and the map draws a straight line for that leg. */
+  geometry: [number, number][] | null;
+  /** The waypoint being driven towards — the nearest one not yet reached. */
+  is_target: boolean;
 };
 
 export type RoutePosition = {
@@ -3408,8 +3420,12 @@ export type Destination = {
   id: string;
   name: string;
   short_name: string | null;
-  /** Road miles from home — what the sentence claims, and what a reader
-   *  checks against their own drive. */
+  /** Where this waypoint falls in the trip, counting from 1. Null for a
+   *  rung that is a distance and not a place. */
+  position: number | null;
+  /** How far the district must have driven to have reached here — every
+   *  leg of the trip up to and including this one. Normally a copy of
+   *  route_miles; the two differ only when an admin typed their own. */
   miles: number;
   latitude: number | null;
   longitude: number | null;
@@ -3418,15 +3434,68 @@ export type Destination = {
    *  shorter than the drive, so it is a floor to correct upward and
    *  never an answer to accept. */
   straight_line_miles: number | null;
+  /** The drive from the previous waypoint, or from home for the first. */
+  leg_miles: number | null;
+  /** The measured running total to here, if the trip has been driven. */
+  route_miles: number | null;
+  /** A distance an admin typed. Null means the ladder follows the road.
+   *  Sending null on an update clears it and hands the ladder back to the
+   *  measurement. */
+  miles_override: number | null;
+  /** Whether the map can draw this leg along real roads. */
+  has_route: boolean;
+  route_fetched_at: string | null;
+  /** Why the last attempt failed, or null. */
+  route_error: string | null;
 };
 
 export type DestinationInput = {
   name: string;
   short_name?: string | null;
-  miles: number;
+  /** Leave out and let the road network measure it. Give a number to
+   *  override that, or when the rung has nowhere to route to. Send null on
+   *  an update to clear an override. */
+  miles?: number | null;
   latitude?: number | null;
   longitude?: number | null;
   enabled?: boolean;
+};
+
+/** A place the district could drive to, not yet a destination. Nothing is
+ *  written when these are generated. */
+export type DestinationSuggestion = {
+  name: string;
+  short_name: string;
+  latitude: number;
+  longitude: number;
+  straight_line_miles: number;
+  population: number;
+};
+
+export type DestinationSuggestions = {
+  /** Echoed back so the same set can be asked for again — a reload should
+   *  not reshuffle a list somebody is reading. */
+  seed: number;
+  suggestions: DestinationSuggestion[];
+};
+
+export type DestinationBulkResult = {
+  added: Destination[];
+  skipped: { name: string; reason: string }[];
+};
+
+export type RoadTripSettings = {
+  routing_base_url: string;
+  routing_enabled: boolean;
+};
+
+/** The trip as a whole. A waypoint knows its own leg and its own running
+ *  total; only this knows where the journey ends. */
+export type Itinerary = {
+  waypoints: number;
+  total_miles: number | null;
+  last_driven_at: string | null;
+  error: string | null;
 };
 
 export async function listLocations(): Promise<Location[]> {
@@ -3496,4 +3565,80 @@ export async function deleteDestination(id: string): Promise<void> {
   await authorizedFetch(`/api/v1/road-trip/destinations/${id}`, {
     method: "DELETE",
   });
+}
+
+export async function suggestDestinations(
+  seed?: number,
+): Promise<DestinationSuggestions> {
+  const query = seed === undefined ? "" : `?seed=${seed}`;
+  const response = await authorizedFetch(
+    `/api/v1/road-trip/destinations/suggest${query}`,
+    { method: "POST" },
+  );
+  return response.json();
+}
+
+export async function createDestinations(
+  destinations: DestinationInput[],
+): Promise<DestinationBulkResult> {
+  const response = await authorizedFetch("/api/v1/road-trip/destinations/bulk", {
+    method: "POST",
+    body: JSON.stringify({ destinations }),
+  });
+  return response.json();
+}
+
+/** Find a town by name. Reads a bundled gazetteer down to a thousand
+ *  people — the small town down the road is exactly what somebody
+ *  searches for, and the one thing suggestions cannot offer. Distances
+ *  come back as zero when no home location is set. */
+export async function searchPlaces(
+  query: string,
+): Promise<DestinationSuggestion[]> {
+  const response = await authorizedFetch(
+    `/api/v1/road-trip/places/search?q=${encodeURIComponent(query)}`,
+  );
+  return response.json();
+}
+
+export async function getItinerary(): Promise<Itinerary> {
+  const response = await authorizedFetch("/api/v1/road-trip/itinerary");
+  return response.json();
+}
+
+/** Drive the whole trip again — one request to the routing service for
+ *  the entire itinerary, not one per leg. */
+export async function refreshItinerary(): Promise<Itinerary> {
+  const response = await authorizedFetch("/api/v1/road-trip/itinerary/route", {
+    method: "POST",
+  });
+  return response.json();
+}
+
+/** Set the order the trip is driven in. Takes every waypoint id, so a
+ *  reorder is a statement about the whole trip rather than a nudge whose
+ *  meaning depends on what else moved since the page loaded. */
+export async function reorderDestinations(
+  destinationIds: string[],
+): Promise<Destination[]> {
+  const response = await authorizedFetch("/api/v1/road-trip/destinations/order", {
+    method: "PUT",
+    body: JSON.stringify({ destination_ids: destinationIds }),
+  });
+  return response.json();
+}
+
+export async function getRoadTripSettings(): Promise<RoadTripSettings> {
+  const response = await authorizedFetch("/api/v1/road-trip/settings");
+  return response.json();
+}
+
+export async function updateRoadTripSettings(
+  input: Partial<RoadTripSettings>,
+): Promise<RoadTripSettings> {
+  const response = await authorizedFetch("/api/v1/road-trip/settings", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return response.json();
 }
