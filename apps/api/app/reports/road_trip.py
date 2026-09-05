@@ -17,12 +17,19 @@ Two things stay deliberately apart here:
     shape of the drive to it, fetched once when it was configured
     (app/roadtrip/routing.py). The map follows those roads.
 
-Every route runs from home, not from the previous stop, because that is
-what the ladder means: a rung is "far enough to have reached Chicago",
-measured from home, not "far enough to have reached Chicago having gone
-via Des Moines". Chaining the legs would quietly turn 410 miles into
-1,200. So the picture is every road out of town, with the one currently
-being driven picked out.
+The trip is one journey through the waypoints in order, and a rung is
+"far enough to have reached Chicago **on this trip**" — via Marceline and
+Jefferson City, if that is where the trip goes first. So a waypoint's
+distance is the sum of every leg before it, not the direct drive from
+home: Chicago is 537 miles into this trip and 397 as a drive of its own,
+and the ladder uses the first because that is the road actually drawn
+beneath it.
+
+A trip can double back — Marceline is north-west of Brookfield and
+Jefferson City is south-east, so the second leg retraces the first before
+carrying on. The legs are drawn in order, later over earlier, and the
+waypoints are numbered; a retraced stretch is one road on the map and the
+numbers say which way round it went.
 
 A destination whose route was never fetched — no coordinates, no routing
 service, a request that timed out — falls back to a straight line between
@@ -89,13 +96,20 @@ class RouteStop:
 
     name: str
     label: str
+    # Where it falls in the trip, counting from 1 — the number on the pin.
+    position: int
+    # Every leg up to and including this one: how far the district has to
+    # have driven to have got here.
     miles: float
+    # Just this leg, from the previous waypoint.
+    leg_miles: float
     latitude: float
     longitude: float
     reached: bool
-    # [[latitude, longitude], ...] from home along real roads, or None
-    # when no route has been fetched — in which case the caller draws the
-    # straight line between home and the pin instead.
+    # [[latitude, longitude], ...] along real roads for *this leg* — from
+    # the previous waypoint to this one — or None when no route has been
+    # fetched, in which case the caller draws the straight line between
+    # the two pins instead.
     geometry: list[list[float]] | None
     # The one the district is currently driving towards: the nearest stop
     # it has not reached. Exactly one stop has this, unless every stop is
@@ -151,50 +165,68 @@ def build_route(
     settings page, and each of them yields a dashboard with no map rather
     than a dashboard with a broken one.
 
-    Stops that carry no coordinates are left out of the route while
-    remaining on the ladder — "coast to coast" still gets its sentence,
-    it just isn't a pin. That is why the marker's leg is described by the
-    stops on either side of it *on the map*, which may skip rungs the
-    ladder counts.
+    Rungs that carry no coordinates are left out of the trip while
+    remaining on the ladder — "coast to coast" still gets its sentence, it
+    just isn't a place the trip drives to. That is why the marker's leg is
+    described by the waypoints on either side of it *on the map*, which
+    may skip rungs the ladder counts.
+
+    Waypoints come back in the order they are driven, not by distance.
+    Those are usually the same order and deliberately need not be: an
+    admin who wants the trip to go somewhere further before somewhere
+    nearer is describing a real journey, and the cumulative distances
+    follow from their choice rather than overruling it.
     """
     if home is None or home.latitude is None or home.longitude is None:
         return None
 
-    plottable = sorted(
+    waypoints = sorted(
         (
             destination
             for destination in destinations
             if destination.enabled and destination.plottable and destination.miles > 0
         ),
-        key=lambda destination: destination.miles,
+        key=lambda d: (d.position is None, d.position or 0, d.miles),
     )
-    if not plottable:
+    if not waypoints:
         return None
 
     miles_travelled = max(distance_feet, 0.0) / FEET_PER_MILE
 
-    # The nearest stop not yet reached — the one being driven towards, and
-    # the only leg the marker can be on. None once every pin is behind us.
-    target = next((d for d in plottable if miles_travelled < d.miles), None)
+    # The nearest waypoint not yet reached — the one being driven towards,
+    # and the only leg the marker can be on. None once the whole trip is
+    # behind us.
+    target = next((d for d in waypoints if miles_travelled < d.miles), None)
 
-    stops = tuple(
-        RouteStop(
-            name=destination.name,
-            label=destination.label,
-            miles=destination.miles,
-            latitude=destination.latitude,
-            longitude=destination.longitude,
-            reached=miles_travelled >= destination.miles,
-            geometry=destination.route_geometry or None,
-            is_target=destination is target,
+    stops: list[RouteStop] = []
+    previous_miles = 0.0
+    for index, destination in enumerate(waypoints, start=1):
+        # Falls back to the difference between running totals when the
+        # trip has never been driven, so a ladder of typed distances still
+        # produces sensible legs.
+        leg = destination.leg_miles
+        if leg is None:
+            leg = max(destination.miles - previous_miles, 0.0)
+        stops.append(
+            RouteStop(
+                name=destination.name,
+                label=destination.label,
+                position=index,
+                miles=destination.miles,
+                leg_miles=leg,
+                latitude=destination.latitude,
+                longitude=destination.longitude,
+                reached=miles_travelled >= destination.miles,
+                geometry=destination.route_geometry or None,
+                is_target=destination is target,
+            )
         )
-        for destination in plottable
-    )
+        previous_miles = destination.miles
 
     position = _position_on(
         home_latitude=home.latitude,
         home_longitude=home.longitude,
-        stops=stops,
+        stops=tuple(stops),
         miles_travelled=miles_travelled,
     )
 
@@ -203,7 +235,7 @@ def build_route(
         home_latitude=home.latitude,
         home_longitude=home.longitude,
         miles_travelled=miles_travelled,
-        stops=stops,
+        stops=tuple(stops),
         position=position,
     )
 
@@ -266,28 +298,40 @@ def _position_on(
     has no journey yet, and a pin sitting on the school would read as
     progress.
 
-    The marker rides the road to the target stop when that road is known,
-    and the straight line to it when it is not. Either way its distance
-    along that leg is the district's real mileage as a fraction of the
-    leg's own — the position is approximate, the progress is not.
+    The marker rides the leg it is on — the road from the last waypoint
+    reached to the one being driven towards — placed by how far into that
+    leg the district has got. Its distance along the leg is real; where
+    that lands on the ground is approximate, because the leg is drawn from
+    a simplified shape. That is the right way round for a picture.
     """
     if miles_travelled <= 0:
         return None
 
     previous_label: str | None = None
+    previous_miles = 0.0
     for stop in stops:
         if stop.is_target:
-            fraction = miles_travelled / stop.miles if stop.miles > 0 else 1.0
+            into_leg = miles_travelled - previous_miles
+            fraction = into_leg / stop.leg_miles if stop.leg_miles > 0 else 1.0
             if stop.geometry:
                 latitude, longitude = _along(stop.geometry, fraction)
             else:
+                # No road for this leg, so the straight line between the
+                # two pins — or between home and the first pin.
+                start_latitude = home_latitude
+                start_longitude = home_longitude
+                for earlier in stops:
+                    if earlier is stop:
+                        break
+                    start_latitude, start_longitude = earlier.latitude, earlier.longitude
                 latitude, longitude = _interpolate(
-                    home_latitude, home_longitude, stop.latitude, stop.longitude, fraction
+                    start_latitude, start_longitude, stop.latitude, stop.longitude, fraction
                 )
             return RoutePosition(latitude, longitude, previous_label, stop.label)
         previous_label = stop.label
+        previous_miles = stop.miles
 
-    # Past every pin on the map. The marker sits on the last one rather
-    # than being extrapolated into the ocean beyond it.
+    # Past every waypoint. The marker sits on the last one rather than
+    # being extrapolated into the ocean beyond it.
     last = stops[-1]
     return RoutePosition(last.latitude, last.longitude, last.label, None)

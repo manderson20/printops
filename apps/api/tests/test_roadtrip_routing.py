@@ -11,6 +11,7 @@ from app.roadtrip.routing import (
     RoutingError,
     _thin,
     fetch_driving_route,
+    fetch_itinerary,
 )
 
 BROOKFIELD = (39.7864, -93.0735)
@@ -160,3 +161,84 @@ def test_thinning_keeps_both_ends():
 def test_a_short_route_is_left_alone():
     points = [[0.0, 0.0], [1.0, 1.0]]
     assert _thin(points, limit=10) == points
+
+
+# --- one trip through many places --------------------------------------
+
+
+def _trip_ok(leg_distances=(19472.0, 189580.0), coordinates=None):
+    coordinates = coordinates or [[-93.0735, 39.7864], [-92.9477, 39.7117]]
+    return {
+        "code": "Ok",
+        "routes": [
+            {
+                "distance": sum(leg_distances),
+                "legs": [
+                    {
+                        "distance": distance,
+                        "steps": [{"geometry": {"coordinates": coordinates}}],
+                    }
+                    for distance in leg_distances
+                ],
+            }
+        ],
+    }
+
+
+async def test_a_trip_comes_back_leg_by_leg(patched_client):
+    """One request for the whole itinerary, one shape per leg — a leg is
+    what a waypoint owns, and splitting a combined line back into legs
+    afterwards would mean guessing where one ended."""
+    patched_client(lambda request: httpx.Response(200, json=_trip_ok()))
+
+    trip = await fetch_itinerary(
+        base_url="https://routing.test",
+        points=[BROOKFIELD, (39.7117, -92.9477), JEFFERSON_CITY],
+    )
+    assert len(trip.legs) == 2
+    assert trip.legs[0].miles == 12.1
+    assert trip.legs[1].miles == 117.8
+    assert trip.total_miles == 129.9
+
+
+async def test_every_waypoint_is_asked_for_in_one_request(patched_client):
+    seen = {}
+
+    def handler(request):
+        seen["path"] = request.url.path
+        return httpx.Response(200, json=_trip_ok())
+
+    patched_client(handler)
+    await fetch_itinerary(
+        base_url="https://routing.test",
+        points=[BROOKFIELD, (39.7117, -92.9477), JEFFERSON_CITY],
+    )
+    # Three coordinate pairs, longitude first, in one path.
+    assert seen["path"].count(";") == 2
+
+
+async def test_a_trip_needs_somewhere_to_go(patched_client):
+    patched_client(lambda request: httpx.Response(200, json=_trip_ok()))
+    with pytest.raises(RoutingError, match="start and at least one waypoint"):
+        await fetch_itinerary(base_url="https://routing.test", points=[BROOKFIELD])
+
+
+async def test_a_leg_count_that_does_not_match_the_hops_is_refused(patched_client):
+    """Silently accepting three legs for two hops would shift every
+    waypoint's distance onto the wrong place."""
+    patched_client(lambda request: httpx.Response(200, json=_trip_ok(leg_distances=(1000.0,))))
+    with pytest.raises(RoutingError, match="1 legs for 2 hops"):
+        await fetch_itinerary(
+            base_url="https://routing.test",
+            points=[BROOKFIELD, (39.7117, -92.9477), JEFFERSON_CITY],
+        )
+
+
+async def test_an_unreachable_place_fails_the_whole_trip(patched_client):
+    """OSRM is asked for one route through every waypoint, so one place no
+    road reaches is a NoRoute for the itinerary."""
+    patched_client(
+        lambda request: httpx.Response(200, json={"code": "NoRoute", "message": "no route"})
+    )
+    with pytest.raises(RoutingError, match="NoRoute"):
+        await fetch_itinerary(base_url="https://routing.test", points=[BROOKFIELD, (21.4, -157.9)])

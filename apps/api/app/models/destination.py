@@ -50,6 +50,17 @@ class Destination(Base, TimestampMixin):
     latitude: Mapped[float | None] = mapped_column(Float, default=None)
     longitude: Mapped[float | None] = mapped_column(Float, default=None)
 
+    # Where this waypoint falls in the trip, counting from 1. Null for a
+    # rung that is a distance and not a place — "a lap of the football
+    # field", "all the way to the Moon" — which sits on the ladder by its
+    # own figure and is never driven to.
+    #
+    # Ordering is explicit rather than derived from distance, because in a
+    # trip the order is the input and the distances are the result:
+    # visiting Marceline before Jefferson City is a decision, and the 130
+    # miles it takes to have done both follows from it.
+    position: Mapped[int | None] = mapped_column(default=None)
+
     # --- the drive ------------------------------------------------
     #
     # Fetched from a routing service when the destination is saved, never
@@ -59,17 +70,23 @@ class Destination(Base, TimestampMixin):
     # what went wrong, so the settings page can show it rather than
     # leaving a silent blank.
 
-    # The real driving distance. `miles` above is what the ladder and the
-    # sentences use and stays editable; saving a destination copies this
-    # into it, because a figure a road network measured beats one
-    # somebody estimated. They are kept apart so that an admin who
-    # deliberately overrides the distance does not have it overwritten by
-    # the next refetch.
+    # The drive from the previous waypoint — or from home, for the first
+    # one. What the routing service measured for this single hop.
+    leg_miles: Mapped[float | None] = mapped_column(Float, default=None)
+
+    # Every leg up to and including this one, added up: how far the
+    # district has to have driven to have reached this place on this
+    # trip. `miles` above is what the ladder and the sentences use and
+    # stays editable; a recompute copies this into it, because a figure a
+    # road network measured beats one somebody estimated. They are kept
+    # apart so an admin who deliberately overrides a distance does not
+    # have it overwritten by the next recompute.
     route_miles: Mapped[float | None] = mapped_column(Float, default=None)
 
-    # [[latitude, longitude], ...] along the roads, thinned to something
-    # a whole-trip overview can draw. This is what makes the map show the
-    # drive instead of a straight line between two pins.
+    # [[latitude, longitude], ...] along the roads for *this leg only* —
+    # from the previous waypoint to this one. Drawn in order, so a trip
+    # that doubles back retraces the same road and the numbered pins say
+    # which way round it went.
     route_geometry: Mapped[list | None] = mapped_column(JSON, default=None)
 
     route_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
@@ -91,10 +108,11 @@ class Destination(Base, TimestampMixin):
 
     @property
     def plottable(self) -> bool:
-        """Whether this rung can be a pin on the map. A destination
-        without coordinates still counts on the ladder and still gets its
-        sentence — it just isn't a place with a location on Earth, or
-        nobody has looked its coordinates up yet."""
+        """Whether this rung can be a pin on the map, and therefore a
+        waypoint on the trip. A destination without coordinates still
+        counts on the ladder and still gets its sentence — it just isn't
+        a place with a location on Earth, or nobody has looked its
+        coordinates up yet."""
         return self.latitude is not None and self.longitude is not None
 
     @property

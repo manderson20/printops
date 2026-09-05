@@ -7,16 +7,19 @@ import {
   createDestination,
   createDestinations,
   deleteDestination,
+  getItinerary,
   getRoadTripSettings,
   listDestinations,
   listLocations,
-  refreshDestinationRoute,
+  refreshItinerary,
+  reorderDestinations,
   suggestDestinations,
   updateDestination,
   updateRoadTripSettings,
   type Destination,
   type DestinationInput,
   type DestinationSuggestion,
+  type Itinerary,
   type Location,
   type RoadTripSettings,
 } from "@/lib/api";
@@ -152,10 +155,16 @@ function DraftFields({
 
 function DestinationRow({
   destination,
+  canMoveUp,
+  canMoveDown,
+  onMove,
   onSaved,
   onError,
 }: {
   destination: Destination;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onMove: (destination: Destination, direction: -1 | 1) => void;
   onSaved: () => void;
   onError: (message: string) => void;
 }) {
@@ -176,12 +185,6 @@ function DestinationRow({
     }
   }
 
-  // Always shorter than the drive, so a driving figure at or below it is
-  // a number somebody guessed rather than looked up.
-  const suspicious =
-    destination.straight_line_miles !== null &&
-    destination.miles < destination.straight_line_miles;
-
   const overridden =
     destination.route_miles !== null &&
     Math.abs(destination.route_miles - destination.miles) > 0.05;
@@ -191,6 +194,11 @@ function DestinationRow({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
+            {destination.position !== null && (
+              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-[11px] font-semibold text-zinc-700 dark:bg-zinc-700 dark:text-zinc-100">
+                {destination.position}
+              </span>
+            )}
             <span
               className={`font-medium ${destination.enabled ? "" : "text-zinc-500 line-through"}`}
             >
@@ -209,20 +217,16 @@ function DestinationRow({
             )}
           </div>
           <p className="text-xs text-zinc-500">
-            {destination.miles.toLocaleString()} miles
-            {destination.has_route && !overridden && " — measured by road"}
-            {overridden && ` — your figure; the road measures ${destination.route_miles}`}
-            {destination.straight_line_miles !== null && (
-              <span className="ml-2">
-                · {destination.straight_line_miles.toLocaleString()} in a straight line
+            {destination.leg_miles !== null && destination.position !== null && (
+              <span>
+                {destination.leg_miles.toLocaleString()} miles from{" "}
+                {destination.position === 1 ? "home" : "the last stop"} ·{" "}
               </span>
             )}
+            <strong>{destination.miles.toLocaleString()}</strong> miles into the trip
+            {destination.has_route && !overridden && " — measured by road"}
+            {overridden && ` — your figure; the trip measures ${destination.route_miles}`}
           </p>
-          {suspicious && (
-            <p className="text-xs text-amber-700 dark:text-amber-400">
-              Shorter than the straight-line distance, which no road can be.
-            </p>
-          )}
           {destination.route_error && (
             <p className="text-xs text-amber-700 dark:text-amber-400">
               No driving route: {destination.route_error}
@@ -230,17 +234,27 @@ function DestinationRow({
           )}
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          {destination.latitude !== null && (
-            <Button
-              variant="secondary"
-              className="!px-2 !py-1 text-xs"
-              disabled={saving}
-              onClick={() =>
-                run(() => refreshDestinationRoute(destination.id), "Couldn't fetch the route")
-              }
-            >
-              {saving ? "Measuring…" : destination.has_route ? "Refresh route" : "Get route"}
-            </Button>
+          {destination.position !== null && (
+            <>
+              <Button
+                variant="secondary"
+                className="!px-2 !py-1 text-xs"
+                disabled={saving || !canMoveUp}
+                onClick={() => onMove(destination, -1)}
+                aria-label="Move earlier in the trip"
+              >
+                ↑
+              </Button>
+              <Button
+                variant="secondary"
+                className="!px-2 !py-1 text-xs"
+                disabled={saving || !canMoveDown}
+                onClick={() => onMove(destination, 1)}
+                aria-label="Move later in the trip"
+              >
+                ↓
+              </Button>
+            </>
           )}
           <Button
             variant="secondary"
@@ -507,6 +521,7 @@ function RoutingCard({ onChanged }: { onChanged: () => void }) {
 
 export default function RoadTripSettingsPage() {
   const [destinations, setDestinations] = useState<Destination[] | null>(null);
+  const [itinerary, setItinerary] = useState<Itinerary | null>(null);
   const [home, setHome] = useState<Location | null | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -520,6 +535,9 @@ export default function RoadTripSettingsPage() {
     listLocations()
       .then((locations) => setHome(locations.find((location) => location.is_home) ?? null))
       .catch(() => setHome(null));
+    getItinerary()
+      .then(setItinerary)
+      .catch(() => setItinerary(null));
   }, []);
 
   useEffect(load, [load]);
@@ -538,9 +556,49 @@ export default function RoadTripSettingsPage() {
     }
   }
 
+  /** Swap a waypoint with its neighbour and re-drive the trip. The whole
+   *  order is sent, not the one that moved, because a waypoint's distance
+   *  is the sum of the legs before it — moving one changes everything
+   *  after it, and the server has to see the trip it is being asked to
+   *  drive rather than infer it. */
+  async function handleMove(destination: Destination, direction: -1 | 1) {
+    if (!destinations) return;
+    const waypoints = destinations.filter((d) => d.position !== null);
+    const index = waypoints.indexOf(destination);
+    const swapWith = index + direction;
+    if (index < 0 || swapWith < 0 || swapWith >= waypoints.length) return;
+
+    const reordered = [...waypoints];
+    [reordered[index], reordered[swapWith]] = [reordered[swapWith], reordered[index]];
+
+    setSaving(true);
+    setError(null);
+    try {
+      await reorderDestinations(reordered.map((d) => d.id));
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't reorder the trip");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const enabledCount = destinations?.filter((destination) => destination.enabled).length ?? 0;
   const withoutRoutes =
     destinations?.filter((d) => d.latitude !== null && !d.has_route).length ?? 0;
+
+  async function handleDriveTrip() {
+    setSaving(true);
+    setError(null);
+    try {
+      setItinerary(await refreshItinerary());
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't drive the trip");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -554,9 +612,15 @@ export default function RoadTripSettingsPage() {
           coordinates are also the pins on the map, and the roads drawn between them.
         </p>
         <p className="mb-4 text-xs text-zinc-500">
-          Miles are <strong>driving</strong> miles, measured by a routing service when you save a
-          destination — 123 to Jefferson City, not the 96 a crow would fly. Type a figure of your
-          own only if you want to override that; it will survive every later refresh.
+          It is <strong>one trip</strong>, visiting these places in this order. A milestone is how
+          far the district has to have driven to have reached that place <em>on this trip</em> —
+          so Jefferson City is 130 miles in if the trip goes via Marceline first, not the 123 it
+          would be as a drive of its own. Use ↑ and ↓ to change the order; everything after the
+          move changes with it.
+        </p>
+        <p className="mb-4 text-xs text-zinc-500">
+          Miles are <strong>driving</strong> miles, measured by a routing service. Type a figure of
+          your own only if you want to override one; it will survive every later refresh.
         </p>
 
         {home === null && (
@@ -588,23 +652,53 @@ export default function RoadTripSettingsPage() {
 
         {destinations !== null && destinations.length > 0 && (
           <ul className="mb-4">
-            {destinations.map((destination) => (
-              <DestinationRow
-                key={destination.id}
-                destination={destination}
-                onSaved={load}
-                onError={setError}
-              />
-            ))}
+            {destinations.map((destination) => {
+              const waypoints = destinations.filter((d) => d.position !== null);
+              const index = waypoints.indexOf(destination);
+              return (
+                <DestinationRow
+                  key={destination.id}
+                  destination={destination}
+                  canMoveUp={index > 0}
+                  canMoveDown={index >= 0 && index < waypoints.length - 1}
+                  onMove={handleMove}
+                  onSaved={load}
+                  onError={setError}
+                />
+              );
+            })}
           </ul>
+        )}
+
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-black/[.02] px-3 py-2 dark:bg-white/[.03]">
+          <Button variant="secondary" disabled={saving} onClick={handleDriveTrip}>
+            {saving ? "Driving the trip…" : "Drive the trip again"}
+          </Button>
+          <span className="text-xs text-zinc-500">
+            {itinerary && itinerary.total_miles !== null ? (
+              <>
+                {itinerary.waypoints} stop{itinerary.waypoints === 1 ? "" : "s"} ·{" "}
+                <strong>{itinerary.total_miles.toLocaleString()} miles</strong> end to end
+                {itinerary.last_driven_at &&
+                  ` · last driven ${new Date(itinerary.last_driven_at).toLocaleString()}`}
+              </>
+            ) : (
+              "The trip hasn't been driven yet."
+            )}
+          </span>
+        </div>
+
+        {itinerary?.error && (
+          <p className="mb-4 text-xs text-amber-700 dark:text-amber-400">
+            The last attempt to drive the trip didn&apos;t land: {itinerary.error}
+          </p>
         )}
 
         {withoutRoutes > 0 && (
           <p className="mb-4 text-xs text-amber-700 dark:text-amber-400">
-            {withoutRoutes} destination{withoutRoutes === 1 ? " has" : "s have"} no driving route
-            yet, so {withoutRoutes === 1 ? "its leg is" : "their legs are"} drawn as straight
-            lines and the distance is whatever was typed. <strong>Get route</strong> measures the
-            real drive.
+            {withoutRoutes} leg{withoutRoutes === 1 ? " is" : "s are"} drawn as a straight line,
+            with whatever distance was typed. <strong>Drive the trip again</strong> measures the
+            real roads.
           </p>
         )}
 

@@ -428,17 +428,25 @@ class RouteStopOut(BaseModel):
 
     name: str
     label: str
+    # Where it falls in the trip, counting from 1 — the number on the pin,
+    # which is what makes a doubled-back route readable without drawing
+    # the same road twice.
+    position: int
+    # Every leg up to and including this one: how far the district must
+    # have driven to have got here on this trip.
     miles: float
+    # Just this leg, from the previous waypoint.
+    leg_miles: float
     latitude: float
     longitude: float
     reached: bool
-    # [[latitude, longitude], ...] from home along real roads, fetched
-    # once when the destination was configured and stored on the row —
-    # never requested while this response is being built. Null when no
-    # route was ever fetched, and the client draws a straight line for
-    # that leg instead.
+    # [[latitude, longitude], ...] along real roads for this leg, fetched
+    # once when the trip was last driven and stored on the row — never
+    # requested while this response is being built. Null when the trip has
+    # never been driven, and the client draws a straight line for that leg
+    # instead.
     geometry: list[list[float]] | None = None
-    # The stop being driven towards: the nearest one not yet reached.
+    # The waypoint being driven towards: the nearest one not yet reached.
     is_target: bool = False
 
 

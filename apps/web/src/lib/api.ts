@@ -3230,15 +3230,21 @@ export type DistrictRoute = {
 export type RouteStop = {
   name: string;
   label: string;
+  /** Where it falls in the trip, counting from 1 — the number on the pin. */
+  position: number;
+  /** Every leg up to and including this one: how far the district must
+   *  have driven to have got here on this trip. */
   miles: number;
+  /** Just this leg, from the previous waypoint. */
+  leg_miles: number;
   latitude: number;
   longitude: number;
   reached: boolean;
-  /** [[latitude, longitude], ...] from home along real roads, fetched
-   *  once when the destination was configured. Null when no route was
-   *  ever fetched, and the map draws a straight line for that leg. */
+  /** [[latitude, longitude], ...] along real roads for *this leg* — from
+   *  the previous waypoint to this one. Null when the trip has never been
+   *  driven, and the map draws a straight line for that leg. */
   geometry: [number, number][] | null;
-  /** The stop being driven towards — the nearest one not yet reached. */
+  /** The waypoint being driven towards — the nearest one not yet reached. */
   is_target: boolean;
 };
 
@@ -3392,9 +3398,12 @@ export type Destination = {
   id: string;
   name: string;
   short_name: string | null;
-  /** Road miles from home — what the sentence claims, and what a reader
-   *  checks against their own drive. Normally a copy of route_miles; the
-   *  two differ only when an admin has typed a distance of their own. */
+  /** Where this waypoint falls in the trip, counting from 1. Null for a
+   *  rung that is a distance and not a place. */
+  position: number | null;
+  /** How far the district must have driven to have reached here — every
+   *  leg of the trip up to and including this one. Normally a copy of
+   *  route_miles; the two differ only when an admin typed their own. */
   miles: number;
   latitude: number | null;
   longitude: number | null;
@@ -3403,7 +3412,9 @@ export type Destination = {
    *  shorter than the drive, so it is a floor to correct upward and
    *  never an answer to accept. */
   straight_line_miles: number | null;
-  /** What the road network measured, if it has been asked. */
+  /** The drive from the previous waypoint, or from home for the first. */
+  leg_miles: number | null;
+  /** The measured running total to here, if the trip has been driven. */
   route_miles: number | null;
   /** Whether the map can draw this leg along real roads. */
   has_route: boolean;
@@ -3449,6 +3460,15 @@ export type DestinationBulkResult = {
 export type RoadTripSettings = {
   routing_base_url: string;
   routing_enabled: boolean;
+};
+
+/** The trip as a whole. A waypoint knows its own leg and its own running
+ *  total; only this knows where the journey ends. */
+export type Itinerary = {
+  waypoints: number;
+  total_miles: number | null;
+  last_driven_at: string | null;
+  error: string | null;
 };
 
 export async function listLocations(): Promise<Location[]> {
@@ -3541,11 +3561,30 @@ export async function createDestinations(
   return response.json();
 }
 
-export async function refreshDestinationRoute(id: string): Promise<Destination> {
-  const response = await authorizedFetch(
-    `/api/v1/road-trip/destinations/${id}/route`,
-    { method: "POST" },
-  );
+export async function getItinerary(): Promise<Itinerary> {
+  const response = await authorizedFetch("/api/v1/road-trip/itinerary");
+  return response.json();
+}
+
+/** Drive the whole trip again — one request to the routing service for
+ *  the entire itinerary, not one per leg. */
+export async function refreshItinerary(): Promise<Itinerary> {
+  const response = await authorizedFetch("/api/v1/road-trip/itinerary/route", {
+    method: "POST",
+  });
+  return response.json();
+}
+
+/** Set the order the trip is driven in. Takes every waypoint id, so a
+ *  reorder is a statement about the whole trip rather than a nudge whose
+ *  meaning depends on what else moved since the page loaded. */
+export async function reorderDestinations(
+  destinationIds: string[],
+): Promise<Destination[]> {
+  const response = await authorizedFetch("/api/v1/road-trip/destinations/order", {
+    method: "PUT",
+    body: JSON.stringify({ destination_ids: destinationIds }),
+  });
   return response.json();
 }
 

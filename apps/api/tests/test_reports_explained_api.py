@@ -401,12 +401,16 @@ async def test_the_route_carries_configuration_and_no_usage(
     assert set(route["stops"][0]) == {
         "name",
         "label",
+        # Where it falls in the trip, which is what makes a doubled-back
+        # route readable without drawing the same road twice.
+        "position",
         "miles",
+        "leg_miles",
         "latitude",
         "longitude",
         "reached",
-        # The shape of the road to this stop, fetched when an admin saved
-        # the destination. Configuration like every other field here — it
+        # The shape of the road for this leg, fetched when an admin last
+        # drove the trip. Configuration like every other field here — it
         # describes a public highway, not anybody's printing.
         "geometry",
         "is_target",

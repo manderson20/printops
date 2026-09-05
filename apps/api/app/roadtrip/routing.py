@@ -59,6 +59,21 @@ class DrivingRoute:
     geometry: list[list[float]]
 
 
+@dataclass(frozen=True)
+class Itinerary:
+    """One trip through every waypoint in order, leg by leg.
+
+    Asked for in a single request rather than one per leg. That is not
+    only politeness to the routing service: a trip routed all at once is
+    guaranteed internally consistent, where three separate calls made
+    minutes apart can disagree about a road that closed in between and
+    leave the legs not meeting at the waypoint they share.
+    """
+
+    total_miles: float
+    legs: list[DrivingRoute]
+
+
 def _thin(points: list[list[float]], limit: int = MAX_GEOMETRY_POINTS) -> list[list[float]]:
     """Evenly drop points until at most `limit` remain, always keeping
     the two ends. Even sampling rather than Douglas-Peucker: the result is
@@ -129,3 +144,85 @@ async def fetch_driving_route(
         miles=round(route["distance"] / METRES_PER_MILE, 1),
         geometry=_thin([[point[1], point[0]] for point in coordinates]),
     )
+
+
+async def fetch_itinerary(
+    *,
+    base_url: str,
+    points: list[tuple[float, float]],
+) -> Itinerary:
+    """The whole trip: home, then every waypoint in order.
+
+    `points` is home first and at least one waypoint after it. Comes back
+    as one leg per hop, each with its own distance and shape, so a
+    waypoint's milestone is the sum of the legs up to it — which is what
+    "we have driven far enough to reach Jefferson City" means once the
+    trip goes via Marceline first.
+
+    Legs are thinned individually rather than the whole trip at once, so
+    a short first leg keeps its shape instead of being sampled away by a
+    long one later in the journey.
+    """
+    if len(points) < 2:
+        raise RoutingError("A trip needs a start and at least one waypoint.")
+
+    path = ";".join(f"{longitude},{latitude}" for latitude, longitude in points)
+    url = f"{base_url.rstrip('/')}/route/v1/driving/{path}"
+
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=True) as client:
+        try:
+            response = await client.get(
+                url,
+                params={
+                    "overview": "simplified",
+                    "geometries": "geojson",
+                    # One geometry per leg rather than one for the whole
+                    # trip: a leg is what a waypoint owns, and splitting a
+                    # combined line back into legs afterwards would mean
+                    # guessing where one ended.
+                    "steps": "true",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise RoutingError(f"Could not reach the routing service: {exc}") from exc
+
+    if response.status_code != 200:
+        raise RoutingError(
+            f"The routing service returned HTTP {response.status_code}: {response.text[:200]}"
+        )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RoutingError("The routing service returned something that wasn't JSON.") from exc
+
+    if payload.get("code") != "Ok":
+        raise RoutingError(
+            f"No driving route: {payload.get('code', 'unknown')}"
+            f"{' — ' + payload['message'] if payload.get('message') else ''}"
+        )
+    routes = payload.get("routes") or []
+    if not routes:
+        raise RoutingError("The routing service found no route through those places.")
+
+    route = routes[0]
+    legs = route.get("legs") or []
+    if len(legs) != len(points) - 1:
+        raise RoutingError(
+            f"The routing service returned {len(legs)} legs for {len(points) - 1} hops."
+        )
+
+    built: list[DrivingRoute] = []
+    for leg in legs:
+        coordinates: list[list[float]] = []
+        for step in leg.get("steps") or []:
+            for point in (step.get("geometry") or {}).get("coordinates") or []:
+                coordinates.append([point[1], point[0]])
+        if not coordinates:
+            raise RoutingError("The routing service returned a leg with no shape.")
+        built.append(
+            DrivingRoute(
+                miles=round(leg["distance"] / METRES_PER_MILE, 1), geometry=_thin(coordinates)
+            )
+        )
+
+    return Itinerary(total_miles=round(route["distance"] / METRES_PER_MILE, 1), legs=built)

@@ -11,7 +11,7 @@ from app.db import get_db
 from app.main import app
 from app.models.base import Base
 from app.models.printer import Printer
-from app.roadtrip.routing import DrivingRoute, RoutingError
+from app.roadtrip.routing import DrivingRoute, Itinerary, RoutingError
 
 
 @pytest_asyncio.fixture
@@ -45,40 +45,55 @@ def auth_headers(client):
 
 
 BROOKFIELD = {"latitude": 39.7864, "longitude": -93.0735}
+MARCELINE = {"latitude": 39.7117, "longitude": -92.9477}
 JEFFERSON_CITY = {"latitude": 38.5767, "longitude": -92.1735}
 
-# A stand-in for the road network. Real driving miles for the one journey
-# these tests use, so an assertion that the drive beats the crow flies is
-# checking arithmetic rather than a magic number.
-FAKE_ROUTE = DrivingRoute(
-    miles=122.6,
-    geometry=[[39.7864, -93.0735], [39.2, -92.6], [38.5767, -92.1735]],
+# A stand-in for the road network, with the real leg distances for the
+# trip these tests use: Brookfield to Marceline is 12.1 miles, and
+# Marceline on to Jefferson City is another 117.8 — which doubles back
+# past Brookfield, since Marceline is north-west and Jefferson City is
+# south-east.
+LEG_ONE = DrivingRoute(miles=12.1, geometry=[[39.7864, -93.0735], [39.7117, -92.9477]])
+LEG_TWO = DrivingRoute(
+    miles=117.8, geometry=[[39.7117, -92.9477], [39.2, -92.6], [38.5767, -92.1735]]
 )
 
 
+def _trip(*legs: DrivingRoute) -> Itinerary:
+    return Itinerary(total_miles=round(sum(leg.miles for leg in legs), 1), legs=list(legs))
+
+
 @pytest.fixture
-def routing_answers(monkeypatch):
-    """Swaps the routing call out. Nothing in this file touches a real
-    routing service: what is worth testing is what PrintOps does with an
-    answer, not whether somebody's demo server was up during CI."""
+def trip_answers(monkeypatch):
+    """Swaps the routing call out.
+
+    Nothing in this file touches a real routing service: what is worth
+    testing is what PrintOps does with an answer, not whether somebody's
+    demo server was up during CI. The stub returns as many legs as it was
+    asked for hops, because the real one does and the caller checks.
+    """
 
     def install(result):
-        async def fake(**kwargs):
+        async def fake(*, base_url, points):
             if isinstance(result, Exception):
                 raise result
-            return result
+            hops = len(points) - 1
+            legs = list(result.legs)[:hops]
+            while len(legs) < hops:
+                legs.append(LEG_TWO)
+            return Itinerary(total_miles=round(sum(leg.miles for leg in legs), 1), legs=legs)
 
-        monkeypatch.setattr("app.routers.road_trip.fetch_driving_route", fake)
+        monkeypatch.setattr("app.roadtrip.itinerary.fetch_itinerary", fake)
 
     return install
 
 
 @pytest.fixture(autouse=True)
-def routing_off_by_default(routing_answers):
+def routing_off_by_default(trip_answers):
     """Every test that does not say otherwise gets a routing service that
     cannot be reached, so a test which forgot to stub it fails loudly
     rather than reaching the internet from CI."""
-    routing_answers(RoutingError("no routing service in tests"))
+    trip_answers(RoutingError("no routing service in tests"))
 
 
 def _make_location(client, auth_headers, **fields):
@@ -275,7 +290,7 @@ def test_a_destination_can_be_paused_without_losing_the_figure(client, auth_head
     assert updated["miles"] == 12.0
 
 
-# --- the drive, not the crow flies -------------------------------------
+# --- one trip, in order ------------------------------------------------
 
 
 def _home_with_coordinates(client, auth_headers):
@@ -284,120 +299,197 @@ def _home_with_coordinates(client, auth_headers):
     ).json()
 
 
-def test_a_destination_with_coordinates_gets_its_distance_measured(
-    client, auth_headers, routing_answers
-):
-    """The point of the whole thing: nobody types 122.6."""
-    _home_with_coordinates(client, auth_headers)
-    routing_answers(FAKE_ROUTE)
-
-    created = client.post(
-        "/api/v1/road-trip/destinations",
-        headers=auth_headers,
-        json={"name": "Brookfield to Jefferson City", **JEFFERSON_CITY},
+def _add(client, auth_headers, name, **fields):
+    return client.post(
+        "/api/v1/road-trip/destinations", headers=auth_headers, json={"name": name, **fields}
     )
+
+
+def test_a_waypoints_distance_is_the_trip_so_far_not_the_direct_drive(
+    client, auth_headers, trip_answers
+):
+    """The whole point of waypoints. Jefferson City is 122.6 miles as a
+    drive of its own, and 129.9 into a trip that goes via Marceline
+    first — and the ladder uses the second, because that is the road
+    actually drawn beneath it."""
+    _home_with_coordinates(client, auth_headers)
+    trip_answers(_trip(LEG_ONE, LEG_TWO))
+
+    _add(client, auth_headers, "Marceline", **MARCELINE)
+    _add(client, auth_headers, "Jefferson City", **JEFFERSON_CITY)
+
+    listed = client.get("/api/v1/road-trip/destinations", headers=auth_headers).json()
+    assert [d["name"] for d in listed] == ["Marceline", "Jefferson City"]
+    assert [d["position"] for d in listed] == [1, 2]
+    assert [d["leg_miles"] for d in listed] == [12.1, 117.8]
+    assert [d["miles"] for d in listed] == [12.1, 129.9]
+
+
+def test_a_waypoint_keeps_the_shape_of_its_own_leg(client, auth_headers, trip_answers):
+    """Not the drive from home. A leg is what a waypoint owns, and drawing
+    legs in order is what lets a doubled-back trip retrace one road."""
+    _home_with_coordinates(client, auth_headers)
+    trip_answers(_trip(LEG_ONE, LEG_TWO))
+    _add(client, auth_headers, "Marceline", **MARCELINE)
+    _add(client, auth_headers, "Jefferson City", **JEFFERSON_CITY)
+
+    listed = client.get("/api/v1/road-trip/destinations", headers=auth_headers).json()
+    assert all(d["has_route"] for d in listed)
+
+
+def test_a_new_waypoint_joins_the_end_of_the_trip(client, auth_headers, trip_answers):
+    """Where it belongs is a decision for the reorder control, not
+    something to infer from how far away it happens to be."""
+    _home_with_coordinates(client, auth_headers)
+    trip_answers(_trip(LEG_ONE, LEG_TWO))
+    _add(client, auth_headers, "Jefferson City", **JEFFERSON_CITY)
+    _add(client, auth_headers, "Marceline", **MARCELINE)
+
+    listed = client.get("/api/v1/road-trip/destinations", headers=auth_headers).json()
+    assert [d["name"] for d in listed] == ["Jefferson City", "Marceline"]
+    assert [d["position"] for d in listed] == [1, 2]
+
+
+def test_reordering_changes_every_distance_after_the_move(client, auth_headers, trip_answers):
+    _home_with_coordinates(client, auth_headers)
+    trip_answers(_trip(LEG_ONE, LEG_TWO))
+    first = _add(client, auth_headers, "Marceline", **MARCELINE).json()
+    second = _add(client, auth_headers, "Jefferson City", **JEFFERSON_CITY).json()
+
+    reordered = client.put(
+        "/api/v1/road-trip/destinations/order",
+        headers=auth_headers,
+        json={"destination_ids": [second["id"], first["id"]]},
+    ).json()
+    assert [d["name"] for d in reordered] == ["Jefferson City", "Marceline"]
+    assert [d["position"] for d in reordered] == [1, 2]
+    # Re-driven, so the running totals belong to the new order.
+    assert reordered[0]["miles"] < reordered[1]["miles"]
+
+
+def test_a_partial_order_is_refused(client, auth_headers, trip_answers):
+    """A reorder is a statement about the whole trip, not a nudge whose
+    meaning depends on what else moved since the page loaded."""
+    _home_with_coordinates(client, auth_headers)
+    trip_answers(_trip(LEG_ONE, LEG_TWO))
+    first = _add(client, auth_headers, "Marceline", **MARCELINE).json()
+    _add(client, auth_headers, "Jefferson City", **JEFFERSON_CITY)
+
+    response = client.put(
+        "/api/v1/road-trip/destinations/order",
+        headers=auth_headers,
+        json={"destination_ids": [first["id"]]},
+    )
+    assert response.status_code == 422
+
+
+def test_removing_a_waypoint_brings_the_rest_closer(client, auth_headers, trip_answers):
+    _home_with_coordinates(client, auth_headers)
+    trip_answers(_trip(LEG_ONE, LEG_TWO))
+    first = _add(client, auth_headers, "Marceline", **MARCELINE).json()
+    _add(client, auth_headers, "Jefferson City", **JEFFERSON_CITY)
+
+    trip_answers(_trip(LEG_TWO))
+    client.delete(f"/api/v1/road-trip/destinations/{first['id']}", headers=auth_headers)
+
+    listed = client.get("/api/v1/road-trip/destinations", headers=auth_headers).json()
+    assert [d["name"] for d in listed] == ["Jefferson City"]
+    assert listed[0]["position"] == 1
+    assert listed[0]["miles"] == 117.8
+
+
+def test_a_rung_with_no_coordinates_is_on_the_ladder_but_not_the_trip(client, auth_headers):
+    """ "all the way to the Moon" is a distance, not a place to drive to."""
+    created = _add(client, auth_headers, "all the way to the Moon", miles=238900.0)
     assert created.status_code == 201
     body = created.json()
-    assert body["miles"] == 122.6
-    assert body["route_miles"] == 122.6
-    assert body["has_route"] is True
-    assert body["route_error"] is None
-    # And it beats the straight line, which is the fact that made the old
-    # map wrong.
-    assert body["miles"] > body["straight_line_miles"]
+    assert body["position"] is None
+    assert body["has_route"] is False
+    assert body["miles"] == 238900.0
 
 
-def test_a_typed_distance_is_not_overwritten_by_the_route(client, auth_headers, routing_answers):
-    """An admin who types 120 because that is what the road signs say
-    keeps 120."""
+def test_the_trip_comes_before_the_rungs_beyond_it(client, auth_headers, trip_answers):
     _home_with_coordinates(client, auth_headers)
-    routing_answers(FAKE_ROUTE)
+    trip_answers(_trip(LEG_ONE, LEG_TWO))
+    _add(client, auth_headers, "all the way to the Moon", miles=238900.0)
+    _add(client, auth_headers, "Marceline", **MARCELINE)
 
-    body = client.post(
-        "/api/v1/road-trip/destinations",
-        headers=auth_headers,
-        json={"name": "Brookfield to Jefferson City", "miles": 120.0, **JEFFERSON_CITY},
-    ).json()
-    assert body["miles"] == 120.0
-    assert body["route_miles"] == 122.6
+    listed = client.get("/api/v1/road-trip/destinations", headers=auth_headers).json()
+    assert [d["name"] for d in listed] == ["Marceline", "all the way to the Moon"]
 
 
-def test_a_destination_with_no_coordinates_needs_a_distance(client, auth_headers):
-    """ "all the way to the Moon" is a distance and nothing else."""
-    created = client.post(
-        "/api/v1/road-trip/destinations",
-        headers=auth_headers,
-        json={"name": "all the way to the Moon", "miles": 238900.0},
-    )
-    assert created.status_code == 201
-    assert created.json()["has_route"] is False
-
-
-def test_a_destination_with_neither_is_refused(client, auth_headers):
-    response = client.post(
-        "/api/v1/road-trip/destinations", headers=auth_headers, json={"name": "nowhere"}
-    )
-    assert response.status_code == 422
-
-
-def test_coordinates_with_no_reachable_route_and_no_distance_is_refused(
-    client, auth_headers, routing_answers
-):
-    """Rather than quietly storing the straight line — a crow-flies number
-    inside a sentence that claims a drive."""
+def test_a_typed_distance_survives_the_trip_being_driven(client, auth_headers, trip_answers):
+    """An admin who types a figure because that is what the road signs say
+    keeps it."""
     _home_with_coordinates(client, auth_headers)
-    routing_answers(RoutingError("Could not reach the routing service: timeout"))
+    trip_answers(_trip(LEG_ONE))
 
-    response = client.post(
-        "/api/v1/road-trip/destinations",
-        headers=auth_headers,
-        json={"name": "Brookfield to Jefferson City", **JEFFERSON_CITY},
-    )
-    assert response.status_code == 422
-    assert "Couldn't measure the drive" in response.json()["detail"]
+    body = _add(client, auth_headers, "Marceline", miles=15.0, **MARCELINE).json()
+    assert body["miles"] == 15.0
+    assert body["route_miles"] == 12.1
 
 
-def test_a_route_can_be_fetched_again_later(client, auth_headers, routing_answers):
-    """The nine seeded rungs all start with an estimate, because the
-    migration deliberately makes no HTTP calls."""
+def test_a_waypoint_with_no_reachable_trip_is_refused(client, auth_headers, trip_answers):
+    """Rather than quietly storing nothing, or a straight line dressed up
+    as a drive."""
     _home_with_coordinates(client, auth_headers)
-    estimate = client.post(
-        "/api/v1/road-trip/destinations",
-        headers=auth_headers,
-        json={"name": "Brookfield to Jefferson City", "miles": 120.0, **JEFFERSON_CITY},
-    ).json()
-    assert estimate["has_route"] is False
-    assert estimate["route_error"] is not None
+    trip_answers(RoutingError("Could not reach the routing service: timeout"))
 
-    routing_answers(FAKE_ROUTE)
-    refreshed = client.post(
-        f"/api/v1/road-trip/destinations/{estimate['id']}/route", headers=auth_headers
-    ).json()
-    assert refreshed["miles"] == 122.6
-    assert refreshed["has_route"] is True
-    assert refreshed["route_error"] is None
-
-
-def test_refetching_a_rung_with_no_coordinates_is_refused(client, auth_headers):
-    moon = _make_destination(client, auth_headers, name="the Moon", miles=238900.0).json()
-    response = client.post(
-        f"/api/v1/road-trip/destinations/{moon['id']}/route", headers=auth_headers
-    )
+    response = _add(client, auth_headers, "Marceline", **MARCELINE)
     assert response.status_code == 422
+    assert "Couldn't measure the trip" in response.json()["detail"]
 
 
-def test_routing_can_be_switched_off(client, auth_headers, routing_answers):
+def test_the_whole_trip_can_be_driven_again(client, auth_headers, trip_answers):
+    """The seeded rungs all start with an estimate, because 0073 and 0074
+    deliberately make no HTTP calls."""
+    _home_with_coordinates(client, auth_headers)
+    _add(client, auth_headers, "Marceline", miles=12.0, **MARCELINE)
+
+    trip_answers(_trip(LEG_ONE))
+    summary = client.post("/api/v1/road-trip/itinerary/route", headers=auth_headers).json()
+    assert summary["waypoints"] == 1
+    assert summary["total_miles"] == 12.1
+    assert summary["error"] is None
+
+    listed = client.get("/api/v1/road-trip/destinations", headers=auth_headers).json()
+    assert listed[0]["miles"] == 12.1
+
+
+def test_a_failed_trip_keeps_the_distances_it_had(client, auth_headers, trip_answers):
+    """A trip that blanked itself every time a routing service hiccuped
+    would lose a correct answer to a temporary problem."""
+    _home_with_coordinates(client, auth_headers)
+    _add(client, auth_headers, "Marceline", miles=12.0, **MARCELINE)
+
+    trip_answers(RoutingError("service unavailable"))
+    client.post("/api/v1/road-trip/itinerary/route", headers=auth_headers)
+
+    listed = client.get("/api/v1/road-trip/destinations", headers=auth_headers).json()
+    assert listed[0]["miles"] == 12.0
+    assert "service unavailable" in listed[0]["route_error"]
+
+
+def test_the_itinerary_summary_reports_the_end_of_the_journey(client, auth_headers, trip_answers):
+    _home_with_coordinates(client, auth_headers)
+    trip_answers(_trip(LEG_ONE, LEG_TWO))
+    _add(client, auth_headers, "Marceline", **MARCELINE)
+    _add(client, auth_headers, "Jefferson City", **JEFFERSON_CITY)
+
+    summary = client.get("/api/v1/road-trip/itinerary", headers=auth_headers).json()
+    assert summary["waypoints"] == 2
+    assert summary["total_miles"] == 129.9
+    assert summary["last_driven_at"] is not None
+
+
+def test_routing_can_be_switched_off(client, auth_headers, trip_answers):
     """For an installation with no outbound internet, every save pausing
     twenty seconds to fail is worse than not trying."""
     _home_with_coordinates(client, auth_headers)
-    routing_answers(FAKE_ROUTE)
+    trip_answers(_trip(LEG_ONE))
     client.put("/api/v1/road-trip/settings", headers=auth_headers, json={"routing_enabled": False})
 
-    body = client.post(
-        "/api/v1/road-trip/destinations",
-        headers=auth_headers,
-        json={"name": "Brookfield to Jefferson City", "miles": 120.0, **JEFFERSON_CITY},
-    ).json()
+    body = _add(client, auth_headers, "Marceline", miles=12.0, **MARCELINE).json()
     assert body["has_route"] is False
     assert "switched off" in body["route_error"]
 
@@ -452,17 +544,32 @@ def test_suggesting_writes_nothing(client, auth_headers):
 # --- adding several at once --------------------------------------------
 
 
-def test_several_destinations_can_be_added_at_once(client, auth_headers, routing_answers):
+def test_several_waypoints_are_added_and_the_trip_driven_once(client, auth_headers, trip_answers):
+    """The reason this endpoint exists. Six separate creates would
+    re-drive the trip six times and throw the first five answers away."""
     _home_with_coordinates(client, auth_headers)
-    routing_answers(FAKE_ROUTE)
+    calls = {"n": 0}
+    original = _trip(LEG_ONE, LEG_TWO)
+
+    async def counting(*, base_url, points):
+        calls["n"] += 1
+        hops = len(points) - 1
+        legs = list(original.legs)[:hops]
+        while len(legs) < hops:
+            legs.append(LEG_TWO)
+        return Itinerary(total_miles=round(sum(leg.miles for leg in legs), 1), legs=legs)
+
+    import app.roadtrip.itinerary as itinerary_module
+
+    itinerary_module.fetch_itinerary = counting
 
     result = client.post(
         "/api/v1/road-trip/destinations/bulk",
         headers=auth_headers,
         json={
             "destinations": [
-                {"name": "Brookfield to Jefferson City", **JEFFERSON_CITY},
-                {"name": "Brookfield to Kirksville", "latitude": 40.1948, "longitude": -92.5832},
+                {"name": "Marceline", **MARCELINE},
+                {"name": "Jefferson City", **JEFFERSON_CITY},
             ]
         },
     )
@@ -470,56 +577,43 @@ def test_several_destinations_can_be_added_at_once(client, auth_headers, routing
     body = result.json()
     assert len(body["added"]) == 2
     assert body["skipped"] == []
+    assert calls["n"] == 1
 
 
-def test_one_unroutable_place_does_not_lose_the_others(client, auth_headers, routing_answers):
-    """Six routes fetched from a service that can time out on any of them
-    must not mean six lost when one fails."""
+def test_adding_one_that_already_exists_is_reported_not_fatal(client, auth_headers, trip_answers):
     _home_with_coordinates(client, auth_headers)
+    trip_answers(_trip(LEG_ONE))
+    _add(client, auth_headers, "Marceline", **MARCELINE)
 
-    calls = {"n": 0}
+    result = client.post(
+        "/api/v1/road-trip/destinations/bulk",
+        headers=auth_headers,
+        json={"destinations": [{"name": "Marceline", **MARCELINE}]},
+    ).json()
+    assert result["added"] == []
+    assert result["skipped"][0]["reason"] == "Already on the list."
 
-    async def sometimes(**kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise RoutingError("NoRoute — no road reaches Pearl City, HI")
-        return FAKE_ROUTE
 
-    import app.routers.road_trip as road_trip_router
-
-    road_trip_router.fetch_driving_route = sometimes
+def test_a_place_no_road_reaches_does_not_take_the_others_with_it(
+    client, auth_headers, trip_answers
+):
+    """OSRM is asked for one route through every waypoint, so an
+    unreachable place fails the whole trip. The good ones are kept and the
+    bad one is reported."""
+    _home_with_coordinates(client, auth_headers)
+    trip_answers(RoutingError("NoRoute — no road reaches Pearl City, HI"))
 
     result = client.post(
         "/api/v1/road-trip/destinations/bulk",
         headers=auth_headers,
         json={
             "destinations": [
-                {"name": "Brookfield to Pearl City, HI", "latitude": 21.4, "longitude": -157.97},
-                {"name": "Brookfield to Jefferson City", **JEFFERSON_CITY},
+                {"name": "Pearl City", "latitude": 21.4, "longitude": -157.97},
+                {"name": "all the way to the Moon", "miles": 238900.0},
             ]
         },
     ).json()
 
-    assert [d["name"] for d in result["added"]] == ["Brookfield to Jefferson City"]
-    assert [s["name"] for s in result["skipped"]] == ["Brookfield to Pearl City, HI"]
+    assert [d["name"] for d in result["added"]] == ["all the way to the Moon"]
+    assert [s["name"] for s in result["skipped"]] == ["Pearl City"]
     assert "NoRoute" in result["skipped"][0]["reason"]
-
-
-def test_adding_one_that_already_exists_is_reported_not_fatal(
-    client, auth_headers, routing_answers
-):
-    _home_with_coordinates(client, auth_headers)
-    routing_answers(FAKE_ROUTE)
-    client.post(
-        "/api/v1/road-trip/destinations",
-        headers=auth_headers,
-        json={"name": "Brookfield to Jefferson City", **JEFFERSON_CITY},
-    )
-
-    result = client.post(
-        "/api/v1/road-trip/destinations/bulk",
-        headers=auth_headers,
-        json={"destinations": [{"name": "Brookfield to Jefferson City", **JEFFERSON_CITY}]},
-    ).json()
-    assert result["added"] == []
-    assert result["skipped"][0]["reason"] == "Already on the list."

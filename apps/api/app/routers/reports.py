@@ -1029,7 +1029,9 @@ def _route_out(route) -> RouteOut | None:
             RouteStopOut(
                 name=stop.name,
                 label=stop.label,
+                position=stop.position,
                 miles=stop.miles,
+                leg_miles=stop.leg_miles,
                 latitude=stop.latitude,
                 longitude=stop.longitude,
                 reached=stop.reached,

@@ -8,6 +8,11 @@ class DestinationOut(BaseModel):
     id: UUID
     name: str
     short_name: str | None
+    # Where this waypoint falls in the trip, counting from 1. Null for a
+    # rung that is a distance and not a place.
+    position: int | None = None
+    # How far the district must have driven to have reached here — every
+    # leg of the trip up to and including this one.
     miles: float
     latitude: float | None
     longitude: float | None
@@ -17,10 +22,12 @@ class DestinationOut(BaseModel):
     # floor the real driving distance must sit above — it is never
     # written to `miles`, because the sentence claims a drive.
     straight_line_miles: float | None = None
-    # What the road network measured, if it has been asked. `miles` is
-    # normally a copy of this; the two differ when an admin has typed a
-    # distance of their own, which is the one case where the ladder
-    # should not follow the route.
+    # The drive from the previous waypoint, or from home for the first.
+    leg_miles: float | None = None
+    # The measured running total to here. `miles` is normally a copy of
+    # this; the two differ when an admin has typed a distance of their
+    # own, which is the one case where the ladder should not follow the
+    # trip.
     route_miles: float | None = None
     # Whether the map can draw this leg along real roads. The shape
     # itself is not sent here — it can be a few hundred points per leg,
@@ -71,6 +78,30 @@ class DestinationUpdate(BaseModel):
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     enabled: bool | None = None
+
+
+class DestinationOrder(BaseModel):
+    """The order the trip is driven in.
+
+    Every waypoint id, so a reorder is a statement about the whole trip
+    rather than a nudge whose meaning depends on what else moved since the
+    page was loaded.
+    """
+
+    destination_ids: list[UUID] = Field(min_length=1)
+
+
+class ItineraryOut(BaseModel):
+    """The trip as a whole. A waypoint knows its own leg and its own
+    running total; only this knows where the journey ends."""
+
+    waypoints: int
+    total_miles: float | None
+    last_driven_at: datetime | None
+    # The reason the last attempt to drive the trip did not land, if it
+    # did not. One reason for the whole trip, because the trip is routed
+    # as one request.
+    error: str | None
 
 
 class DestinationBulkCreate(BaseModel):

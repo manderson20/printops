@@ -39,15 +39,22 @@ const RETURN_TO_TRIP_MS = 90_000;
 
 type Point = [number, number];
 
-/** The road to a stop, or the straight line to it when no route was ever
- *  fetched. A visibly poorer drawing of a real fact, which is the right
- *  failure: the milestone is still true, it is just drawn as the crow
- *  flies until somebody presses Refresh route in Settings. */
-function pathTo(home: Point, stop: RouteStop): { points: Point[]; isRoad: boolean } {
+/** One leg: the road from the previous waypoint to this one, or the
+ *  straight line between them when the trip has never been driven. A
+ *  visibly poorer drawing of a real fact, which is the right failure —
+ *  the milestone is still true, it is just drawn as the crow flies until
+ *  somebody presses Refresh trip in Settings. */
+function leg(
+  home: Point,
+  stops: RouteStop[],
+  index: number,
+): { points: Point[]; isRoad: boolean } {
+  const stop = stops[index];
   if (stop.geometry && stop.geometry.length > 1) {
     return { points: stop.geometry, isRoad: true };
   }
-  return { points: [home, [stop.latitude, stop.longitude]], isRoad: false };
+  const previous = index === 0 ? home : ([stops[index - 1].latitude, stops[index - 1].longitude] as Point);
+  return { points: [previous, [stop.latitude, stop.longitude]], isRoad: false };
 }
 
 /** The first `fraction` of a polyline, measured by the polyline's own
@@ -104,8 +111,8 @@ function footnote(route: DistrictRoute): string | null {
   const straightLegs = route.stops.filter((stop) => !stop.geometry).length;
   if (straightLegs === 0) return null;
   return straightLegs === route.stops.length
-    ? "Drawn as straight lines — no driving routes have been fetched yet."
-    : `${straightLegs} of these are drawn as straight lines, having no driving route yet.`;
+    ? "Drawn as straight lines — the trip hasn't been driven yet."
+    : `${straightLegs} of these legs are drawn straight, having no driving route yet.`;
 }
 
 export function RouteMap({ route }: { route: DistrictRoute }) {
@@ -168,13 +175,14 @@ export function RouteMap({ route }: { route: DistrictRoute }) {
 
       L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 18 }).addTo(instance);
 
-      // Every road out of town, faint. Each one runs from home rather than
-      // from the previous stop, because that is what a milestone means:
-      // "far enough to have reached Chicago", measured from home, not "via
-      // Des Moines". Chaining them would quietly turn 410 miles into 1,200.
+      // The whole trip, leg by leg, in the order it is driven — later legs
+      // over earlier ones. A trip that doubles back retraces the same road
+      // and is drawn once; the numbered pins are what say which way round
+      // it went, which is cheaper and steadier than nudging one line to
+      // sit alongside the other.
       const bounds: Point[] = [home];
-      for (const stop of route.stops) {
-        const { points, isRoad } = pathTo(home, stop);
+      route.stops.forEach((stop, index) => {
+        const { points, isRoad } = leg(home, route.stops, index);
         bounds.push(...points);
         L.polyline(points, {
           color: AHEAD,
@@ -184,19 +192,26 @@ export function RouteMap({ route }: { route: DistrictRoute }) {
           // never passes itself off as a road.
           dashArray: isRoad ? undefined : "5 7",
         }).addTo(instance);
-      }
+      });
 
-      // And the one being driven, picked out up to where the district has
-      // actually got to.
-      const target = route.stops.find((stop) => stop.is_target);
-      if (target && route.position) {
-        const { points } = pathTo(home, target);
-        const fraction = target.miles > 0 ? route.miles_travelled / target.miles : 1;
+      // Then everything already driven, over the top: whole legs that are
+      // behind us, and part of the one being driven now.
+      route.stops.forEach((stop, index) => {
+        const { points } = leg(home, route.stops, index);
+        if (stop.reached) {
+          L.polyline(points, { color: TRAVELLED, weight: 5, opacity: 0.95 }).addTo(instance);
+          return;
+        }
+        if (!stop.is_target || !route.position) return;
+        // How far into *this leg* the district has got — the trip total
+        // minus everything before it, over the leg's own length.
+        const before = stop.miles - stop.leg_miles;
+        const fraction = stop.leg_miles > 0 ? (route.miles_travelled - before) / stop.leg_miles : 1;
         const travelled = travelledPortion(points, fraction);
         if (travelled.length > 1) {
           L.polyline(travelled, { color: TRAVELLED, weight: 5, opacity: 0.95 }).addTo(instance);
         }
-      }
+      });
 
       L.circleMarker(home, {
         radius: 7,
@@ -208,15 +223,27 @@ export function RouteMap({ route }: { route: DistrictRoute }) {
         .bindTooltip(route.home_name)
         .addTo(instance);
 
+      // Numbered, because the order is the one thing a drawn line cannot
+      // say when a trip doubles back over its own road.
       for (const stop of route.stops) {
-        L.circleMarker([stop.latitude, stop.longitude], {
-          radius: 6,
-          color: stop.reached ? TRAVELLED : AHEAD,
-          fillColor: stop.reached ? TRAVELLED : "#ffffff",
-          fillOpacity: 1,
-          weight: 2,
+        const colour = stop.reached ? TRAVELLED : AHEAD;
+        L.marker([stop.latitude, stop.longitude], {
+          icon: L.divIcon({
+            className: "",
+            html:
+              `<div style="width:20px;height:20px;border-radius:9999px;` +
+              `background:${stop.reached ? colour : "#ffffff"};` +
+              `border:2px solid ${colour};color:${stop.reached ? "#ffffff" : colour};` +
+              `font:600 11px/16px system-ui,sans-serif;text-align:center;` +
+              `box-shadow:0 0 0 1px rgba(0,0,0,.15)">${stop.position}</div>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+          }),
+          keyboard: false,
         })
-          .bindTooltip(`${stop.label} — ${stop.miles.toLocaleString()} miles`)
+          .bindTooltip(
+            `${stop.position}. ${stop.label} — reached at ${stop.miles.toLocaleString()} miles`,
+          )
           .addTo(instance);
       }
 
