@@ -34,6 +34,16 @@ function jobLabel(job: PrintQueueJob): string {
   return job.document_name ?? "Your job";
 }
 
+// The number CUPS gave a job, shown so it can be named out loud — asking the
+// office to release "job 4821" is unambiguous in a way "the science one" is
+// not, and it is the same reference the kiosk and the admin Jobs page use.
+// A held row can exist before CUPS has numbered it, so that case falls back
+// to the head of the row's own id.
+function jobRef(job: { cups_job_id: number | null; job_id?: string }): string {
+  if (job.cups_job_id !== null) return `Job ${job.cups_job_id}`;
+  return job.job_id ? `Job ${job.job_id.slice(0, 8)}` : "Job —";
+}
+
 function heldBadge(job: PrintQueueHeldJob) {
   if (job.reason === "printer_offline") return <Badge tone="warning">Printer is off</Badge>;
   if (job.reason === "quota") return <Badge tone="warning">Over your quota</Badge>;
@@ -237,6 +247,9 @@ export default function PrintQueuePage() {
                     {jobLabel(job)}
                     {job.mine && <span className="ml-2 text-xs text-zinc-500">(yours)</span>}
                   </span>
+                  <span className="shrink-0 font-mono text-xs text-zinc-500">
+                    {jobRef(job)}
+                  </span>
                   <span className="shrink-0 text-xs text-zinc-500">
                     {formatBytes(job.size_bytes)}
                   </span>
@@ -312,6 +325,9 @@ export default function PrintQueuePage() {
                   <span className="min-w-0 flex-1 truncate">
                     {job.document_name ?? "Your job"}
                     <span className="ml-2 text-xs text-zinc-500">{job.printer_name}</span>
+                  </span>
+                  <span className="shrink-0 font-mono text-xs text-zinc-500">
+                    {jobRef(job)}
                   </span>
                   <span className="shrink-0 text-xs text-zinc-500">
                     {formatBytes(job.size_bytes)}

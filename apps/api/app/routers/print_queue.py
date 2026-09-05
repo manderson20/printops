@@ -329,6 +329,7 @@ async def _my_held_jobs(db: AsyncSession, current_user: UserOut) -> list[PrintQu
     return [
         PrintQueueHeldJobOut(
             job_id=job.id,
+            cups_job_id=job.cups_job_id,
             printer_id=job.printer_id,
             printer_name=printer_name,
             document_name=job.document_name,

@@ -2869,6 +2869,10 @@ export async function listSyslogEvents(params?: {
 export type HeldJob = {
   id: string;
   status: string;
+  // The number CUPS gave the job. Shown on the kiosk so someone can ask the
+  // office to release one job by name over the phone; null on a row CUPS
+  // hasn't numbered yet, which the kiosk renders from `id` instead.
+  cups_job_id: number | null;
   document_name: string | null;
   page_count: number | null;
   created_at: string;
@@ -2902,10 +2906,18 @@ async function releaseFetch(path: string, body: unknown): Promise<Response> {
   return response;
 }
 
+// Who the kiosk decided you are, plus what of yours is waiting there. The
+// name is shown back at the kiosk so a mistyped digit that happens to be
+// somebody else's Employee ID is caught before their documents come out.
+export type HeldJobsResult = {
+  person_name: string | null;
+  jobs: HeldJob[];
+};
+
 export async function listHeldJobs(
   token: string,
   pin: string,
-): Promise<HeldJob[]> {
+): Promise<HeldJobsResult> {
   const response = await releaseFetch(
     `/api/v1/release/${encodeURIComponent(token)}/jobs`,
     { pin },
@@ -2968,6 +2980,9 @@ export type PrintQueuePrinter = {
 
 export type PrintQueueHeldJob = {
   job_id: string;
+  /** The number CUPS gave it — the reference to quote to the office. Null on
+   *  a row held before CUPS numbered it. */
+  cups_job_id: number | null;
   printer_id: string;
   printer_name: string;
   document_name: string | null;

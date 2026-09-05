@@ -154,8 +154,40 @@ async def test_correct_pin_lists_only_that_users_held_jobs(
     response = client.post("/api/v1/release/test-token-123/jobs", json={"pin": "1001"})
     assert response.status_code == 200
     body = response.json()
-    assert len(body) == 1
-    assert body[0]["document_name"] == "Report.pdf"
+    assert len(body["jobs"]) == 1
+    assert body["jobs"][0]["document_name"] == "Report.pdf"
+
+
+async def test_listing_names_the_person_the_pin_resolved_to(
+    client, printer_with_release, alice, db_session_factory
+):
+    """The kiosk shows this back so a mistyped digit that lands on someone
+    else's Employee ID is caught before their documents are released."""
+    await _make_held_job(db_session_factory, printer_with_release.id, alice.email)
+
+    response = client.post("/api/v1/release/test-token-123/jobs", json={"pin": "1001"})
+    assert response.status_code == 200
+    assert response.json()["person_name"] == "Alice"
+
+
+async def test_listing_exposes_the_cups_job_number(
+    client, printer_with_release, alice, db_session_factory
+):
+    await _make_held_job(db_session_factory, printer_with_release.id, alice.email, cups_job_id=4821)
+
+    response = client.post("/api/v1/release/test-token-123/jobs", json={"pin": "1001"})
+    assert response.json()["jobs"][0]["cups_job_id"] == 4821
+
+
+async def test_job_without_a_cups_number_still_lists(
+    client, printer_with_release, alice, db_session_factory
+):
+    """A held row can exist before CUPS has numbered it; the kiosk falls back
+    to a short form of the row id rather than showing nothing."""
+    await _make_held_job(db_session_factory, printer_with_release.id, alice.email)
+
+    response = client.post("/api/v1/release/test-token-123/jobs", json={"pin": "1001"})
+    assert response.json()["jobs"][0]["cups_job_id"] is None
 
 
 async def test_only_shows_jobs_for_this_printer(
@@ -171,7 +203,7 @@ async def test_only_shows_jobs_for_this_printer(
 
     response = client.post("/api/v1/release/test-token-123/jobs", json={"pin": "1001"})
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json()["jobs"] == []
 
 
 async def test_release_succeeds_and_clears_held_file(
@@ -232,7 +264,7 @@ async def test_quota_held_job_invisible_to_kiosk_listing(
     )
     response = client.post("/api/v1/release/test-token-123/jobs", json={"pin": "1001"})
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json()["jobs"] == []
 
 
 async def test_quota_held_job_cannot_be_self_released(
@@ -256,8 +288,8 @@ async def test_follow_me_job_visible_at_other_follow_me_printer(
     response = client.post("/api/v1/release/follow-me-token-b/jobs", json={"pin": "1001"})
     assert response.status_code == 200
     body = response.json()
-    assert len(body) == 1
-    assert body[0]["printer_name"] == "Printer A"
+    assert len(body["jobs"]) == 1
+    assert body["jobs"][0]["printer_name"] == "Printer A"
 
 
 async def test_follow_me_job_not_visible_at_non_follow_me_printer(
@@ -268,7 +300,7 @@ async def test_follow_me_job_not_visible_at_non_follow_me_printer(
     )
     response = client.post("/api/v1/release/test-token-123/jobs", json={"pin": "1001"})
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json()["jobs"] == []
 
 
 async def test_pin_release_job_not_visible_at_a_different_printers_kiosk_even_if_follow_me(
@@ -279,7 +311,7 @@ async def test_pin_release_job_not_visible_at_a_different_printers_kiosk_even_if
     )
     response = client.post("/api/v1/release/follow-me-token-b/jobs", json={"pin": "1001"})
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json()["jobs"] == []
 
 
 async def test_follow_me_job_releases_via_the_kiosks_own_printer(

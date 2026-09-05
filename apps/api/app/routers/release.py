@@ -5,8 +5,11 @@ the CUPS backend-token routers (verify_backend_token). There is no
 knows a printer's release URL (an unguessable token, not a login), and
 every mutating call re-validates a PIN (Google Workspace Employee ID)
 itself, scoped to that one printer. No session/cookie is issued — the
-kiosk re-sends the PIN on every action, so there's nothing to "log out" of
-between different people using the same physical kiosk.
+kiosk re-sends the PIN on every action, so there's nothing on this side to
+"log out" of between different people using the same physical kiosk. The
+kiosk's own Done button is therefore purely a client-side matter of
+forgetting the PIN it is holding — there is no server session to end, and
+no endpoint here for it to call.
 
 Since this is reachable over the network (unlike a physical copier
 touchscreen), repeated-guess PIN attempts are rate-limited per printer
@@ -29,7 +32,7 @@ from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.job import Job
 from app.models.printer import Printer
 from app.printers.release import ReleaseError, submit_released_job
-from app.schemas.release import HeldJobOut, ReleasePinRequest
+from app.schemas.release import HeldJobOut, HeldJobsOut, ReleasePinRequest
 
 router = APIRouter()
 
@@ -116,7 +119,7 @@ async def _attach_printer_names(
     ]
 
 
-@router.post("/{token}/jobs", response_model=list[HeldJobOut])
+@router.post("/{token}/jobs", response_model=HeldJobsOut)
 async def list_held_jobs(
     token: str, payload: ReleasePinRequest, db: AsyncSession = Depends(get_db)
 ):
@@ -131,7 +134,12 @@ async def list_held_jobs(
         )
         .order_by(Job.created_at)
     )
-    return await _attach_printer_names(db, printer, result.scalars().all())
+    jobs = await _attach_printer_names(db, printer, result.scalars().all())
+    # GoogleWorkspaceUser.name is Google's own full name for the account
+    # ("Jessica Dobrzenski"), so there is nothing to assemble from parts
+    # here. None for an account with no name set, which the kiosk renders
+    # as no name rather than as an empty one.
+    return HeldJobsOut(person_name=user.name, jobs=jobs)
 
 
 @router.post("/{token}/jobs/{job_id}/release", response_model=HeldJobOut)
