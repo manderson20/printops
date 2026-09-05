@@ -6,6 +6,7 @@ Create Date: 2026-09-05 06:05:00.000000
 
 """
 
+from datetime import UTC, datetime
 from typing import Sequence, Union
 from uuid import uuid4
 
@@ -59,13 +60,31 @@ def upgrade() -> None:
     # Seeded rather than created lazily so the row exists before anything
     # reads it, and so the default URL is visible in the database rather
     # than only in Python.
-    now = sa.func.now()
-    op.execute(
-        sa.text(
-            "INSERT INTO road_trip_settings "
-            "(id, routing_base_url, routing_enabled, created_at, updated_at) "
-            "VALUES (:id, :url, true, :created, :updated)"
-        ).bindparams(id=uuid4(), url=DEFAULT_ROUTING_BASE_URL, created=now, updated=now)
+    #
+    # A real timestamp, not sa.func.now(): these are bind parameters, and
+    # asyncpg encodes each one itself rather than letting the server
+    # evaluate it — handed a SQL function it raises "expected a
+    # datetime.date or datetime.datetime instance, got 'now'". 0072 makes
+    # the same choice for the same reason.
+    now = datetime.now(UTC)
+    op.bulk_insert(
+        sa.table(
+            "road_trip_settings",
+            sa.column("id", sa.Uuid()),
+            sa.column("routing_base_url", sa.String()),
+            sa.column("routing_enabled", sa.Boolean()),
+            sa.column("created_at", sa.DateTime(timezone=True)),
+            sa.column("updated_at", sa.DateTime(timezone=True)),
+        ),
+        [
+            {
+                "id": uuid4(),
+                "routing_base_url": DEFAULT_ROUTING_BASE_URL,
+                "routing_enabled": True,
+                "created_at": now,
+                "updated_at": now,
+            }
+        ],
     )
 
 
