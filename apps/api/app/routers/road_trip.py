@@ -16,7 +16,7 @@ configuration, it is not how the map gets its data.
 import random
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,8 @@ from app.models.road_trip_settings import RoadTripSettings
 from app.reports.road_trip import haversine_miles
 from app.roadtrip.itinerary import ItineraryResult
 from app.roadtrip.itinerary import recompute as recompute_itinerary
+from app.roadtrip.places import MAX_SEARCH_RESULTS
+from app.roadtrip.places import search as search_places
 from app.roadtrip.places import suggest as suggest_places
 from app.schemas.destination import (
     DestinationBulkCreate,
@@ -479,6 +481,44 @@ async def suggest_destinations(seed: int | None = None, db: AsyncSession = Depen
             )
         ],
     )
+
+
+@router.get("/places/search", response_model=list[SuggestionOut])
+async def search_for_a_place(
+    q: str = Query(min_length=2, max_length=80),
+    limit: int = Query(MAX_SEARCH_RESULTS, ge=1, le=MAX_SEARCH_RESULTS),
+    db: AsyncSession = Depends(get_db),
+):
+    """Find a town by name, so a place can be added without looking its
+    coordinates up anywhere.
+
+    Reads the bundled gazetteer, which goes down to a thousand people —
+    the small town fifteen minutes down the road is exactly what somebody
+    searches for, and it is the one thing the suggestion tool cannot
+    offer. Nothing is written; the result is fed to the ordinary create.
+
+    Works with no home location, which is the point: a district setting
+    itself up needs to find its own town before it has one. Distances
+    come back as zero in that case rather than as a guess, and the caller
+    shows no distance rather than a wrong one.
+    """
+    home = await _home(db)
+    latitude = home.latitude if home and home.has_coordinates else None
+    longitude = home.longitude if home and home.has_coordinates else None
+
+    return [
+        SuggestionOut(
+            name=(f"{home.name} to {result.place.label}" if home else result.place.label),
+            short_name=result.place.label,
+            latitude=result.place.latitude,
+            longitude=result.place.longitude,
+            straight_line_miles=result.straight_line_miles,
+            population=result.place.population,
+        )
+        for result in search_places(
+            q, home_latitude=latitude, home_longitude=longitude, limit=limit
+        )
+    ]
 
 
 @router.patch("/destinations/{destination_id}", response_model=DestinationOut)

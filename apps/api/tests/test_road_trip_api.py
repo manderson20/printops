@@ -617,3 +617,61 @@ def test_a_place_no_road_reaches_does_not_take_the_others_with_it(
     assert [d["name"] for d in result["added"]] == ["all the way to the Moon"]
     assert [s["name"] for s in result["skipped"]] == ["Pearl City"]
     assert "NoRoute" in result["skipped"][0]["reason"]
+
+
+# --- searching for a place ---------------------------------------------
+
+
+def test_a_town_can_be_searched_for_by_name(client, auth_headers):
+    _home_with_coordinates(client, auth_headers)
+
+    found = client.get("/api/v1/road-trip/places/search?q=marceline", headers=auth_headers).json()
+    assert found[0]["short_name"] == "Marceline, MO"
+    assert found[0]["name"] == "Brookfield R-III to Marceline, MO"
+    assert found[0]["straight_line_miles"] < 15
+
+
+def test_searching_works_before_a_home_is_set(client, auth_headers):
+    """A district setting itself up needs to find its own town first."""
+    found = client.get("/api/v1/road-trip/places/search?q=brookfield", headers=auth_headers).json()
+    assert found
+    assert found[0]["name"] == found[0]["short_name"]
+
+
+def test_a_searched_place_can_be_added_as_a_waypoint(client, auth_headers, trip_answers):
+    """The result feeds the ordinary create — search writes nothing
+    itself."""
+    _home_with_coordinates(client, auth_headers)
+    found = client.get("/api/v1/road-trip/places/search?q=marceline", headers=auth_headers).json()[
+        0
+    ]
+
+    trip_answers(_trip(LEG_ONE))
+    created = client.post(
+        "/api/v1/road-trip/destinations",
+        headers=auth_headers,
+        json={
+            "name": found["name"],
+            "short_name": found["short_name"],
+            "latitude": found["latitude"],
+            "longitude": found["longitude"],
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["miles"] == 12.1
+
+
+def test_searching_writes_nothing(client, auth_headers):
+    _home_with_coordinates(client, auth_headers)
+    client.get("/api/v1/road-trip/places/search?q=columbia", headers=auth_headers)
+
+    assert client.get("/api/v1/road-trip/destinations", headers=auth_headers).json() == []
+
+
+def test_a_one_letter_search_is_refused(client, auth_headers):
+    response = client.get("/api/v1/road-trip/places/search?q=k", headers=auth_headers)
+    assert response.status_code == 422
+
+
+def test_search_is_admin_only(client):
+    assert client.get("/api/v1/road-trip/places/search?q=columbia").status_code == 401

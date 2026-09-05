@@ -1,7 +1,7 @@
 # places.json
 
-Derived from the GeoNames `cities15000` extract
-(<https://download.geonames.org/export/dump/cities15000.zip>), downloaded
+Derived from the GeoNames `cities1000` extract
+(<https://download.geonames.org/export/dump/cities1000.zip>), downloaded
 2026-09-05.
 
 GeoNames data is licensed under
@@ -9,10 +9,19 @@ GeoNames data is licensed under
 
 ## What was kept
 
-Cities in the US, Canada and Mexico with a population of 15,000 or more:
-4,560 rows. Everywhere else was dropped because this list exists to
-suggest places a district could plausibly *drive* to, and a routing
-service cannot cross an ocean.
+Places in the US, Canada and Mexico with a population of 1,000 or more:
+28,461 rows. Everywhere else was dropped because this list exists to name
+places a district could plausibly *drive* to, and a routing service
+cannot cross an ocean.
+
+The floor is 1,000 rather than 15,000 because the list has two jobs and
+they want different things. **Search** wants the small town fifteen
+minutes down the road — Marceline, Missouri has 2,200 people and is the
+first place this district would look for. **Suggestions** want somewhere
+recognisable, and offering a village nobody outside the county has heard
+of as a milestone would be worse than offering nothing; those are
+filtered to 15,000 and up at the point of use
+(`SUGGESTION_MIN_POPULATION` in `../places.py`).
 
 Each row is a fixed-length array rather than an object, which is what
 keeps the file at ~220 KB instead of ~700 KB:

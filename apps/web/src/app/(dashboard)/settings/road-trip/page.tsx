@@ -13,6 +13,7 @@ import {
   listLocations,
   refreshItinerary,
   reorderDestinations,
+  searchPlaces,
   suggestDestinations,
   updateDestination,
   updateRoadTripSettings,
@@ -309,6 +310,118 @@ function DestinationRow({
     </li>
   );
 }
+
+function SearchCard({ onAdded }: { onAdded: () => void }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<DestinationSuggestion[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [adding, setAdding] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [added, setAdded] = useState<string | null>(null);
+
+  async function runSearch(event: React.FormEvent) {
+    event.preventDefault();
+    if (query.trim().length < 2) return;
+    setSearching(true);
+    setError(null);
+    setAdded(null);
+    try {
+      setResults(await searchPlaces(query.trim()));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't search");
+      setResults(null);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  async function add(place: DestinationSuggestion) {
+    setAdding(place.short_name);
+    setError(null);
+    try {
+      await createDestination({
+        name: place.name,
+        short_name: place.short_name,
+        latitude: place.latitude,
+        longitude: place.longitude,
+      });
+      setAdded(`${place.short_name} added to the end of the trip.`);
+      setResults((previous) =>
+        previous ? previous.filter((r) => r.short_name !== place.short_name) : previous,
+      );
+      onAdded();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't add that place");
+    } finally {
+      setAdding(null);
+    }
+  }
+
+  return (
+    <Card>
+      <CardTitle>Find a place</CardTitle>
+      <p className="mb-4 text-xs text-zinc-500">
+        Search for a town or city by name and add it to the end of the trip. Covers North America
+        down to about a thousand people, so the small town fifteen minutes down the road is in
+        here — which is the one thing the suggestions can&apos;t offer you.
+      </p>
+      <p className="mb-4 text-xs text-zinc-500">
+        Punctuation and abbreviations don&apos;t matter: <em>st joseph</em> finds Saint Joseph. Add
+        a state to narrow a shared name — <em>springfield il</em>.
+      </p>
+
+      <form onSubmit={runSearch} className="mb-3 flex flex-wrap items-center gap-2">
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Marceline, or Kansas City, or springfield il"
+          className="min-w-[18rem] flex-1"
+        />
+        <Button type="submit" variant="secondary" disabled={searching || query.trim().length < 2}>
+          {searching ? "Searching…" : "Search"}
+        </Button>
+      </form>
+
+      {results && results.length === 0 && (
+        <EmptyState>
+          Nothing found for that. Try fewer words, or the name without the state.
+        </EmptyState>
+      )}
+
+      {results && results.length > 0 && (
+        <ul className="flex flex-col gap-2">
+          {results.map((place) => (
+            <li
+              key={`${place.short_name}-${place.latitude}`}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-black/[.08] px-3 py-2 text-sm dark:border-white/[.145]"
+            >
+              <span className="min-w-0 flex-1">
+                {place.short_name}
+                <span className="ml-2 text-xs text-zinc-500">
+                  {place.straight_line_miles > 0 &&
+                    `about ${place.straight_line_miles.toLocaleString()} miles away · `}
+                  {place.population.toLocaleString()} people
+                </span>
+              </span>
+              <Button
+                variant="secondary"
+                className="!px-3 !py-1 text-xs"
+                disabled={adding !== null}
+                onClick={() => add(place)}
+              >
+                {adding === place.short_name ? "Measuring the trip…" : "Add"}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {added && <p className="mt-3 text-xs text-emerald-700 dark:text-emerald-400">{added}</p>}
+      {error && <ErrorState>{error}</ErrorState>}
+    </Card>
+  );
+}
+
 
 function SuggestionsCard({ onAdded }: { onAdded: () => void }) {
   const [suggestions, setSuggestions] = useState<DestinationSuggestion[] | null>(null);
@@ -725,6 +838,8 @@ export default function RoadTripSettingsPage() {
 
         {error && <ErrorState>{error}</ErrorState>}
       </Card>
+
+      <SearchCard onAdded={load} />
 
       {home && home.latitude !== null && <SuggestionsCard onAdded={load} />}
 

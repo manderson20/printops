@@ -3561,6 +3561,19 @@ export async function createDestinations(
   return response.json();
 }
 
+/** Find a town by name. Reads a bundled gazetteer down to a thousand
+ *  people — the small town down the road is exactly what somebody
+ *  searches for, and the one thing suggestions cannot offer. Distances
+ *  come back as zero when no home location is set. */
+export async function searchPlaces(
+  query: string,
+): Promise<DestinationSuggestion[]> {
+  const response = await authorizedFetch(
+    `/api/v1/road-trip/places/search?q=${encodeURIComponent(query)}`,
+  );
+  return response.json();
+}
+
 export async function getItinerary(): Promise<Itinerary> {
   const response = await authorizedFetch("/api/v1/road-trip/itinerary");
   return response.json();

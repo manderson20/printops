@@ -1,6 +1,13 @@
 """The suggestion tool's half: which places get offered, and why."""
 
-from app.roadtrip.places import BANDS, Place, all_places, suggest
+from app.roadtrip.places import (
+    BANDS,
+    SUGGESTION_MIN_POPULATION,
+    Place,
+    all_places,
+    search,
+    suggest,
+)
 
 BROOKFIELD = (39.7864, -93.0735)
 
@@ -88,10 +95,72 @@ def test_a_place_no_road_reaches_can_still_be_suggested():
     what discovers that, and the bulk add reports it as skipped rather
     than pretending the drive exists."""
     offshore = suggest(home_latitude=0.0, home_longitude=-170.0, seed=1)
-    assert [s.place.label for s in offshore] == ["Pearl City, HI"]
+    assert offshore
+    assert all(s.place.admin1 == "HI" for s in offshore)
 
 
 def test_no_suggestion_repeats_within_one_set():
     suggestions = suggest(home_latitude=BROOKFIELD[0], home_longitude=BROOKFIELD[1], seed=9)
     labels = [s.place.label for s in suggestions]
     assert len(labels) == len(set(labels))
+
+
+# --- search ------------------------------------------------------------
+
+
+def test_search_finds_a_small_town():
+    """The whole reason the list goes down to a thousand people. Marceline
+    has 2,200 and is the first place this district would look for."""
+    found = search("marceline", home_latitude=BROOKFIELD[0], home_longitude=BROOKFIELD[1])
+    assert found[0].place.label == "Marceline, MO"
+    assert found[0].straight_line_miles < 15
+
+
+def test_search_ignores_punctuation_and_spells_out_abbreviations():
+    """GeoNames writes "Saint Joseph" and nobody types it that way."""
+    for query in ("st. joseph", "st joseph", "Saint Joseph"):
+        found = search(query, home_latitude=BROOKFIELD[0], home_longitude=BROOKFIELD[1])
+        assert found[0].place.name == "Saint Joseph", query
+
+
+def test_a_state_narrows_a_shared_name():
+    found = search("springfield il", home_latitude=BROOKFIELD[0], home_longitude=BROOKFIELD[1])
+    assert found[0].place.label == "Springfield, IL"
+
+
+def test_a_name_that_starts_with_the_query_beats_one_that_contains_it():
+    """Somebody typing "york" means York far more often than New York."""
+    found = search("york", home_latitude=BROOKFIELD[0], home_longitude=BROOKFIELD[1])
+    assert found[0].place.name.casefold().startswith("york")
+
+
+def test_closer_first_when_home_is_known():
+    found = search("brookfield", home_latitude=BROOKFIELD[0], home_longitude=BROOKFIELD[1])
+    distances = [f.straight_line_miles for f in found]
+    assert distances == sorted(distances)
+
+
+def test_search_works_without_a_home():
+    """A district setting itself up needs to find its own town before it
+    has one. No home means no distance rather than a guessed one."""
+    found = search("kansas city")
+    assert found
+    assert all(f.straight_line_miles == 0.0 for f in found)
+    # Biggest first instead.
+    assert found[0].place.population > found[-1].place.population
+
+
+def test_a_one_letter_query_returns_nothing():
+    assert search("k", home_latitude=BROOKFIELD[0], home_longitude=BROOKFIELD[1]) == []
+
+
+def test_search_is_capped():
+    found = search("a", home_latitude=BROOKFIELD[0], home_longitude=BROOKFIELD[1], limit=5)
+    assert len(found) <= 5
+
+
+def test_suggestions_ignore_places_too_small_to_recognise():
+    """A village nobody outside the county has heard of is a worse
+    milestone than none at all."""
+    offered = suggest(home_latitude=BROOKFIELD[0], home_longitude=BROOKFIELD[1], seed=1)
+    assert all(s.place.population >= SUGGESTION_MIN_POPULATION for s in offered)
