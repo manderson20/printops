@@ -932,7 +932,7 @@ async def test_combined_export_csv_includes_totals(
 # Copies are priced at the same rates as printing (app/reports/formulas.py:
 # copy_cost) because it is the same machine and the same cartridges. The
 # tests below are mostly about the seams where that stops being obvious:
-# activity that isn't copying, a colour split the device never reported,
+# activity that isn't copying, a color split the device never reported,
 # and who is allowed to look at whose numbers.
 
 
@@ -1004,19 +1004,19 @@ async def test_combined_leaderboard_splits_print_and_copy_cost(
     entry = client.get("/api/v1/reports/combined-leaderboard", headers=admin_headers).json()[0]
     assert entry["print_cost"] == round(10 * 0.05, 2)
     # Both rates apply to the same copy row — it is a counter delta over
-    # many copies, not one job with a single colour mode.
+    # many copies, not one job with a single color mode.
     assert entry["copy_cost"] == round(10 * 0.20 + 20 * 0.05, 2)
     assert entry["estimated_cost"] == round(entry["print_cost"] + entry["copy_cost"], 2)
     assert entry["copy_color_pages"] == 10
     assert entry["copy_mono_pages"] == 20
 
 
-async def test_copies_with_no_colour_split_are_priced_at_the_mono_rate(
+async def test_copies_with_no_color_split_are_priced_at_the_mono_rate(
     client, admin_headers, mfp_device_id, db_session_factory
 ):
-    """A device-level meter reports a copy total and no colour breakdown.
+    """A device-level meter reports a copy total and no color breakdown.
     Pricing the unsplit remainder at the cheaper rate is the same
-    conservative rule an unreported colour_mode already gets."""
+    conservative rule an unreported color_mode already gets."""
     client.put(
         "/api/v1/settings/report-formulas",
         headers=admin_headers,

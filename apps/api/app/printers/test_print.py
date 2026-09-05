@@ -3,7 +3,7 @@
 The page doubles as a printer's identity sheet: an admin standing at the
 device can read what PrintOps believes it is, what it can do, how much
 toner is left and what its counters said at the moment of printing —
-alongside the colour, greyscale and fine-line targets that make it a real
+alongside the color, greyscale and fine-line targets that make it a real
 print-quality check rather than a "did anything come out" check.
 
 Everything on the sheet comes from data PrintOps already holds (the
@@ -86,7 +86,7 @@ class TestPageInfo:
     finishings: list[str] = field(default_factory=list)
     document_formats: list[str] = field(default_factory=list)
     capabilities_detected_at: datetime | None = None
-    # (colour, percent-or-None, last-polled-or-None), ordered black-first
+    # (color, percent-or-None, last-polled-or-None), ordered black-first
     # by build_page_info. The timestamp is what separates "the device says
     # it doesn't know" from "nobody has asked yet" — see _toner_bars.
     toner: list[tuple[str, int | None, datetime | None]] = field(default_factory=list)
@@ -316,35 +316,35 @@ def _toner_bars(
     }
     font, bold = _font(19), _font(19, bold=True)
     bar_x, bar_w = MARGIN + 132, 300
-    for index, (colour, percent, checked_at) in enumerate(toner[:4]):
+    for index, (color, percent, checked_at) in enumerate(toner[:4]):
         row_y = y + index * 28
-        draw.text((MARGIN, row_y), colour.capitalize(), font=font, fill=MUTED)
+        draw.text((MARGIN, row_y), color.capitalize(), font=font, fill=MUTED)
         draw.rectangle([bar_x, row_y + 5, bar_x + bar_w, row_y + 21], outline=RULE, width=1)
         if percent is not None:
             fill_w = int(bar_w * max(0, min(100, percent)) / 100)
             if fill_w:
                 draw.rectangle(
                     [bar_x, row_y + 5, bar_x + fill_w, row_y + 21],
-                    fill=swatch.get(colour.lower(), ACCENT),
+                    fill=swatch.get(color.lower(), ACCENT),
                 )
         # "Not reported" on a slot nobody has ever polled reads as a device
         # fault when it is really just a missing poll — an admin who has
-        # just set the colours needs to be told which of the two it is.
+        # just set the colors needs to be told which of the two it is.
         if percent is not None:
-            label, colour_of = f"{percent}%", INK
+            label, color_of = f"{percent}%", INK
         elif checked_at is None:
-            label, colour_of = "never polled", MUTED
+            label, color_of = "never polled", MUTED
         else:
-            label, colour_of = "not reported", MUTED
-        draw.text((bar_x + bar_w + 16, row_y), label, font=bold, fill=colour_of)
+            label, color_of = "not reported", MUTED
+        draw.text((bar_x + bar_w + 16, row_y), label, font=bold, fill=color_of)
     return y + max(1, len(toner[:4])) * 28
 
 
-def _quality_targets(draw: ImageDraw.ImageDraw, y: int, colour_device: bool) -> int:
+def _quality_targets(draw: ImageDraw.ImageDraw, y: int, color_device: bool) -> int:
     """The part of the page that is actually a test rather than a report."""
     label_font = _font(15)
 
-    if colour_device:
+    if color_device:
         patches = [
             ("Cyan", (0, 174, 239)),
             ("Magenta", (236, 0, 140)),
@@ -400,7 +400,7 @@ def _quality_targets(draw: ImageDraw.ImageDraw, y: int, colour_device: bool) -> 
     return max(line_y, text_y) + 6
 
 
-def _checklist(draw: ImageDraw.ImageDraw, y: int, footer_y: int, colour_device: bool) -> int:
+def _checklist(draw: ImageDraw.ImageDraw, y: int, footer_y: int, color_device: bool) -> int:
     """What the targets above are actually for. Without this the patches
     and ramps are decoration — an admin holding the sheet at the device
     needs to know what a bad one looks like.
@@ -416,8 +416,8 @@ def _checklist(draw: ImageDraw.ImageDraw, y: int, footer_y: int, colour_device: 
         "Grey steps even",
         "10% grey visible",
     ]
-    if colour_device:
-        items.insert(0, "Colour patches solid")
+    if color_device:
+        items.insert(0, "Color patches solid")
 
     cols = 3
     rows = (len(items) + cols - 1) // cols
@@ -456,8 +456,8 @@ def _registration_marks(draw: ImageDraw.ImageDraw) -> None:
 
 
 def _build_test_page(info: TestPageInfo, username: str, timezone: str | None = None) -> bytes:
-    """Composes the one-page colour PDF. A real embedded colour image plus
-    process-colour patches is a better colour check than plain text, and
+    """Composes the one-page color PDF. A real embedded color image plus
+    process-color patches is a better color check than plain text, and
     PDF is in every IPP Everywhere printer's PDL — no need to hand-roll
     PostScript or shell out to a converter."""
     tz = _resolve_timezone(timezone)
@@ -520,7 +520,7 @@ def _build_test_page(info: TestPageInfo, username: str, timezone: str | None = N
         draw,
         y,
         [
-            ("Colour", info.color_supported),
+            ("Color", info.color_supported),
             ("Duplex", info.duplex_supported),
             ("Collation", info.collation_supported),
             ("PIN printing", info.pin_printing_supported),
@@ -593,7 +593,7 @@ def _build_test_page(info: TestPageInfo, username: str, timezone: str | None = N
     return buf.getvalue()
 
 
-# Black first, then the process colours in the order every vendor's panel
+# Black first, then the process colors in the order every vendor's panel
 # lists them — so the sheet matches what the admin sees on the device.
 _TONER_ORDER = {"black": 0, "cyan": 1, "magenta": 2, "yellow": 3}
 

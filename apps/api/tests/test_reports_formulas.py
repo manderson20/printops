@@ -148,11 +148,11 @@ def test_job_cost_duplex_halves_sheets():
 # --- copy_cost -------------------------------------------------------------
 #
 # A copy row is a counter delta covering many copies, not one job, so it
-# carries a colour *split* rather than a single colour mode — both rates
+# carries a color *split* rather than a single color mode — both rates
 # apply to the same row.
 
 
-def test_copy_cost_prices_the_colour_split_at_both_rates():
+def test_copy_cost_prices_the_color_split_at_both_rates():
     rate = compute_printer_rate(
         [
             FakeCartridge("black", cost=20.0, yield_pages=1000),  # $0.02
@@ -161,7 +161,7 @@ def test_copy_cost_prices_the_colour_split_at_both_rates():
             FakeCartridge("yellow", cost=40.0, yield_pages=2000),
         ],
         _formulas(),
-    )  # colour = $0.08/page
+    )  # color = $0.08/page
     result = copy_cost(
         page_count=30,
         color_page_count=10,
@@ -174,9 +174,9 @@ def test_copy_cost_prices_the_colour_split_at_both_rates():
 
 
 def test_copy_cost_prices_an_unsplit_total_at_the_mono_rate():
-    """An SNMP copy meter reports a total and no colour breakdown at all
-    (app/copiers/device_owner.py). Charging the colour rate for pages the
-    device never called colour would invent the more expensive answer."""
+    """An SNMP copy meter reports a total and no color breakdown at all
+    (app/copiers/device_owner.py). Charging the color rate for pages the
+    device never called color would invent the more expensive answer."""
     rate = compute_printer_rate([FakeCartridge("black", cost=20.0, yield_pages=1000)], _formulas())
     result = copy_cost(
         page_count=100,
@@ -199,7 +199,7 @@ def test_copy_cost_prices_the_remainder_of_a_partial_split_at_the_mono_rate():
         rate=rate,
         cost_per_sheet_paper=0.0,
     )
-    # 10 colour at the fallback colour rate, the other 90 at mono.
+    # 10 color at the fallback color rate, the other 90 at mono.
     assert round(result.toner_cost, 4) == round(10 * 0.10 + 90 * 0.02, 4)
 
 

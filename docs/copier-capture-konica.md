@@ -433,7 +433,7 @@ H_SRT=<start>  H_END=<end>  AA_TRA_H_BOX=Public  H_FLAG=Delete
 | `AA_TRA_T_INF` | 20 | free-text info |
 | `AA_TRA_S_ACS`, `_ASA`, `_COP`, `_CCP`, `_SCP`, `_SFP`, `_UPA`, `_FUA`, `_FCP`, `_FSC`, `_FFA`, `_FPR`, `_FPS` | — | per-function permission flags |
 | `AA_TRA_C_TPL` / `AA_TRA_T_TPL` | — | total page limit: enable flag / value |
-| `AA_TRA_C_CPL` / `AA_TRA_T_CPL` | 7 | colour page limit: enable / value |
+| `AA_TRA_C_CPL` / `AA_TRA_T_CPL` | 7 | color page limit: enable / value |
 | `AA_TRA_C_BPL` / `AA_TRA_T_BPL` | 7 | black page limit: enable / value |
 | `AA_TRA_C_BNL` / `AA_TRA_T_BNL` | 4 | (limit pair, units unconfirmed) |
 
@@ -589,7 +589,7 @@ Two things about these numbers that decide how they can be used:
   see `app/copiers/account_counters.py`. The only thing that lowers one is
   the Counter Clear button on this screen (`func` posted by `ID_AA_CLR_CNT`
   — **not captured, and never to be run against a production counter**).
-- **The colour modes are disjoint, and `*Large` is not.** Bw, FullColor,
+- **The color modes are disjoint, and `*Large` is not.** Bw, FullColor,
   BiColor and MonoColor each count a page once; `BwLarge` re-counts
   large-format pages already in `Bw`, and `Paper`/`Document` count sheets
   and originals rather than pages. Summing everything double-counts.

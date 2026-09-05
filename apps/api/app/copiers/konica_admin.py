@@ -93,7 +93,7 @@ class TrackCounters:
 
     `lists` is kept as the device's own {list: {Type: Count}} rather than
     flattened into named fields: the Type vocabulary differs by model (a
-    mono device reports only Bw/BwLarge where a colour one adds FullColor,
+    mono device reports only Bw/BwLarge where a color one adds FullColor,
     BiColor and MonoColor), and collapsing that here would silently drop
     whatever this firmware happens to report."""
 

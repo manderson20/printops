@@ -68,7 +68,7 @@ export function StaffUsageDetail({
   if (state.phase === "error") return <ErrorState>{state.message}</ErrorState>;
 
   const { usage } = state;
-  // Copies the device counted but never broke out by colour. Shown as its
+  // Copies the device counted but never broke out by color. Shown as its
   // own number rather than folded into mono, which is what it is *priced*
   // as but not what the device said.
   const unsplitCopyPages = usage.copiers.reduce(

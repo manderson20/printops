@@ -165,14 +165,14 @@ schedules an update.
 
 ## [0.64.2] - 2026-08-24
 
-- **Grey pages are no longer counted, or charged, as colour.** A colour job
+- **Grey pages are no longer counted, or charged, as color.** A color job
   sent to a black-and-white printer prints in grey, but the print server
-  reports the colour the job *asked* for — so Insights counted those pages as
-  colour and the cost formula billed them at the colour rate. Jobs on a printer
+  reports the color the job *asked* for — so Insights counted those pages as
+  color and the cost formula billed them at the color rate. Jobs on a printer
   known to be black-and-white are now recorded as monochrome, and the 18 jobs
   already stored that way have been corrected.
 - A printer whose capabilities have never been detected is left alone, so a
-  colour printer is never wrongly recorded as black-and-white.
+  color printer is never wrongly recorded as black-and-white.
 
 ## [0.64.1] - 2026-08-24
 
@@ -447,27 +447,27 @@ schedules an update.
 ## [0.59.2] - 2026-08-21
 
 - **Fixed: toner levels were being read off some printers and then thrown
-  away.** PrintOps worked out which cartridge was which colour by looking
+  away.** PrintOps worked out which cartridge was which color by looking
   for the words "cyan", "magenta", "yellow" or "black" in whatever the
   printer called its supplies. Kyocera devices don't use those words — they
   report part numbers like `TK-8802C` — so every cartridge failed to match,
   and the levels the printer was reporting perfectly well were discarded.
-  Setting the colours by hand in the printer's settings couldn't fix it,
+  Setting the colors by hand in the printer's settings couldn't fix it,
   because the matching never consulted that setting. Part numbers ending in
   C, M, Y or K are now understood, so those printers report toner again.
 - **New: the test page is now a printer identity sheet.** It used to be a
   logo and four lines on a mostly empty page. It now prints what PrintOps
   knows about the device — model, serial, address, firmware, location, queue
-  name and status; which features it has (colour, duplex, collation, PIN
+  name and status; which features it has (color, duplex, collation, PIN
   printing, accounting, IPPS); its resolutions, media sizes, loaded trays,
   finishing options and formats; toner levels and page counters as they read
   at the moment you pressed the button. Walk to the printer, pick up the
   page, and everything you'd otherwise go back to a screen for is on it. A
   toner slot that has never been polled says so, rather than "not reported"
-  — setting a cartridge's colour labels the slot, but only an SNMP poll
+  — setting a cartridge's color labels the slot, but only an SNMP poll
   fills in a level, and the two need different fixes.
 - **New: the test page actually tests the print.** Alongside the details it
-  carries colour patches, an eleven-step greyscale ramp, hairlines from one
+  carries color patches, an eleven-step greyscale ramp, hairlines from one
   to four pixels, a 5-to-10 point type ladder and corner registration marks
   — plus a short checklist of what a good one looks like, so the targets
   mean something to whoever is holding the sheet. A printer that has never
@@ -576,8 +576,8 @@ copying costs, per person, beside their printing".
   labelled as the total.
 - **New: click a person to see what their number is made of.** A row on the
   Combined Leaderboard expands into a full breakdown — every printer they
-  used (jobs, colour/mono, duplex/simplex, sheets, toner, paper, cost) and
-  every copier (copies, colour/mono, scans, faxes, cost). "Open full
+  used (jobs, color/mono, duplex/simplex, sheets, toner, paper, cost) and
+  every copier (copies, color/mono, scans, faxes, cost). "Open full
   report" opens the same breakdown on their Usage page, carrying the date
   range with it so a shared link means the same thing.
 - **New: a copier nobody logs in to can belong to one person.** A desk
@@ -597,8 +597,8 @@ copying costs, per person, beside their printing".
 - **Two honest limits, stated in the interface rather than left to be
   discovered.** Copiers don't report duplex per copy, so copy paper is
   counted one sheet per page — an over-estimate wherever people duplex. And
-  a whole-device meter reports a copy total with no colour breakdown, so
-  those pages are priced at the mono rate, which under-states a colour
+  a whole-device meter reports a copy total with no color breakdown, so
+  those pages are priced at the mono rate, which under-states a color
   copier. Both are shown on the breakdown that relies on them.
 - **New: staff accounts can be provisioned onto Konica copiers**, by button
   or on a schedule, with progress shown while it runs and a record of who
@@ -671,7 +671,7 @@ copying costs, per person, beside their printing".
   limit. **Everyone except these people** is the new one: you set a single
   limit for the printer and name the handful of staff who are exempt from
   it, instead of entering a row for every person who should be capped.
-  Which mode a printer is in is per-printer, so a library colour printer
+  Which mode a printer is in is per-printer, so a library color printer
   can cap everyone with a couple of staff let out while a plotter caps
   only the two classes that overuse it.
 - Switching a printer's mode never deletes anything — the same rows are

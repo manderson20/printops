@@ -472,10 +472,10 @@ class TestRecordReading:
 
 
 class TestCartridgeColorFromPartNumber:
-    """Kyocera (confirmed live on 10.50.1.37) reports no colour word at all
+    """Kyocera (confirmed live on 10.50.1.37) reports no color word at all
     in its supplies table — just TK-8802C/M/Y/K. Before this, every one of
-    its cartridges failed to colour-match, so its levels were read off the
-    device and then dropped, and no amount of setting the colours by hand
+    its cartridges failed to color-match, so its levels were read off the
+    device and then dropped, and no amount of setting the colors by hand
     in the printer's settings could help: sync_toner_levels keys rows off
     this guess, not off the admin's assignment."""
 
@@ -487,15 +487,15 @@ class TestCartridgeColorFromPartNumber:
         assert _guess_cartridge_color("TK-8802Y") == "yellow"
         assert _guess_cartridge_color("TK-8802K") == "black"
 
-    def test_colour_words_still_win(self):
+    def test_color_words_still_win(self):
         from app.printers.snmp_counters import _guess_cartridge_color
 
         # Konica's real string, from 10.30.1.210.
         assert _guess_cartridge_color("Toner (Black)") == "black"
         assert _guess_cartridge_color("Cyan Toner Cartridge") == "cyan"
 
-    def test_it_does_not_invent_a_colour(self):
-        """A wrong colour is worse than none: it writes a level onto the
+    def test_it_does_not_invent_a_color(self):
+        """A wrong color is worse than none: it writes a level onto the
         wrong cartridge row silently, where no-guess surfaces in the
         detect endpoint's `unmatched` list where an admin can see it."""
         from app.printers.snmp_counters import _guess_cartridge_color

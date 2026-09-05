@@ -37,10 +37,10 @@ async def db():
     await engine.dispose()
 
 
-def _counters(copy_bw=0, print_bw=0, scanned=0, faxed=0, copy_colour=0):
+def _counters(copy_bw=0, print_bw=0, scanned=0, faxed=0, copy_color=0):
     return {
         "total": {"Bw": copy_bw + print_bw, "Paper": copy_bw + print_bw},
-        "copy": {"Bw": copy_bw, "FullColor": copy_colour},
+        "copy": {"Bw": copy_bw, "FullColor": copy_color},
         "print": {"Bw": print_bw},
         "scan_fax": {"DocumentReadTotal": scanned, "FaxSend": faxed},
     }

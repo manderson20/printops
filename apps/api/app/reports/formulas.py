@@ -171,13 +171,13 @@ def copy_cost(
     PrintOps learned about it, not a real difference in cost.
 
     Where this differs from job_cost is what the device tells us. A copy
-    row carries a colour/mono *split* rather than one colour_mode, since
+    row carries a color/mono *split* rather than one color_mode, since
     it is a counter delta covering many copies rather than a single job —
     so both rates apply to the same row. And pages the split doesn't
     account for (the device reported a total but no breakdown, which is
     every row from app/copiers/device_owner.py) are priced at the mono
     rate, the same conservative rule job_cost applies to a job whose
-    colour mode nobody reported.
+    color mode nobody reported.
 
     Paper is the weak half and worth being explicit about: a Konica's
     per-account CopyCounterList has no duplex or sheet counter of its own

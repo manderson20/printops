@@ -154,7 +154,7 @@ def test_rendered_page_is_a_single_letter_sized_pdf():
 
 
 def test_a_never_polled_slot_is_not_called_not_reported():
-    """An admin who has just set the cartridge colours sees empty levels and
+    """An admin who has just set the cartridge colors sees empty levels and
     reasonably reads "not reported" as the device refusing to answer. The
     two cases have different fixes, so the sheet distinguishes them."""
     from datetime import datetime
@@ -194,10 +194,10 @@ def test_the_checklist_yields_rather_than_overrun_the_footer():
 
     draw = ImageDraw.Draw(Image.new("RGB", (PAGE_W, PAGE_H), "white"))
 
-    roomy = _checklist(draw, 1200, footer_y=1540, colour_device=True)
+    roomy = _checklist(draw, 1200, footer_y=1540, color_device=True)
     assert roomy > 1200, "should have drawn when there is room"
 
-    cramped = _checklist(draw, 1500, footer_y=1540, colour_device=True)
+    cramped = _checklist(draw, 1500, footer_y=1540, color_device=True)
     assert cramped == 1500, "should draw nothing rather than collide"
 
 

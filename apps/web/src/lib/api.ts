@@ -2140,7 +2140,7 @@ export type CombinedLeaderboardEntry = {
   total_pages: number;
   // color/mono/duplex/simplex describe the print side only. A copy arrives
   // as a counter delta with no per-job duplex flag at all, so the copy side
-  // gets its own colour split instead of sharing these.
+  // gets its own color split instead of sharing these.
   color_pages: number;
   mono_pages: number;
   duplex_pages: number;
@@ -2193,7 +2193,7 @@ export type StaffCopierUsage = {
   toner_cost: number;
   paper_cost: number;
   total_cost: number;
-  // False when the device reported a copy total with no colour breakdown,
+  // False when the device reported a copy total with no color breakdown,
   // so the unsplit remainder is being priced at the mono rate. The UI has
   // to say so rather than implying the copies were mono.
   measured_color: boolean;

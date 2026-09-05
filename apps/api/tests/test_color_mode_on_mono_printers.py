@@ -1,10 +1,10 @@
-"""A monochrome printer cannot have printed a colour page.
+"""A monochrome printer cannot have printed a color page.
 
-CUPS reports the colour mode a job *asked* for. A mono printer accepts a colour
+CUPS reports the color mode a job *asked* for. A mono printer accepts a color
 job and prints it in grey without complaint, so the job arrives here recorded
-as "color" — and Insights counts it as a colour page and bills it at the colour
-rate. Several queues here offer colour on mono hardware (a printer too old for
-driverless IPP falls back to a generic PPD that claims colour), so this is not
+as "color" — and Insights counts it as a color page and bills it at the color
+rate. Several queues here offer color on mono hardware (a printer too old for
+driverless IPP falls back to a generic PPD that claims color), so this is not
 hypothetical: 18 such jobs existed on this server when this was written.
 """
 
@@ -66,27 +66,27 @@ async def _printer(db_session_factory, capabilities):
         return str(printer.id)
 
 
-def test_a_mono_printer_did_not_print_in_colour():
+def test_a_mono_printer_did_not_print_in_color():
     assert recorded_color_mode({"color_supported": False}, "color") == "monochrome"
 
 
-def test_a_colour_printer_is_believed():
+def test_a_color_printer_is_believed():
     assert recorded_color_mode({"color_supported": True}, "color") == "color"
 
 
 def test_an_unprobed_printer_is_left_alone():
-    """The dangerous direction. A colour printer we simply failed to probe
-    must not have its colour jobs rewritten to mono."""
+    """The dangerous direction. A color printer we simply failed to probe
+    must not have its color jobs rewritten to mono."""
     assert recorded_color_mode(None, "color") == "color"
     assert recorded_color_mode({}, "color") == "color"
 
 
-def test_modes_that_are_not_colour_pass_through():
+def test_modes_that_are_not_color_pass_through():
     assert recorded_color_mode({"color_supported": False}, "monochrome") == "monochrome"
     assert recorded_color_mode({"color_supported": False}, None) is None
 
 
-async def test_update_job_records_grey_for_a_colour_job_on_a_mono_printer(
+async def test_update_job_records_grey_for_a_color_job_on_a_mono_printer(
     client, backend_headers, db_session_factory
 ):
     printer_id = await _printer(db_session_factory, {"color_supported": False})
@@ -106,7 +106,7 @@ async def test_update_job_records_grey_for_a_colour_job_on_a_mono_printer(
     assert updated.json()["color_mode"] == "monochrome"
 
 
-async def test_update_job_keeps_colour_on_a_colour_printer(
+async def test_update_job_keeps_color_on_a_color_printer(
     client, backend_headers, db_session_factory
 ):
     printer_id = await _printer(db_session_factory, {"color_supported": True})

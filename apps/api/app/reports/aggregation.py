@@ -611,9 +611,9 @@ def _apply_copier_filters(stmt: Select, filters: ReportFilters) -> Select:
 class CopyTotals:
     copy_record_count: int = 0
     copy_pages: int = 0
-    # Of those copy pages, the ones the device broke out by colour. Both
+    # Of those copy pages, the ones the device broke out by color. Both
     # can be 0 on a real row with pages: a device-level meter reports a
-    # copy total and no colour split at all (app/copiers/device_owner.py),
+    # copy total and no color split at all (app/copiers/device_owner.py),
     # so copy_pages is the total and these two are what is *known* about
     # it, never a second way of computing the same number.
     copy_color_pages: int = 0
@@ -915,17 +915,17 @@ class CombinedLeaderboardEntry:
     print_pages: int = 0
     copy_pages: int = 0
     total_pages: int = 0
-    # Print-side breakdown. A copy has no single colour_mode or duplex
+    # Print-side breakdown. A copy has no single color_mode or duplex
     # flag of its own — it arrives as a counter delta covering many
     # copies — so these stay print-only and the copy side gets its own
-    # colour split below rather than being merged into a column that
+    # color split below rather than being merged into a column that
     # would then mean two different things.
     color_pages: int = 0
     mono_pages: int = 0
     duplex_pages: int = 0
     simplex_pages: int = 0
     # Copy-side breakdown. These need not add up to copy_pages: a device
-    # meter that reports a copy total with no colour split leaves both at
+    # meter that reports a copy total with no color split leaves both at
     # zero (app/copiers/device_owner.py), which is a gap in what the
     # device says, not pages going missing.
     copy_color_pages: int = 0

@@ -217,7 +217,7 @@ class Printer(Base, TimestampMixin):
     #   exclude — the printer's blanket row (user_email IS NULL) caps
     #             everyone, and a per-user row means "exempt from it".
     #
-    # Deliberately per-printer, not org-wide: a library colour printer wants
+    # Deliberately per-printer, not org-wide: a library color printer wants
     # a blanket cap with a couple of staff let out, while a plotter wants the
     # opposite (nobody capped except the two classes that overuse it).
     # Switching modes never rewrites rows — the same rows are simply read the

@@ -329,19 +329,19 @@ def parse_capabilities(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def recorded_color_mode(capabilities: dict[str, Any] | None, reported: str | None) -> str | None:
-    """What a job's colour mode actually was, given what the printer can do.
+    """What a job's color mode actually was, given what the printer can do.
 
-    CUPS reports the colour mode the job *asked* for, not what came out of the
-    machine. A monochrome printer accepts a colour job perfectly happily and
-    prints it in grey, so a queue that offers colour at all — several here do,
+    CUPS reports the color mode the job *asked* for, not what came out of the
+    machine. A monochrome printer accepts a color job perfectly happily and
+    prints it in grey, so a queue that offers color at all — several here do,
     because a printer too old for driverless IPP falls back to a generic PPD
-    that claims colour — produces jobs recorded as colour that were never
-    colour. Insights then counts those as colour pages and, worse, bills them
-    at the colour rate in app/routers/jobs.py's cost formula.
+    that claims color — produces jobs recorded as color that were never
+    color. Insights then counts those as color pages and, worse, bills them
+    at the color rate in app/routers/jobs.py's cost formula.
 
-    Only an explicit "this printer has no colour" overrides the report.
-    Capabilities that are missing or undetected leave the job alone: a colour
-    printer we failed to probe must not have its colour jobs rewritten to
+    Only an explicit "this printer has no color" overrides the report.
+    Capabilities that are missing or undetected leave the job alone: a color
+    printer we failed to probe must not have its color jobs rewritten to
     mono, which would be the same error in the opposite direction.
     """
     if reported != "color":
