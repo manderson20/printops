@@ -64,6 +64,7 @@ from app.routers import (
     users,
     zabbix_integration,
 )
+from app.routers import road_trip as road_trip_router
 from app.routers import settings as settings_router
 from app.routers import syslog as syslog_router
 from app.syslog.service import get_or_create_syslog_settings
@@ -705,6 +706,7 @@ app.include_router(
 app.include_router(updates.router, prefix="/api/v1/updates", tags=["updates"])
 app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])
 app.include_router(release.router, prefix="/api/v1/release", tags=["release"])
+app.include_router(road_trip_router.router, prefix="/api/v1/road-trip", tags=["road-trip"])
 app.include_router(mfp_devices.router, prefix="/api/v1/mfp-devices", tags=["mfp-devices"])
 app.include_router(
     staff_copier_identities.router,

@@ -3208,6 +3208,42 @@ export type DistrictFunFacts = {
   has_enough_activity: boolean;
   equivalencies: Equivalency[];
   facts: string[];
+  /** The road trip as something a map can draw, or null when there is
+   *  nothing to draw — no home location, no coordinates on it, or no
+   *  destination with coordinates. Every field of it is configuration an
+   *  admin typed in Settings, except `miles_travelled`, which is
+   *  `total_pages` in different units. */
+  route: DistrictRoute | null;
+};
+
+export type DistrictRoute = {
+  home_name: string;
+  home_latitude: number;
+  home_longitude: number;
+  miles_travelled: number;
+  stops: RouteStop[];
+  /** Null before the journey has started. Zero pages is not "at home
+   *  about to leave" — a pin on the school would read as progress. */
+  position: RoutePosition | null;
+};
+
+export type RouteStop = {
+  name: string;
+  label: string;
+  miles: number;
+  latitude: number;
+  longitude: number;
+  reached: boolean;
+};
+
+export type RoutePosition = {
+  latitude: number;
+  longitude: number;
+  /** The leg being travelled, for the caption. Either end can be absent:
+   *  before the first stop the journey is still leaving home, and past
+   *  the last pin there is nothing ahead to name. */
+  from_label: string | null;
+  to_label: string | null;
 };
 
 export type DistrictSegment = {
@@ -3304,4 +3340,138 @@ export async function getMyActivity(
     `/api/v1/reports/explained/me/activity?period=${period}&limit=${limit}`,
   );
   return response.json();
+}
+
+// --- Locations and the road trip ---------------------------------------
+//
+// The district's own places, and the milestone ladder measured from the
+// one marked home. Both were constants in the API's
+// app/reports/equivalency_config.py until they moved into the database —
+// see Settings > Locations and Settings > Road Trip.
+
+export type Location = {
+  id: string;
+  name: string;
+  street: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  /** The point the road trip is measured from. At most one location has
+   *  it; setting it on another clears it here. */
+  is_home: boolean;
+  notes: string | null;
+};
+
+export type LocationInput = {
+  name: string;
+  street?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  is_home?: boolean;
+  notes?: string | null;
+};
+
+/** A building name printers are using that no Location claims yet. */
+export type UnmatchedBuilding = {
+  building: string;
+  printer_count: number;
+};
+
+export type Destination = {
+  id: string;
+  name: string;
+  short_name: string | null;
+  /** Road miles from home — what the sentence claims, and what a reader
+   *  checks against their own drive. */
+  miles: number;
+  latitude: number | null;
+  longitude: number | null;
+  enabled: boolean;
+  /** Straight-line miles, when both ends have coordinates. Always
+   *  shorter than the drive, so it is a floor to correct upward and
+   *  never an answer to accept. */
+  straight_line_miles: number | null;
+};
+
+export type DestinationInput = {
+  name: string;
+  short_name?: string | null;
+  miles: number;
+  latitude?: number | null;
+  longitude?: number | null;
+  enabled?: boolean;
+};
+
+export async function listLocations(): Promise<Location[]> {
+  const response = await authorizedFetch("/api/v1/road-trip/locations");
+  return response.json();
+}
+
+export async function listUnmatchedBuildings(): Promise<UnmatchedBuilding[]> {
+  const response = await authorizedFetch(
+    "/api/v1/road-trip/locations/unmatched-buildings",
+  );
+  return response.json();
+}
+
+export async function createLocation(input: LocationInput): Promise<Location> {
+  const response = await authorizedFetch("/api/v1/road-trip/locations", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function updateLocation(
+  id: string,
+  input: Partial<LocationInput>,
+): Promise<Location> {
+  const response = await authorizedFetch(`/api/v1/road-trip/locations/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function deleteLocation(id: string): Promise<void> {
+  await authorizedFetch(`/api/v1/road-trip/locations/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function listDestinations(): Promise<Destination[]> {
+  const response = await authorizedFetch("/api/v1/road-trip/destinations");
+  return response.json();
+}
+
+export async function createDestination(
+  input: DestinationInput,
+): Promise<Destination> {
+  const response = await authorizedFetch("/api/v1/road-trip/destinations", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+export async function updateDestination(
+  id: string,
+  input: Partial<DestinationInput>,
+): Promise<Destination> {
+  const response = await authorizedFetch(
+    `/api/v1/road-trip/destinations/${id}`,
+    { method: "PATCH", body: JSON.stringify(input) },
+  );
+  return response.json();
+}
+
+export async function deleteDestination(id: string): Promise<void> {
+  await authorizedFetch(`/api/v1/road-trip/destinations/${id}`, {
+    method: "DELETE",
+  });
 }

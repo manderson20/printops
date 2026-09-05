@@ -14,6 +14,8 @@ const SETTINGS_NAV = [
   { href: "/settings/snmp", label: "SNMP" },
   { href: "/settings/aliases", label: "Attribution Aliases" },
   { href: "/settings/insights", label: "Insights" },
+  { href: "/settings/locations", label: "Locations" },
+  { href: "/settings/road-trip", label: "Road Trip" },
   { href: "/settings/quotas", label: "Quotas" },
   { href: "/settings/toner-cartridges", label: "Toner Cartridges" },
   { href: "/settings/ldap", label: "LDAP Relay" },

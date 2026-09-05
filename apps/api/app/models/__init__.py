@@ -5,6 +5,7 @@ from app.models.copier_account_counter import CopierAccountCounterReading
 from app.models.copier_import import CopierImportBatch, CopierImportTemplate
 from app.models.copier_provisioning import CopierProvisionedAccount, CopierSyncJob
 from app.models.copier_usage import CopierUsageRecord
+from app.models.destination import Destination
 from app.models.device_override import DeviceUserOverride
 from app.models.google_sso import GoogleSsoSettings
 from app.models.google_workspace import (
@@ -15,6 +16,7 @@ from app.models.google_workspace import (
 from app.models.impersonation import ImpersonationSession
 from app.models.job import Job
 from app.models.ldap_relay import LdapRelaySettings
+from app.models.location import Location
 from app.models.mfp_device import MfpDevice
 from app.models.mosyle import MosyleDevice, MosyleSettings
 from app.models.printer import Printer
@@ -38,6 +40,7 @@ __all__ = [
     "CopierProvisionedAccount",
     "CopierSyncJob",
     "CopierUsageRecord",
+    "Destination",
     "DeviceUserOverride",
     "GoogleSsoSettings",
     "GoogleWorkspaceDevice",
@@ -46,6 +49,7 @@ __all__ = [
     "ImpersonationSession",
     "Job",
     "LdapRelaySettings",
+    "Location",
     "MfpDevice",
     "MosyleDevice",
     "MosyleSettings",

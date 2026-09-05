@@ -17,6 +17,7 @@ import {
   StatCard,
   formatNumber,
 } from "../explained-ui";
+import { RouteMap } from "./RouteMap";
 
 type LoadState =
   | { phase: "loading" }
@@ -74,7 +75,7 @@ export default function DistrictFunFactsPage() {
       <div className="flex flex-col gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
-            Together, we print
+            Our printing
           </h1>
           <p className="mt-1 text-sm text-zinc-500">
             Everything below is the whole district added up — no names, no
@@ -150,6 +151,19 @@ export default function DistrictFunFactsPage() {
               caption="Pages on average, across everybody."
             />
           </section>
+
+          {data.route ? (
+            <section className="flex flex-col gap-3">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
+                Where that has taken us
+              </h2>
+              {/* Absent until an admin sets a home location with coordinates
+                  and at least one destination that has them
+                  (Settings > Locations, Settings > Road Trip). No map is a
+                  state; a broken one is not. */}
+              <RouteMap route={data.route} />
+            </section>
+          ) : null}
 
           <section className="flex flex-col gap-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">

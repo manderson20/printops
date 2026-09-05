@@ -423,13 +423,61 @@ class PersonalExplainedOut(BaseModel):
     time_of_day_available: bool
 
 
+class RouteStopOut(BaseModel):
+    """One pin on the road-trip map."""
+
+    name: str
+    label: str
+    miles: float
+    latitude: float
+    longitude: float
+    reached: bool
+
+
+class RoutePositionOut(BaseModel):
+    """Where the district has got to. Interpolated by mileage along a
+    straight line between pins — see app/reports/road_trip.py on why the
+    distance is exact and the point on the ground is not."""
+
+    latitude: float
+    longitude: float
+    from_label: str | None
+    to_label: str | None
+
+
+class RouteOut(BaseModel):
+    """The road trip as something a map can draw.
+
+    Null whenever there is nothing to draw: no home location, no
+    coordinates on it, or no destination with coordinates. Each of those
+    is a state an admin can see and fix in Settings, and each yields a
+    dashboard with no map rather than a broken one.
+    """
+
+    home_name: str
+    home_latitude: float
+    home_longitude: float
+    miles_travelled: float
+    stops: list[RouteStopOut]
+    position: RoutePositionOut | None
+
+
 class DistrictFunFactsOut(BaseModel):
     """The all-users view. Aggregates only.
 
-    There is deliberately no field on this model that could hold a
-    person, a building or a department — the anonymity rule is carried by
-    the type, so it cannot be broken by forgetting to filter something
-    out later. See app/routers/reports.py:report_district_fun_facts.
+    No field on this model can hold a person, a building or a department
+    *as a unit of usage* — the anonymity rule is carried by the type, so
+    it cannot be broken by forgetting to filter something out later. See
+    app/routers/reports.py:report_district_fun_facts.
+
+    `route` is the one thing here that names places, and it is worth
+    being explicit about why that does not weaken the rule. Every value
+    in it is district configuration an admin typed in Settings: the same
+    home and the same destinations for every viewer and every period,
+    attached to no usage at all. The single number that does vary,
+    `miles_travelled`, is a unit conversion of `total_pages`, which is
+    already in this response. Nothing in `route` is a segment of the
+    district's printing, and nothing may be added to it that is.
     """
 
     period: str
@@ -451,6 +499,7 @@ class DistrictFunFactsOut(BaseModel):
 
     equivalencies: list[EquivalencyOut]
     facts: list[str]
+    route: RouteOut | None = None
 
 
 class DistrictSegmentOut(BaseModel):

@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.deps import get_current_user, require_role
+from app.models.destination import Destination
+from app.models.location import Location
 from app.models.mfp_device import MfpDevice
 from app.models.printer import Printer
 from app.models.report import ReportFormulaSettings, ReportSnapshot
@@ -64,6 +66,7 @@ from app.reports.fun_facts import (
     generate_equivalency_facts,
     generate_fun_facts,
 )
+from app.reports.road_trip import build_route, ladder_from_destinations
 from app.reports.tracked_copies import get_tracked_copy_summary
 from app.reports.untracked_copies import get_untracked_copy_summary
 from app.schemas.auth import UserOut
@@ -84,6 +87,9 @@ from app.schemas.report import (
     MyActivityRowOut,
     PeakTimesOut,
     PersonalExplainedOut,
+    RouteOut,
+    RoutePositionOut,
+    RouteStopOut,
     SnapshotCreate,
     SnapshotOut,
     StaffCopierUsageOut,
@@ -995,6 +1001,54 @@ def _equivalencies_out(equivalencies) -> list[EquivalencyOut]:
     ]
 
 
+async def _road_trip(db: AsyncSession) -> tuple[list[Destination], Location | None]:
+    """The district's configured road trip, or as much of it as exists.
+
+    One query each, on tables with a handful of rows apiece — this runs
+    once per district-page load, not per fact. Returns the destinations
+    unfiltered: `ladder_from_destinations` decides what counts as a rung
+    and `build_route` decides what can be a pin, and those are different
+    questions (a rung needs a distance, a pin needs coordinates).
+    """
+    destinations = list((await db.execute(select(Destination))).scalars())
+    home = (
+        await db.execute(select(Location).where(Location.is_home.is_(True)))
+    ).scalar_one_or_none()
+    return destinations, home
+
+
+def _route_out(route) -> RouteOut | None:
+    if route is None:
+        return None
+    return RouteOut(
+        home_name=route.home_name,
+        home_latitude=route.home_latitude,
+        home_longitude=route.home_longitude,
+        miles_travelled=round(route.miles_travelled, 1),
+        stops=[
+            RouteStopOut(
+                name=stop.name,
+                label=stop.label,
+                miles=stop.miles,
+                latitude=stop.latitude,
+                longitude=stop.longitude,
+                reached=stop.reached,
+            )
+            for stop in route.stops
+        ],
+        position=(
+            RoutePositionOut(
+                latitude=route.position.latitude,
+                longitude=route.position.longitude,
+                from_label=route.position.from_label,
+                to_label=route.position.to_label,
+            )
+            if route.position is not None
+            else None
+        ),
+    )
+
+
 def _sheets_for(summary, copy_pages: int) -> int:
     return sheets_from_totals(
         duplex_pages=summary.duplex_pages,
@@ -1059,7 +1113,14 @@ async def report_explained_me(
     median = statistics.median(per_person) if per_person else 0.0
     mean = statistics.fmean(per_person) if per_person else 0.0
 
-    equivalencies = build_equivalencies(total_pages, sheets)
+    # The same ladder the district page uses: "you're 17% of the way to
+    # Jefferson City" and "we're 40% of the way to Jefferson City" have to
+    # be measured against the same Jefferson City, or the two pages
+    # quietly disagree about where it is.
+    destinations, _ = await _road_trip(db)
+    equivalencies = build_equivalencies(
+        total_pages, sheets, distance_ladder=ladder_from_destinations(destinations)
+    )
     facts = generate_equivalency_facts(equivalencies, collective=False)
     opportunity = duplex_opportunity_fact(additional, saved)
     if opportunity is not None:
@@ -1182,7 +1243,15 @@ async def report_district_fun_facts(
     combined = await get_combined_summary(db, filters)
     sheets = _sheets_for(summary, combined.copy_pages)
 
-    equivalencies = build_equivalencies(combined.total_pages, sheets)
+    destinations, home = await _road_trip(db)
+    equivalencies = build_equivalencies(
+        combined.total_pages, sheets, distance_ladder=ladder_from_destinations(destinations)
+    )
+    distance = next((e for e in equivalencies if e.key == "distance"), None)
+    # No distance equivalency means the total was too small to be worth a
+    # sentence, and a map of a journey nobody has started is worse than no
+    # map — build_route is given zero rather than a guess.
+    route = build_route(home, destinations, distance.value if distance else 0.0)
     return DistrictFunFactsOut(
         period=period,
         range_start=start_date,
@@ -1195,6 +1264,7 @@ async def report_district_fun_facts(
         has_enough_activity=True,
         equivalencies=_equivalencies_out(equivalencies),
         facts=generate_equivalency_facts(equivalencies, collective=True),
+        route=_route_out(route),
     )
 
 
@@ -1331,7 +1401,12 @@ async def report_district_detail(
     if unassigned.total_pages > 0:
         by_building.append(unassigned)
 
-    equivalencies = build_equivalencies(combined.total_pages, district_sheets)
+    detail_destinations, _ = await _road_trip(db)
+    equivalencies = build_equivalencies(
+        combined.total_pages,
+        district_sheets,
+        distance_ladder=ladder_from_destinations(detail_destinations),
+    )
     return DistrictDetailOut(
         period=period,
         range_start=start_date,

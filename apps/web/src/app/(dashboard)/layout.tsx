@@ -30,13 +30,13 @@ const VIEWER_NAV_LINKS = [
   { href: "/queue", label: "Print Queue" },
   { href: "/insights", label: "Insights" },
   // Both of these are open to every role. "My Printing" is scoped to the
-  // caller for everyone including admins, and "Together" is district-wide
+  // caller for everyone including admins, and "Our Printing" is district-wide
   // aggregates with no per-person, per-building or per-department data in
   // the response at all — see app/routers/reports.py's
   // report_explained_me and report_district_fun_facts.
   { href: "/insights/me", label: "My Printing" },
   { href: "/insights/me/activity", label: "My Activity" },
-  { href: "/insights/district", label: "Together" },
+  { href: "/insights/district", label: "Our Printing" },
 ] as const;
 
 // "ou_viewer" is read-only and scoped to Insights only — see
@@ -46,7 +46,7 @@ const OU_VIEWER_NAV_LINKS = [
   { href: "/insights", label: "Insights" },
   { href: "/insights/me", label: "My Printing" },
   { href: "/insights/me/activity", label: "My Activity" },
-  { href: "/insights/district", label: "Together" },
+  { href: "/insights/district", label: "Our Printing" },
 ] as const;
 
 // Prefixes a non-admin role is allowed to navigate to directly (by URL,
