@@ -170,10 +170,11 @@ def test_a_location_can_be_deleted_even_when_it_is_home(client, auth_headers):
     """Refusing would mean a building that closed cannot be removed until
     another is nominated. The cost is the map, not the facts."""
     home = _make_location(client, auth_headers, is_home=True).json()
-    assert (
-        client.delete(f"/api/v1/road-trip/locations/{home['id']}", headers=auth_headers).status_code
-        == 204
-    )
+    # The call is its own statement: an API call inside an assert vanishes
+    # when Python is run with -O, taking the delete with it. Same reason
+    # #fix/side-effect-in-assert took them out of the rest of the suite.
+    response = client.delete(f"/api/v1/road-trip/locations/{home['id']}", headers=auth_headers)
+    assert response.status_code == 204
 
 
 def test_clearing_one_half_of_a_coordinate_pair_is_rejected(client, auth_headers):
