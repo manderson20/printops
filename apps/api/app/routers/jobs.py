@@ -119,6 +119,7 @@ async def create_job(payload: JobCreate, db: AsyncSession = Depends(get_db)):
         file_size_bytes=payload.file_size_bytes,
         document_name=payload.document_name,
         copy_count=payload.copy_count,
+        submitted_pages=payload.submitted_pages,
         status="forwarding",
         hold_reason=hold_reason,
     )

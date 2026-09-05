@@ -19,6 +19,12 @@ class JobCreate(BaseModel):
     # infra/cups/backends/printops.
     document_name: str | None = None
     copy_count: int | None = None
+    # Pages counted from the document itself before it was handed over,
+    # times copies — see infra/cups/backends/printops. The only figure
+    # about a job's size that does not come from the printer's own
+    # account of what it completed. Null when the count could not be
+    # taken (stdin delivery, a non-PDF format, no pdfinfo).
+    submitted_pages: int | None = None
 
 
 class JobUpdate(BaseModel):

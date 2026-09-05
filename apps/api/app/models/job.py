@@ -91,6 +91,15 @@ class Job(Base, TimestampMixin):
     # duplex/copies). Reported best-effort by the CUPS backend script
     # (infra/cups/backends/printops); null if unavailable.
     page_count: Mapped[int | None] = mapped_column(default=None)
+    # Pages in the document as handed to the printer, times copies,
+    # counted by the backend before delivery (infra/cups/backends/printops).
+    #
+    # Kept apart from page_count on purpose. That one is
+    # job-media-sheets-completed: the printer's account of what it
+    # finished, which is exactly the thing the unprinted-pages check
+    # exists to doubt, and which was simply absent on 11.5% of forwarded
+    # jobs over thirty days of this fleet. This is what was sent.
+    submitted_pages: Mapped[int | None] = mapped_column(default=None)
 
     # --- Print Insights fields (app/reports/) ---
     # job-title/job-copies are already handed to the CUPS backend script as

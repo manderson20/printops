@@ -368,3 +368,64 @@ async def test_a_verdict_is_dated_by_its_readings_not_by_the_clock(db, printer):
     assert abs((assessed_at - (NOW - timedelta(minutes=last_seen_minutes))).total_seconds()) < 5
     # And therefore already past the point where the status line retires it.
     assert recorded_reason(record, now=NOW) is None
+
+
+async def test_a_job_the_printer_never_counted_is_still_measured(db, printer):
+    """The gap this was built to close.
+
+    11.5% of forwarded jobs over thirty days came back with no page count
+    at all, and a job with no page count contributes nothing to a window —
+    so a printer could accept work, print none of it, and raise no
+    shortfall because nothing believed it had been sent anything. A count
+    taken from the document before delivery is the figure that does not
+    depend on the printer agreeing to report.
+    """
+    await _reading(db, printer, 90, 5000)
+    await _reading(db, printer, 30, 5000)
+    db.add(
+        Job(
+            printer_id=printer.id,
+            status="forwarded",
+            page_count=None,
+            submitted_pages=40,
+            completed_at=NOW - timedelta(minutes=60),
+            created_at=NOW - timedelta(minutes=60),
+        )
+    )
+    await db.commit()
+
+    await sweep_unprinted_pages(db, now=NOW)
+    await db.commit()
+    await db.refresh(printer)
+
+    assert printer.pages_not_printed is not None
+    assert printer.pages_not_printed["shortfall"] == 40
+
+
+async def test_the_printers_own_count_still_governs_when_it_has_one(db, printer):
+    """Only the gap is filled.
+
+    The document's page count is every page times copies, which is not
+    always what the printer was asked to produce — someone printing pages
+    2-3 of a ten-page file sends two. Preferring it would invent eight
+    pages and report the printer for losing them, which is the one thing
+    this feature must never do."""
+    await _reading(db, printer, 90, 5000)
+    await _reading(db, printer, 30, 5000)
+    db.add(
+        Job(
+            printer_id=printer.id,
+            status="forwarded",
+            page_count=40,
+            submitted_pages=999,
+            completed_at=NOW - timedelta(minutes=60),
+            created_at=NOW - timedelta(minutes=60),
+        )
+    )
+    await db.commit()
+
+    await sweep_unprinted_pages(db, now=NOW)
+    await db.commit()
+    await db.refresh(printer)
+
+    assert printer.pages_not_printed["shortfall"] == 40
