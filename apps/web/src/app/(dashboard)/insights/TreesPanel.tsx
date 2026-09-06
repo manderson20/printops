@@ -51,10 +51,23 @@ function place(count: number, remainder: number): Placed[] {
 
   for (let i = 0; i < count; i += 1) {
     const depth = jitter(i, 7, 0, 1);
-    // Spaced by band — (i + 0.5) / count — rather than i / (count - 1).
-    // The second form puts the first tree at exactly 0, and jitter then
-    // pushes it off the left edge: at three trees the scene drew two.
-    const span = Math.min(0.96, Math.max(0.04, (i + 0.5 + jitter(i, 3, -0.32, 0.32)) / count));
+    // Each tree gets its own band, and wanders only inside it.
+    //
+    // Two bugs live here, one on each end. `i / (count - 1)` puts the
+    // first tree at exactly zero and jitter then pushes it off the left
+    // edge — at three trees the scene drew two. Clamping the result
+    // instead collapses bands onto the margin at the other end: at sixty
+    // trees indices 0, 1 and 2 all landed on the same x, and the larger
+    // one drawn later hid the others, losing trees from a scene whose
+    // whole job is that you can count them.
+    //
+    // Band centres are never 0 or 1, and the wander is a fraction of a
+    // band rather than a fraction of the canvas — so it shrinks as the
+    // forest thickens, and no tree can reach its neighbour's centre or
+    // leave the canvas. No clamp needed.
+    const band = (i + 0.5) / count;
+    const wander = 0.32 / count;
+    const span = band + jitter(i, 3, -wander, wander);
     trees.push({
       index: i,
       kind: i % 6,
