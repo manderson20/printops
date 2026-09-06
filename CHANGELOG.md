@@ -5,6 +5,28 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.73.1] - 2026-09-06
+
+- **The trees look like a forest now.** They were a grid of identical
+  lollipops in tidy rows — same tree, same size, same spacing, thin brown
+  trunks — which read as a bar chart, because that is what it was. The panel
+  now draws one scene: three kinds of tree at different sizes and distances,
+  standing on ground, spaced the way things grow rather than the way a table
+  lays out. Trees further back are smaller and fainter, so the ones in front
+  simply cover them.
+- The count is unchanged and still exact — this is the same seventeen trees
+  and the same part of another, drawn properly. Nothing decorative was added
+  to fill the scene, because a forest with uncounted trees in it would be
+  lying about the number underneath.
+- The ream on My Printing is a block of paper seen from slightly above rather
+  than a stack of flat lines, which had the same problem: it read as a
+  progress bar.
+- Fixed a placement bug that lost a tree. Positions were spread across the
+  canvas by `i / (count - 1)`, which puts the first tree at exactly the left
+  edge — and the jitter that keeps the spacing natural then pushed it off the
+  side. At three trees the scene drew two. Below a dozen the trees also grow
+  to fill the space, instead of leaving a field with something in the corner.
+
 ## [0.73.0] - 2026-09-06
 
 - **The trees figure now opens up, and cites where it comes from.** Tap the
