@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -177,6 +178,33 @@ async def _printer_status_poll_loop() -> None:
 CAPABILITY_REDISCOVERY_INTERVAL_SECONDS = 30 * 60
 
 
+# Which capability changes have to reach the CUPS queue.
+#
+# Not every field does — a firmware string or a new resolution changes nothing
+# about how the queue is built, and resyncing on those would put the whole
+# estate through cupsd for no reason.
+#
+# color_supported is on this list because of #94. The queue's color default is
+# now derived from this stored capability rather than from the PPD cupsd
+# generates, so a capability that changes without a resync leaves the queue
+# pointed the old way indefinitely. That is not hypothetical: swap the device
+# at an address, or probe a printer successfully for the first time, and the
+# queue keeps the old answer until something unrelated happens to trigger a
+# sync. Media is on it because the tray/default-size advertisement is baked
+# into the queue the same way.
+QUEUE_AFFECTING_CAPABILITIES = ("default_media_size", "media_trays", "color_supported")
+
+
+def queue_affecting_capability_change(previous: dict[str, Any], current: dict[str, Any]) -> bool:
+    """True when a rediscovery found something the queue is built from.
+
+    Lifted out of the rediscovery loop so it can be tested: the loop itself is
+    an infinite closure around a database session, and the decision inside it
+    is the part that is worth being sure about.
+    """
+    return any(previous.get(key) != current.get(key) for key in QUEUE_AFFECTING_CAPABILITIES)
+
+
 async def _capability_rediscovery_loop() -> None:
     """Re-runs full capability discovery (app/printers/discovery.py) across
     every active printer every 30 minutes, independent of the status loop's
@@ -223,16 +251,9 @@ async def _capability_rediscovery_loop() -> None:
 
                 async def _refresh_one(printer: Printer) -> None:
                     previous = printer.capabilities or {}
-                    previous_default = previous.get("default_media_size")
-                    previous_trays = previous.get("media_trays")
-
                     await refresh_printer_capabilities(printer)
 
-                    current = printer.capabilities or {}
-                    media_changed = current.get("default_media_size") != previous_default or (
-                        current.get("media_trays") != previous_trays
-                    )
-                    if media_changed:
+                    if queue_affecting_capability_change(previous, printer.capabilities or {}):
                         # Rate-limited and gated on cupsd having slots to
                         # spare, same as the status loop's resync — a
                         # printer whose reported media flaps would

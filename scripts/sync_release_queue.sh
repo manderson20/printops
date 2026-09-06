@@ -19,6 +19,9 @@ set -euo pipefail
 # See sync_cups_queue.sh — same guard, same reason, one implementation.
 . "$(dirname "${BASH_SOURCE[0]}")/lib/everywhere_probe.sh"
 
+# See sync_cups_queue.sh — same decision, same reason, one implementation.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/color_default.sh"
+
 PRINTER_ID="${1:?Usage: sync_release_queue.sh <printer-id>}"
 API_BASE="${PRINTOPS_API_BASE:-http://localhost:8000}"
 ENV_FILE="${PRINTOPS_ENV_FILE:-/home/itadmin/printops/apps/api/.env}"
@@ -89,31 +92,13 @@ sudo lpadmin -p "$QUEUE_NAME" -o printer-is-shared=false -E
 sudo cupsenable "$QUEUE_NAME"
 sudo cupsaccept "$QUEUE_NAME"
 
-# Same as the client-facing queue — force color-capable printers to default
-# to color rather than whatever driverless-PPD generation happened to land
-# on (confirmed live: 4 color copiers on this box had a stored
-# print-color-mode=monochrome default despite being genuine color devices).
-# See scripts/sync_cups_queue.sh's matching block for the full reasoning.
-COLOR_SUPPORTED=$(ipptool -X "ipp://localhost/printers/$QUEUE_NAME" /dev/stdin <<IPPTOOL_EOF 2>/dev/null | grep -A1 "<key>color-supported</key>" | grep -c "<true" || true
-{
-    OPERATION Get-Printer-Attributes
-    GROUP operation-attributes-tag
-    ATTR charset attributes-charset utf-8
-    ATTR language attributes-natural-language en
-    ATTR uri printer-uri ipp://localhost/printers/$QUEUE_NAME
-    ATTR keyword requested-attributes color-supported
-}
-IPPTOOL_EOF
-)
-if [ "$COLOR_SUPPORTED" -ge 1 ]; then
-    sudo lpadmin -p "$QUEUE_NAME" -o print-color-mode-default=color
-    # Same as the client-facing queue — print-color-mode-default alone
-    # doesn't cover the PPD's own *DefaultColorModel ("ColorModel" option),
-    # which `-m everywhere` above always (re)sets to Gray regardless of
-    # actual color capability (confirmed live). See
-    # scripts/sync_cups_queue.sh's matching block for the full reasoning.
-    sudo lpadmin -p "$QUEUE_NAME" -o ColorModel=RGB || true
-fi
+# Color default, from the device rather than from this queue. Held jobs are
+# delivered straight through here with `lp -d`, so this queue inherits its own
+# default exactly like the client-facing one — a printer whose queue offers
+# color it cannot produce releases held jobs the same wrong way.
+#
+# This queue is only ever built for a real printer, so there is no virtual case.
+apply_color_default "$QUEUE_NAME" "$PRINTER_JSON" false "$PRINTER_NAME"
 
 # Same as the client-facing queue — re-apply (or clear) the roll-media
 # auto-cut default after -m everywhere regenerated the PPD. A released job is

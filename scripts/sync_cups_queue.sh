@@ -18,6 +18,10 @@ set -euo pipefail
 # first time this was fixed.
 . "$(dirname "${BASH_SOURCE[0]}")/lib/everywhere_probe.sh"
 
+# apply_color_default(): the #94 fix. Shared with sync_release_queue.sh for the
+# same reason everywhere_probe.sh is.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/color_default.sh"
+
 PRINTER_ID="${1:?Usage: sync_cups_queue.sh <printer-id>}"
 API_BASE="${PRINTOPS_API_BASE:-http://localhost:8000}"
 ENV_FILE="${PRINTOPS_ENV_FILE:-/home/itadmin/printops/apps/api/.env}"
@@ -111,46 +115,10 @@ fi
 sudo cupsenable "$QUEUE_NAME"
 sudo cupsaccept "$QUEUE_NAME"
 
-# CUPS's own driverless-PPD generation (or, on this box, at least one past
-# manual misconfiguration — confirmed live on 4 color copiers) can leave a
-# genuinely color-capable printer defaulting to print-color-mode=monochrome.
-# Apps that explicitly request a color mode (Chrome) are unaffected either
-# way, but apps that submit a job without an explicit color option (Word,
-# Adobe, confirmed live) silently inherit whatever this queue's default is —
-# so a color printer defaulting to monochrome here means those apps print
-# monochrome despite the user picking Color in their print dialog. Force the
-# default to color for any printer that actually supports it, rather than
-# leaving it to chance.
-COLOR_SUPPORTED=$(ipptool -X "ipp://localhost/printers/$QUEUE_NAME" /dev/stdin <<IPPTOOL_EOF 2>/dev/null | grep -A1 "<key>color-supported</key>" | grep -c "<true" || true
-{
-    OPERATION Get-Printer-Attributes
-    GROUP operation-attributes-tag
-    ATTR charset attributes-charset utf-8
-    ATTR language attributes-natural-language en
-    ATTR uri printer-uri ipp://localhost/printers/$QUEUE_NAME
-    ATTR keyword requested-attributes color-supported
-}
-IPPTOOL_EOF
-)
-if [ "$COLOR_SUPPORTED" -ge 1 ]; then
-    sudo lpadmin -p "$QUEUE_NAME" -o print-color-mode-default=color
-    # print-color-mode-default above only covers the modern IPP attribute.
-    # The driverless PPD `-m everywhere` just (re)generated above carries
-    # its OWN, separate color default — *DefaultColorModel, exposed here as
-    # the "ColorModel" option — which CUPS's classic PPD-based print path
-    # reads instead. `-m everywhere` always sets that to Gray regardless of
-    # the device's real color capability (confirmed live), so every time
-    # this script reruns for a color printer (e.g. an offline->online
-    # reconnect re-triggering the sync, not just an intentional edit), a
-    # queue previously fixed by the print-color-mode-default line above
-    # silently reverts to monochrome for these apps even though this script
-    # ran again and "should" have kept it fixed. RGB is consistently the
-    # PPD's "Color" choice label (confirmed live across all current color
-    # queues) — tolerate failure in case a future device's PPD names it
-    # differently, since print-color-mode-default above still covers the
-    # apps that use it.
-    sudo lpadmin -p "$QUEUE_NAME" -o ColorModel=RGB || true
-fi
+# Color default, from the device rather than from the queue we just built.
+# See lib/color_default.sh — shared with sync_release_queue.sh, because a
+# color rule applied to one script and not the other is half a fix.
+apply_color_default "$QUEUE_NAME" "$PRINTER_JSON" "$IS_VIRTUAL" "$PRINTER_NAME"
 
 # Roll-media auto-cut (Printer.roll_autocut) — for roll-fed printers with a
 # cutter (e.g. the Canon TM-300 plotter). Same "-m everywhere resets it every
