@@ -81,31 +81,18 @@ EXEMPT = {
     ),
 }
 
-# Routes that *should* be audited and are not yet. Separate from EXEMPT on
-# purpose: an exemption says "there is nothing here worth recording", and saying
-# that about a quota change or a token rotation would be false. Keeping them
-# apart means the gap is greppable and countable instead of dissolving into a
-# list of things that are genuinely fine.
+# Routes that *should* be audited and are not yet.
 #
-# Phase 1 covered settings, accounts, sign-in and the printer/device lifecycle.
-# These are the phase 2 list.
-DEFERRED = {
-    "regenerate_release_token": "credential rotation — should be audited",
-    "create_printer_quota": "quota changes — should be audited",
-    "update_printer_quota": "quota changes — should be audited",
-    "delete_printer_quota": "quota changes — should be audited",
-    "create_printer_release_bypass": "release policy exception — should be audited",
-    "delete_printer_release_bypass": "release policy exception — should be audited",
-    "create_printer_allowed_ou": "access scoping — should be audited",
-    "delete_printer_allowed_ou": "access scoping — should be audited",
-    "update_toner_cartridges": "feeds the per-page cost model behind every chargeback figure",
-    "bulk_update_toner_cartridges": "feeds the per-page cost model behind every chargeback figure",
-    "enable_printer_copier": "changes how a device is accounted for",
-    "disable_printer_copier": "changes how a device is accounted for",
-    "confirm_redirect": "adopts a new device address for a printer",
-    "dismiss_redirect": "records a decision about a device address",
-    "purge_jobs": "destroys job history",
-}
+# Empty, and worth keeping rather than deleting: it is the difference between
+# "there is nothing here worth recording" (EXEMPT, above) and "there is, and we
+# have not written it". Merging the two would let a real gap dissolve into a
+# list of things that are genuinely fine, which is the one outcome this file
+# exists to prevent. An entry here is a debt with a name on it.
+#
+# It held fifteen entries when auditing first shipped — quotas, release
+# bypasses, OU restrictions, the toner cost model, token rotation, job purges —
+# and they were cleared in 0.76.1.
+DEFERRED: dict[str, str] = {}
 
 
 def _handlers(path: Path) -> list[tuple[str, str]]:
