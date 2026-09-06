@@ -5,6 +5,21 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.75.1] - 2026-09-06
+
+- **Mono printers stop offering colour, and one colour copier starts printing
+  in colour again.** A queue's colour default now comes from what PrintOps
+  probed from the printer itself, instead of from the queue CUPS had just
+  built. Printers too old to answer the driverless request land on a generic
+  driver that claims colour because it has to claim everything, and the sync
+  script believed it — so three monochrome printers offered a colour option
+  that only ever produced grey paper. The same check ran one way only, so a
+  colour copier whose queue had drifted to monochrome could never be corrected
+  and had been printing grey for Word and Adobe jobs regardless of what the
+  user picked. Both directions are now set explicitly on every sync.
+  A printer PrintOps has never successfully probed is left alone rather than
+  guessed at. (#94)
+
 ## [0.75.0] - 2026-09-06
 
 - **Below one tree, the picture is now the pile of paper that makes one.**
