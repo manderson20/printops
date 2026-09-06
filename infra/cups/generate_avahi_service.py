@@ -35,6 +35,52 @@ SERVICES_DIR = "/etc/avahi/services"
 
 DEFAULT_FORMATS = ["application/pdf", "image/urf", "image/jpeg"]
 
+# One mDNS TXT string is capped at 255 bytes (RFC 6763 6.1), and avahi does not
+# truncate an oversized one — it rejects the *entire service group*, logs
+# "Invalid record", and publishes nothing at all for that printer.
+#
+# Found live. Two printers reporting 15 document formats produced a 456-byte
+# pdl record, so both were silently absent from the network while this script
+# reported "Wrote ..." for each of them. Nothing upstream noticed, because
+# cupsd was advertising every queue itself until #110 — which is exactly what
+# made a latent bug here into two printers nobody could find.
+MAX_TXT_BYTES = 255
+
+# Kept ahead of everything else when the list has to be cut. image/urf is what
+# makes a queue an AirPrint destination at all, and pdf/jpeg are what a client
+# will actually send; losing a vendor PCL variant off the end costs nothing by
+# comparison.
+ESSENTIAL_FORMATS = ["image/urf", "application/pdf", "image/jpeg"]
+
+
+def _pdl_value(formats: list[str]) -> str:
+    """The pdl TXT record's value, trimmed to fit if it has to be.
+
+    Untrimmed whenever it fits, so the 52 printers already advertising keep
+    byte-identical records and their clients' preference order is undisturbed.
+    Only an oversized list is reordered, and only to the extent of pulling the
+    essential formats to the front before filling the remaining budget in the
+    printer's own order.
+    """
+    joined = ",".join(formats)
+    budget = MAX_TXT_BYTES - len("pdl=")
+    if len(joined.encode()) <= budget:
+        return joined
+
+    ordered = [f for f in ESSENTIAL_FORMATS if f in formats]
+    ordered += [f for f in formats if f not in ordered]
+
+    kept: list[str] = []
+    for fmt in ordered:
+        candidate = ",".join([*kept, fmt])
+        if len(candidate.encode()) > budget:
+            continue
+        kept.append(fmt)
+    # A single format longer than the budget would leave this empty, which is
+    # a worse advertisement than a wrong one: a printer with no pdl at all is
+    # not a printer any AirPrint client will offer.
+    return ",".join(kept) if kept else "application/pdf"
+
 
 def load_backend_token() -> str:
     with open(ENV_FILE) as f:
@@ -83,7 +129,7 @@ def render_service_xml(printer_id: str, printer: dict, advertise_ipps: bool = Fa
 
     name = escape(printer["name"])
     resource_path = escape(f"printers/printops-{printer_id}")
-    pdl = escape(",".join(formats))
+    pdl = escape(_pdl_value(formats))
 
     services = [_render_service_block("_ipp._tcp", resource_path, name, pdl, color, duplex, printer_id)]
     if advertise_ipps:

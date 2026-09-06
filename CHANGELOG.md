@@ -5,6 +5,18 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.75.6] - 2026-09-06
+
+- **Two printers were not being advertised at all, and now are.** A printer
+  reporting a long list of document formats produced a Bonjour record larger
+  than the protocol allows, and avahi responds to that by discarding the whole
+  advertisement for that printer rather than trimming it. Both affected
+  printers were missing from Add Printer pickers while PrintOps reported
+  publishing them successfully. The list is now trimmed to fit, keeping the
+  formats AirPrint actually needs; printers whose lists already fit are
+  unchanged. Only visible once 0.75.2 stopped cupsd advertising everything
+  regardless. (#110)
+
 ## [0.75.5] - 2026-09-06
 
 - Corrected the #110 deploy note. It said to disable `BrowseLocalProtocols
