@@ -10,10 +10,12 @@ This document sets direction for PrintOps as it grows from an empty scaffold int
 apps/web      Next.js frontend (admin UI, dashboards, end-user portal)
 apps/api      FastAPI backend (REST API, business logic, IPP proxy — long term)
 packages/shared  Generated OpenAPI client + shared TS types, consumed by apps/web
-infra/        docker-compose for local dev: Postgres, Redis, CUPS
+infra/        docker-compose for local dev: Postgres, CUPS (also Redis, unused — §10)
 ```
 
-`apps/web` talks to `apps/api` over HTTP/WebSockets. `apps/api` talks to Postgres (system of record), Redis (queues/caching/pub-sub), and — eventually — to physical printers via IPP/IPPS, with CUPS available as a fallback rendering/legacy-protocol layer (JetDirect, LPD, SMB).
+`apps/web` talks to `apps/api` over HTTP/WebSockets. `apps/api` talks to Postgres (system of record) and to physical printers via IPP/IPPS, with CUPS as the spool and legacy-protocol layer (JetDirect, LPD, SMB) — see §10 for how far that role extends.
+
+This line used to name Redis as well, for "queues/caching/pub-sub". It never did any of those things: `redis` is not a dependency of `apps/api`, nothing imports it, and the running instance holds no keys. The container is still in `infra/docker-compose.yml` and `PRINTOPS_REDIS_URL` is still set, which is why the claim outlived the fact — see §10's event-stream decision.
 
 ## 3. Core Principle: PrintOps as an IPP Proxy
 
@@ -107,7 +109,18 @@ it describes are written together or not at all. An audit log that can record a
 change that did not happen, or miss one that did, is not an audit log. Only a
 transactional write gives that, which means an outbox table in Postgres even if
 a broker sits downstream of it. Postgres is already migrated, backed up and
-monitored here; `LISTEN`/`NOTIFY` covers waking a consumer without polling.
+monitored here.
+
+`LISTEN`/`NOTIFY` is the wake-up and nothing more. It is fire-and-forget, so a
+consumer that is stopped, restarting, or has lost its session at the moment the
+transaction commits never receives that notification, and Postgres will not
+replay it. The outbox row survives — that is what writing it is for — but
+nothing would come back for it until some later event happened to wake the
+consumer, which for an audit log could be never. So whatever consumes this has
+to scan for unprocessed rows on startup and on every reconnect, and poll on a
+slow interval regardless, with the notification only making the common case
+prompt. Treating `NOTIFY` as delivery would reintroduce exactly the
+completeness hole the outbox was chosen to close.
 
 At this district's scale — 54 printers, a few thousand jobs a week — a broker
 solves a throughput problem nobody has. Revisit if a consumer ever needs
