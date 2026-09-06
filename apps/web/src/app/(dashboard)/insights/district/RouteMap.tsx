@@ -79,6 +79,13 @@ function travelledPortion(points: Point[], fraction: number): Point[] {
   const walked: Point[] = [points[0]];
   for (let index = 0; index < lengths.length; index += 1) {
     const length = lengths[index];
+    // Zero-length segments are skipped rather than answered — see
+    // app/reports/road_trip.py:_along, where treating one as an answer
+    // parked the "we are here" marker at the start of its leg.
+    if (length <= 0) {
+      walked.push(points[index + 1]);
+      continue;
+    }
     if (remaining <= length) {
       const share = length > 0 ? remaining / length : 0;
       const from = points[index];
