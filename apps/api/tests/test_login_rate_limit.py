@@ -111,3 +111,45 @@ def test_the_api_docs_are_not_served(client):
     assert client.get("/docs").status_code == 404
     assert client.get("/redoc").status_code == 404
     assert client.get("/openapi.json").status_code == 404
+
+
+# --- the table has to be able to shrink --------------------------------
+
+
+def test_a_key_with_nothing_recent_is_forgotten(client):
+    """Keys are attacker-chosen — a source address on a public endpoint —
+    so one failed attempt per scanned address must not leave a permanent
+    row apiece."""
+    _attempt(client, forwarded="203.0.113.1")
+    assert login_limiter.tracked_keys == 1
+
+    # Age that failure out, then let the same caller back in.
+    login_limiter.window_seconds = 0.0
+    try:
+        _attempt(client, password="changeme", forwarded="203.0.113.1")
+        assert login_limiter.tracked_keys == 0
+    finally:
+        login_limiter.window_seconds = 300.0
+
+
+def test_expired_keys_are_swept_without_their_owners_returning(client):
+    """The caller who never comes back is exactly what a scanner produces,
+    a fresh address each time — so expiry cannot depend on that key being
+    looked at again."""
+    from app.core import rate_limit
+
+    for octet in range(1, 21):
+        _attempt(client, forwarded=f"203.0.113.{octet}")
+    assert login_limiter.tracked_keys == 20
+
+    # Everything ages out, and the next check is past the sweep interval.
+    login_limiter.window_seconds = 0.0
+    original_interval = rate_limit.SWEEP_INTERVAL_SECONDS
+    rate_limit.SWEEP_INTERVAL_SECONDS = 0.0
+    try:
+        _attempt(client, forwarded="198.51.100.7")
+        # The twenty are gone; only the caller that just failed remains.
+        assert login_limiter.tracked_keys == 1
+    finally:
+        rate_limit.SWEEP_INTERVAL_SECONDS = original_interval
+        login_limiter.window_seconds = 300.0

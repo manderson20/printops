@@ -73,7 +73,24 @@ export async function login(username: string, password: string): Promise<void> {
     body: JSON.stringify({ username, password }),
   });
   if (!response.ok) {
-    throw new Error("Invalid username or password");
+    // A locked-out caller gets 429 with a message saying to wait. Reporting
+    // that as "invalid username or password" is worse than saying nothing:
+    // the credentials may be perfectly correct, and somebody who believes
+    // they are wrong will keep trying and keep the window open.
+    //
+    // Only the two answers the server actually distinguishes are surfaced.
+    // Anything else — the API down, a proxy in the way — is not a password
+    // problem and should not be described as one.
+    if (response.status === 429) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(
+        body.detail ?? "Too many failed sign-in attempts — try again in a few minutes.",
+      );
+    }
+    if (response.status === 401) {
+      throw new Error("Invalid username or password");
+    }
+    throw new Error("Couldn't reach the sign-in service. Try again shortly.");
   }
   const data = await response.json();
   setToken(data.access_token);

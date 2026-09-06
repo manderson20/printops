@@ -25,8 +25,16 @@ function LoginForm() {
     try {
       await login(username, password);
       router.push("/live");
-    } catch {
-      setError("Invalid username or password.");
+    } catch (err) {
+      // Shows what login() decided rather than assuming the password was
+      // wrong. After eight failures the server answers 429 with a message
+      // saying to wait, and telling that person their credentials are
+      // invalid is worse than saying nothing — they may be perfectly
+      // correct, and somebody who believes otherwise keeps trying and
+      // keeps the window open.
+      setError(
+        err instanceof Error ? err.message : "Invalid username or password.",
+      );
     } finally {
       setSubmitting(false);
     }
