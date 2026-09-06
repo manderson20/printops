@@ -14,6 +14,11 @@ const ADMIN_ONLY_NAV_LINKS = [
   { href: "/printers", label: "Printers" },
   { href: "/jobs", label: "Jobs" },
   { href: "/syslog", label: "Syslog" },
+  // Admin-only, and not added to ALLOWED_PATH_PREFIXES below on purpose: the
+  // audit log records what admins did to the system, including to each other's
+  // accounts, so a viewer reaching it by URL would be handed an activity feed
+  // of the people above them. The API refuses them too (app/routers/audit.py).
+  { href: "/audit", label: "Audit Log" },
 ] as const;
 
 // Default role ("viewer") — everything else on the server is either

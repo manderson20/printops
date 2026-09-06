@@ -5,6 +5,27 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.76.0] - 2026-09-06
+
+- **Audit log.** A new admin-only page records every configuration change,
+  account change and sign-in, with who made it, what it was before, and what it
+  became. Nothing recorded it before: a printer's address, a quota, a user's
+  role or the cost-per-page behind every chargeback figure could all be edited
+  without leaving a trace, and the only way to answer "who turned this on" was
+  to ask people.
+  Each entry is written in the same database transaction as the change it
+  describes, so an entry cannot exist without its change or a change without
+  its entry.
+- Secrets never reach the log. Changing an SNMP community string or rotating
+  the Zabbix token is recorded as having happened, with both values withheld.
+  A failed sign-in records the attempted username only when it is a real
+  account, because people type their password into the username box.
+- Kept for 400 days by default, adjustable in the audit page's settings but not
+  below 90 — the obvious way to bury an action is to shorten retention past it.
+- Fixed the schema checker, which had been validating a different copy of the
+  models than the branch it was run against, and so would not have noticed a
+  new table missing from a migration.
+
 ## [0.75.8] - 2026-09-06
 
 - **Removed an unused Redis instance that was listening to the whole network.**

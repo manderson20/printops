@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from jwt import PyJWTError
 from sqlalchemy import delete, select
 
+from app.audit.settings import get_or_create_audit_settings
 from app.copiers.account_counters import poll_account_counters
 from app.copiers.device_owner import attribute_device_copies
 from app.copiers.sync_jobs import create_sync_job, run_sync_job
@@ -22,6 +23,7 @@ from app.integrations.google_workspace import GoogleWorkspaceError
 from app.integrations.google_workspace import run_sync as run_google_workspace_sync
 from app.integrations.mosyle import MosyleError
 from app.integrations.mosyle import run_sync as run_mosyle_sync
+from app.models.audit import AuditEvent
 from app.models.google_workspace import GoogleWorkspaceSettings
 from app.models.job import Job
 from app.models.mfp_device import MfpDevice
@@ -65,6 +67,7 @@ from app.routers import (
     users,
     zabbix_integration,
 )
+from app.routers import audit as audit_router
 from app.routers import road_trip as road_trip_router
 from app.routers import settings as settings_router
 from app.routers import syslog as syslog_router
@@ -407,6 +410,34 @@ async def _syslog_event_purge_loop() -> None:
         await asyncio.sleep(SYSLOG_EVENT_PURGE_INTERVAL_SECONDS)
 
 
+AUDIT_EVENT_PURGE_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+async def _audit_event_purge_loop() -> None:
+    """Deletes AuditEvent rows older than AuditSettings.retention_days — same
+    daily cadence and tolerant per-cycle error handling as the syslog and
+    counter purges above.
+
+    Retention is floored at 90 days in the schema (app/schemas/audit.py), so
+    this cannot be turned into a way of erasing last week: the shortest window
+    an admin can set still outlives any argument about what happened.
+
+    Settings are read through the router's lazy getter so a fresh install with
+    no row yet gets the default rather than this loop deciding one of its own —
+    two places defaulting the same number is how they drift apart.
+    """
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                settings = await get_or_create_audit_settings(db)
+                cutoff = datetime.now(UTC) - timedelta(days=settings.retention_days)
+                await db.execute(delete(AuditEvent).where(AuditEvent.occurred_at < cutoff))
+                await db.commit()
+        except Exception:
+            logger.exception("Unexpected error in audit event purge loop")
+        await asyncio.sleep(AUDIT_EVENT_PURGE_INTERVAL_SECONDS)
+
+
 HELD_JOB_PURGE_INTERVAL_SECONDS = 15 * 60
 
 
@@ -635,6 +666,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_snmp_counter_poll_loop()),
         asyncio.create_task(_counter_reading_purge_loop()),
         asyncio.create_task(_syslog_event_purge_loop()),
+        asyncio.create_task(_audit_event_purge_loop()),
         asyncio.create_task(_held_job_purge_loop()),
         asyncio.create_task(_failed_job_purge_loop()),
         asyncio.create_task(_stuck_job_reconcile_loop()),
@@ -725,6 +757,7 @@ app.include_router(jobs.user_router, prefix="/api/v1/jobs", tags=["jobs"])
 app.include_router(internal.router, prefix="/api/v1/internal", tags=["internal"])
 app.include_router(syslog_router.router, prefix="/api/v1/syslog", tags=["syslog"])
 app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["settings"])
+app.include_router(audit_router.router, prefix="/api/v1/audit", tags=["audit"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(device_overrides.router, prefix="/api/v1/devices", tags=["devices"])
 app.include_router(

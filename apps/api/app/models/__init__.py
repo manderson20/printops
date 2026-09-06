@@ -1,4 +1,5 @@
 from app.models.attribution_alias import AttributionAlias
+from app.models.audit import AuditEvent, AuditSettings
 from app.models.base import Base
 from app.models.classguard import ClassGuardSettings
 from app.models.copier_account_counter import CopierAccountCounterReading
@@ -33,6 +34,8 @@ from app.models.user import User
 
 __all__ = [
     "AttributionAlias",
+    "AuditEvent",
+    "AuditSettings",
     "Base",
     "ClassGuardSettings",
     "CopierImportBatch",
