@@ -19,7 +19,10 @@ class SelfServicePrinterOut(BaseModel):
     # discovered capabilities. Empty means "never probed, or has no finisher" —
     # the page shows no options rather than offering ones that would be
     # silently dropped.
-    supports_duplex: bool = False
+    # The specific two-sided modes this printer reported, not merely whether it
+    # has any: a machine that only binds on the long edge must not be offered
+    # short-edge, or the job comes out bound the wrong way.
+    sides: list[str] = []
     finishings: list[str] = []
 
     model_config = {"from_attributes": True}

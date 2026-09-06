@@ -18,11 +18,13 @@ from app.self_service_print.options import (
     DEFAULT_SIDES,
     lp_options,
     offered_finishings,
+    offered_sides,
     supports_duplex,
 )
 
 FINISHER = {
     "duplex_supported": True,
+    "sides_supported": ["two-sided-long-edge", "two-sided-short-edge"],
     "finishings": [
         "staple",
         "punch",
@@ -33,9 +35,25 @@ FINISHER = {
         "punch-triple-top",
     ],
 }
-STAPLE_ONLY = {"duplex_supported": True, "finishings": ["staple", "job-offset"]}
-PLOTTER = {"duplex_supported": False, "finishings": ["trim"]}
-PLAIN = {"duplex_supported": True, "finishings": []}
+STAPLE_ONLY = {
+    "duplex_supported": True,
+    "sides_supported": ["two-sided-long-edge", "two-sided-short-edge"],
+    "finishings": ["staple", "job-offset"],
+}
+# Reports one binding edge only — the shape already in test_printers_api.py.
+LONG_EDGE_ONLY = {
+    "duplex_supported": True,
+    "sides_supported": ["two-sided-long-edge"],
+    "finishings": [],
+}
+# Probed before sides_supported existed: all that is known is the boolean.
+LEGACY_DUPLEX = {"duplex_supported": True, "finishings": []}
+PLOTTER = {"duplex_supported": False, "sides_supported": [], "finishings": ["trim"]}
+PLAIN = {
+    "duplex_supported": True,
+    "sides_supported": ["two-sided-long-edge"],
+    "finishings": [],
+}
 NEVER_PROBED = None
 
 
@@ -62,11 +80,46 @@ def test_a_printer_that_was_never_probed_offers_nothing():
     assert supports_duplex(NEVER_PROBED) is False
 
 
-def test_the_default_sides_value_adds_no_option():
-    """One-sided is what a queue does anyway. Sending it explicitly would
-    override a queue whose admin-set default is duplex, which is the opposite of
-    what leaving the control alone should mean."""
+def test_the_default_choice_adds_no_option():
+    """ "Printer default" is the absence of a -o sides= argument, and says so on
+    the form. The first version labelled this choice "One-sided" while sending
+    nothing, so a queue whose admin-set default is duplex printed duplex under a
+    form that read One-sided."""
     assert lp_options(sides=DEFAULT_SIDES, finishings=[], capabilities=FINISHER) == []
+
+
+def test_choosing_one_sided_actually_sends_one_sided():
+    """The half the first version got wrong. If the form says One-sided and the
+    queue defaults to duplex, the job has to come out one-sided."""
+    assert lp_options(sides="one-sided", finishings=[], capabilities=FINISHER) == [
+        "-o",
+        "sides=one-sided",
+    ]
+
+
+def test_one_sided_is_offered_even_where_duplex_is_not():
+    """A printer with no duplex unit still prints one-sided; the control is
+    simply not shown for it, and a direct request is harmless."""
+    assert lp_options(sides="one-sided", finishings=[], capabilities=PLOTTER) == [
+        "-o",
+        "sides=one-sided",
+    ]
+
+
+def test_only_the_binding_edges_a_printer_reports_are_offered():
+    """A machine that binds only on the long edge must not be offered
+    short-edge: the job comes out bound the wrong way, or is rejected."""
+    assert offered_sides(LONG_EDGE_ONLY) == ["two-sided-long-edge"]
+    assert (
+        lp_options(sides="two-sided-short-edge", finishings=[], capabilities=LONG_EDGE_ONLY) == []
+    )
+
+
+def test_a_row_probed_before_sides_supported_falls_back_to_long_edge():
+    """Long-edge is the ordinary meaning of "double-sided" and the safe half of
+    the guess. The rediscovery loop replaces it with the real list within
+    thirty minutes."""
+    assert offered_sides(LEGACY_DUPLEX) == ["two-sided-long-edge"]
 
 
 def test_duplex_reaches_lp_when_the_printer_supports_it():
@@ -85,7 +138,7 @@ def test_duplex_is_dropped_on_a_printer_that_cannot_do_it():
     [
         (["staple"], FINISHER, ["-o", "finishings=4"]),
         (["punch"], FINISHER, ["-o", "finishings=5"]),
-        (["staple", "punch"], FINISHER, ["-o", "finishings=4", "-o", "finishings=5"]),
+        (["staple", "punch"], FINISHER, ["-o", "finishings=4,5"]),
         # Asked for on a machine that reports only a stapler.
         (["staple", "punch"], STAPLE_ONLY, ["-o", "finishings=4"]),
         # Asked for on a machine with no finisher at all.
@@ -100,14 +153,16 @@ def test_finishings_are_filtered_against_the_device(asked, capabilities, expecte
     assert lp_options(sides=DEFAULT_SIDES, finishings=asked, capabilities=capabilities) == expected
 
 
-def test_options_are_shaped_as_separate_flags():
-    """`lp` takes a 1setOf here as repeated -o flags, which is what CUPS's own
-    tools emit. Comma-joining is accepted by some versions and not others."""
+def test_several_finishings_travel_as_one_comma_joined_option():
+    """CUPS stores options by name and replaces on repeat (cupsAddOption), so
+    `-o finishings=4 -o finishings=5` keeps only the punch and silently drops
+    the staple. The first version did exactly that, and this test asserted it
+    was correct — which is how an enshrined bug survives a green suite."""
     options = lp_options(
         sides="two-sided-long-edge", finishings=["staple", "punch"], capabilities=FINISHER
     )
-    assert options.count("-o") == 3
-    assert "finishings=4,5" not in options
+    assert options == ["-o", "sides=two-sided-long-edge", "-o", "finishings=4,5"]
+    assert options.count("-o") == 2
 
 
 def test_nothing_asked_for_sends_nothing():

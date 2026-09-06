@@ -34,7 +34,7 @@ export default function SelfServicePrintPage() {
   const [printerId, setPrinterId] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [copies, setCopies] = useState("1");
-  const [sides, setSides] = useState<PrintSides>("one-sided");
+  const [sides, setSides] = useState<PrintSides>("");
   const [finishings, setFinishings] = useState<PrintFinishing[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +64,7 @@ export default function SelfServicePrintPage() {
   const [optionsFor, setOptionsFor] = useState(printerId);
   if (printerId !== optionsFor) {
     setOptionsFor(printerId);
-    setSides("one-sided");
+    setSides("");
     setFinishings([]);
   }
 
@@ -150,18 +150,26 @@ export default function SelfServicePrintPage() {
                 machine with no stapler produces a job that quietly comes out
                 unstapled, which is worse than no checkbox — the same shape of
                 problem as a colour option on a monochrome printer. */}
-            {selected?.supports_duplex && (
+            {(selected?.sides.length ?? 0) > 0 && (
               <Field label="Sides" className="max-w-[20rem]">
                 <select
                   className="w-full rounded-lg border border-black/[.15] bg-white px-3 py-2 text-sm dark:border-white/[.2] dark:bg-black dark:text-zinc-50"
                   value={sides}
                   onChange={(e) => setSides(e.target.value as PrintSides)}
                 >
+                  {/* The default says what it does. Labelling it "One-sided"
+                      while sending nothing meant a queue set to duplex printed
+                      duplex under a form that read One-sided. */}
+                  <option value="">Printer default</option>
                   <option value="one-sided">One-sided</option>
-                  <option value="two-sided-long-edge">Double-sided</option>
-                  <option value="two-sided-short-edge">
-                    Double-sided, flipped on the short edge
-                  </option>
+                  {selected?.sides.includes("two-sided-long-edge") && (
+                    <option value="two-sided-long-edge">Double-sided</option>
+                  )}
+                  {selected?.sides.includes("two-sided-short-edge") && (
+                    <option value="two-sided-short-edge">
+                      Double-sided, flipped on the short edge
+                    </option>
+                  )}
                 </select>
               </Field>
             )}

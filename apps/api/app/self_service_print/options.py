@@ -38,7 +38,17 @@ SIDES_CHOICES: dict[str, str] = {
     "two-sided-short-edge": "Double-sided, flipped on the short edge",
 }
 
-DEFAULT_SIDES = "one-sided"
+# "Leave it to the queue", and the default. Not a value lp understands — it is
+# the absence of a -o sides= argument.
+#
+# The first version used "one-sided" for this and sent nothing for it, which
+# meant a queue whose admin-set default is duplex printed duplex while the form
+# said One-sided. That is the failure this whole module exists to prevent, in
+# the one control that is on by default. Now the no-op choice says it is the
+# printer's default, and picking One-sided actually sends one-sided.
+PRINTER_DEFAULT_SIDES = ""
+
+DEFAULT_SIDES = PRINTER_DEFAULT_SIDES
 
 
 def offered_finishings(capabilities: dict[str, Any] | None) -> list[str]:
@@ -53,7 +63,27 @@ def offered_finishings(capabilities: dict[str, Any] | None) -> list[str]:
 
 
 def supports_duplex(capabilities: dict[str, Any] | None) -> bool:
-    return bool((capabilities or {}).get("duplex_supported"))
+    return bool(offered_sides(capabilities))
+
+
+def offered_sides(capabilities: dict[str, Any] | None) -> list[str]:
+    """The two-sided modes to show for a printer.
+
+    Read from `sides_supported`, which records the modes the device actually
+    reported. A printer that offers only long-edge binding must not be offered
+    short-edge: the job comes out bound the wrong way, or is rejected, and
+    either way somebody asked for something they were told they could have.
+
+    Falls back to long-edge alone for a row probed before `sides_supported`
+    existed, where all that is known is `duplex_supported`. Long-edge is the
+    ordinary meaning of "double-sided" and the safe half of the guess; the
+    30-minute rediscovery loop replaces it with the real list soon enough.
+    """
+    caps = capabilities or {}
+    reported = caps.get("sides_supported")
+    if reported is not None:
+        return [side for side in SIDES_CHOICES if side in reported]
+    return ["two-sided-long-edge"] if caps.get("duplex_supported") else []
 
 
 def lp_options(
@@ -68,15 +98,19 @@ def lp_options(
     """
     options: list[str] = []
 
-    if sides and sides != DEFAULT_SIDES and sides in SIDES_CHOICES:
-        if supports_duplex(capabilities):
+    # one-sided is sent when it is chosen. Only the explicit "leave it to the
+    # printer" choice sends nothing.
+    if sides and sides in SIDES_CHOICES:
+        if sides == "one-sided" or sides in offered_sides(capabilities):
             options += ["-o", f"sides={sides}"]
 
     allowed = set(offered_finishings(capabilities))
     codes = sorted(OFFERABLE_FINISHINGS[name] for name in (finishings or []) if name in allowed)
-    for code in codes:
-        # Repeated rather than comma-joined: CUPS accepts a 1setOf here, and one
-        # flag per value is what its own tools emit.
-        options += ["-o", f"finishings={code}"]
+    if codes:
+        # One comma-joined option, not one flag per value. CUPS stores options
+        # by name and replaces on repeat (cupsAddOption), so `-o finishings=4
+        # -o finishings=5` silently keeps only the punch and drops the staple —
+        # exactly the kind of quiet half-success this module is meant to stop.
+        options += ["-o", "finishings=" + ",".join(str(code) for code in codes)]
 
     return options

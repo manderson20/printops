@@ -309,7 +309,7 @@ def test_a_printer_offers_only_the_finishings_it_reports(client, auth_headers, v
 
     # Never probed in this test, so nothing is claimed.
     assert mine["finishings"] == []
-    assert mine["supports_duplex"] is False
+    assert mine["sides"] == []
 
 
 def test_an_unsupported_finishing_is_dropped_rather_than_sent(

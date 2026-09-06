@@ -13,7 +13,7 @@ from app.self_service_print.options import (
     SIDES_CHOICES,
     lp_options,
     offered_finishings,
-    supports_duplex,
+    offered_sides,
 )
 from app.self_service_print.service import (
     MAX_UPLOAD_BYTES,
@@ -56,7 +56,7 @@ async def list_self_service_printers(
             room=printer.room,
             department=printer.department,
             is_virtual=printer.is_virtual,
-            supports_duplex=supports_duplex(printer.capabilities),
+            sides=offered_sides(printer.capabilities),
             finishings=offered_finishings(printer.capabilities),
         )
         for printer in await get_allowed_printers_for_user(db, email)
@@ -83,7 +83,7 @@ async def submit_self_service_print(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Copies must be at least 1."
         )
 
-    if sides not in SIDES_CHOICES:
+    if sides and sides not in SIDES_CHOICES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unknown sides option: {sides!r}",

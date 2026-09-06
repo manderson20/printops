@@ -3024,14 +3024,18 @@ export type SelfServicePrinter = {
   is_virtual: boolean;
   // Derived from what this printer reported when PrintOps probed it, so the
   // page only offers what the machine will actually honour. Empty means no
-  // finisher, or never successfully probed — either way, offer nothing.
-  supports_duplex: boolean;
+  // finisher / no duplex, or never successfully probed — either way, offer
+  // nothing. `sides` lists the specific two-sided modes, not just whether the
+  // printer has any: one that only binds on the long edge must not be offered
+  // short-edge.
+  sides: string[];
   finishings: string[];
 };
 
 export type PrintFinishing = "staple" | "punch";
 
 export type PrintSides =
+  | ""
   | "one-sided"
   | "two-sided-long-edge"
   | "two-sided-short-edge";
