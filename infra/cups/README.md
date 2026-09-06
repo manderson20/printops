@@ -121,12 +121,20 @@ Check it with a browse rather than by reading the config, since the failure
 mode here is a setting that looks disabled and isn't:
 
 ```
-avahi-browse -rpt _ipp._tcp | grep -c '^='                       # total
-avahi-browse -rpt _ipp._tcp | grep -c 'Published by PrintOps'    # ours
+# this server's queues, whichever daemon is publishing them
+avahi-browse -rpt _ipp._tcp | grep '^=' | grep -c 'rp=printers/printops-'
+# the subset PrintOps published itself
+avahi-browse -rpt _ipp._tcp | grep '^=' | grep -c 'Published by PrintOps'
 ```
 
 Those two numbers should be equal. If the first is larger, cupsd is still
-publishing.
+publishing the difference.
+
+Both are filtered to this server's own queues on purpose. Counting every
+`_ipp._tcp` record on the segment would also count physical printers
+advertising AirPrint for themselves — a different question with a different
+answer per device, and the reason an unfiltered comparison never matches even
+when everything here is correct.
 
 ### Upgrading an estate that was relying on cupsd's advertisement
 
@@ -136,7 +144,8 @@ service files exist cupsd is the only thing publishing anything:
 ```
 alembic upgrade head                        # 1. flags become true (0079)
 sudo ./scripts/regenerate_avahi_services.sh # 2. service files appear
-#    3. disable BrowseLocalProtocols dnssd in /etc/cups/cupsd.conf
+#    3. set BrowseLocalProtocols to none in /etc/cups/cupsd.conf
+#       (set it — do not comment it out; absent means dnssd)
 sudo systemctl restart cups                 # 4. cupsd stops advertising
 ```
 
