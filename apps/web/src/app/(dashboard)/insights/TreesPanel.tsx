@@ -275,36 +275,66 @@ const MAX_DRAWN_PACKS = 30;
 const PILE_HEIGHT = 200;
 const PILE_GROUND = 270;
 
+/** How much of a pack each drawn shape stands for, bottom of the pile up.
+ *
+ *  Below the grouping threshold every shape is exactly one pack, because
+ *  that is what a reader counting them will assume. The first version
+ *  rounded the slot count instead — 16.67 packs became 17 slots of 0.98
+ *  packs each, so one real pack filled a slot and 2% of the next while
+ *  the caption beside it read 1.00. A shape presented as a pack has to
+ *  hold a pack.
+ *
+ *  A tree is not a whole number of packs, so the top of an ungrouped pile
+ *  is a short pack holding the remainder. Drawing it full height would
+ *  make the pile 17 packs tall when a tree is 16.67 of them — small, but
+ *  it is the one number on this screen a reader could check against the
+ *  arithmetic printed underneath it. */
+function packCapacities(packsPerTree: number): number[] {
+  if (packsPerTree > MAX_DRAWN_PACKS) {
+    const each = packsPerTree / MAX_DRAWN_PACKS;
+    return Array.from({ length: MAX_DRAWN_PACKS }, () => each);
+  }
+  const whole = Math.floor(packsPerTree);
+  const rest = packsPerTree - whole;
+  const caps = Array.from({ length: whole }, () => 1);
+  // 0.02 rather than 0, so a tree that lands a hair over a whole number
+  // of packs does not get a hairline shape on top of the pile.
+  if (rest > 0.02) caps.push(rest);
+  // A mis-set sheets_per_tree could put a whole tree inside one pack; a
+  // pile of nothing is not a drawing.
+  return caps.length > 0 ? caps : [packsPerTree];
+}
+
 function PaperPile({ reams, packsPerTree }: { reams: number; packsPerTree: number }) {
-  // At least one slot even if a mis-set sheets_per_tree puts a whole tree
-  // inside a single pack: a pile of zero packs is not a drawing.
-  const slots = Math.max(1, Math.min(MAX_DRAWN_PACKS, Math.round(packsPerTree)));
-  const perSlot = packsPerTree / slots;
-  const ph = PILE_HEIGHT / slots;
+  const caps = packCapacities(packsPerTree);
+  // Pixels per pack, so the pile measures one tree however it is split.
+  const unit = PILE_HEIGHT / Math.max(packsPerTree, 0.0001);
   const pw = 96;
   const depth = 13;
   const x = 60;
   const y0 = PILE_GROUND - 7;
+
+  let below = 0;
+  const packs = caps.map((cap, i) => {
+    const h = Math.max(3, cap * unit - 1.6);
+    const bottom = y0 - below * unit;
+    const used = Math.max(0, Math.min(1, (reams - below) / cap));
+    below += cap;
+    return { i, h, top: bottom - h, bottom, used, cap };
+  });
 
   return (
     <svg
       viewBox="0 0 560 300"
       className="h-auto w-full"
       role="img"
-      aria-label={`${reams.toFixed(2)} packs of paper out of the ${Math.round(
-        packsPerTree,
+      aria-label={`${reams.toFixed(2)} packs of paper out of the ${packsPerTree.toFixed(
+        1,
       )} that make one tree`}
     >
       <rect x="0" y={PILE_GROUND} width="560" height={300 - PILE_GROUND} fill="#e3f1e8" />
 
-      {Array.from({ length: slots }).map((_, i) => {
-        // How much of *this* pack is used, in drawn-slot units, so the
-        // partial pack lands on the right one whether or not slots were
-        // grouped.
-        const used = Math.max(0, Math.min(1, reams / perSlot - i));
-        const top = y0 - i * ph - Math.max(3, ph - 1.6);
-        const h = Math.max(3, ph - 1.6);
-        const bottom = top + h;
+      {packs.map(({ i, top, bottom, h, used }) => {
         const full = used >= 0.999;
         return (
           <g key={i}>
@@ -436,10 +466,11 @@ export function TreesPanel({
   // almost everybody.
   const peoplePerTree = trees > 0 ? Math.round(1 / trees) : 0;
 
-  // Mirrors PaperPile's own clamp, so the caption can say when a
-  // drawn pack stands for more than one rather than leaving the
-  // reader to notice the pile is short.
-  const drawnPacks = Math.max(1, Math.min(MAX_DRAWN_PACKS, Math.round(perTree / 500)));
+  // Below the threshold every drawn pack is one pack, so there is nothing
+  // to explain. Above it they are grouped and the caption has to say so,
+  // or the pile quietly under-draws the tree it is measuring.
+  const packsPerTree = perTree / 500;
+  const packsGrouped = packsPerTree > MAX_DRAWN_PACKS;
 
   return (
     <div
@@ -505,18 +536,16 @@ export function TreesPanel({
         ) : (
           <>
             <div className="overflow-hidden rounded-xl bg-sky-50/60 dark:bg-sky-950/20">
-              <PaperPile reams={sheets / 500} packsPerTree={perTree / 500} />
+              <PaperPile reams={sheets / 500} packsPerTree={packsPerTree} />
             </div>
             <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">
               <strong className="tabular-nums">{(sheets / 500).toFixed(2)}</strong> packs
               of paper — 500 sheets each, the ones in the supply closet. It takes about{" "}
-              {formatNumber(Math.round(perTree / 500))} of them to make one tree&rsquo;s
+              {formatNumber(Math.round(packsPerTree))} of them to make one tree&rsquo;s
               worth of wood, so this is {(trees * 100).toFixed(1)}% of a tree.
-              {drawnPacks < Math.round(perTree / 500) &&
+              {packsGrouped &&
                 ` Each pack drawn here stands for ${(
-                  perTree /
-                  500 /
-                  drawnPacks
+                  packsPerTree / MAX_DRAWN_PACKS
                 ).toFixed(1)}.`}
             </p>
             {!collective && peoplePerTree > 1 && (
