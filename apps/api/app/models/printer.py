@@ -76,8 +76,17 @@ class Printer(Base, TimestampMixin):
     # Controls whether the CUPS queue is advertised via mDNS/Bonjour (AirPrint
     # discovery) — off by default so a newly-added printer isn't visible to
     # every device on the subnet until an admin explicitly opts in. See
-    # ARCHITECTURE.md §4; scripts/sync_cups_queue.sh maps this to CUPS's
-    # printer-is-shared attribute.
+    # ARCHITECTURE.md §4.
+    #
+    # NOT printer-is-shared, which an earlier version of this comment claimed:
+    # every queue is shared unconditionally, because CUPS refuses network job
+    # submission to one that isn't. This drives a static Avahi service file
+    # instead (infra/cups/generate_avahi_service.py). Sharing is how a client
+    # reaches the queue; this is only whether it can find it without being
+    # told where it is.
+    #
+    # Meaningless until 0.75.2 — cupsd advertised every shared queue itself,
+    # so this said "Hidden" for 53 printers that were all discoverable (#110).
     airprint_enabled: Mapped[bool] = mapped_column(default=False, server_default="false")
 
     # Auto-cut the roll after each job, for roll-fed printers with a cutter
