@@ -12,6 +12,7 @@ an admin believes they hid.
 """
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -167,3 +168,60 @@ def test_the_bulk_regenerate_script_calls_a_route_that_exists():
     served = set(app.openapi()["paths"])
     for path in called:
         assert path in served, f"{path} is not a route this app serves"
+
+
+def test_a_long_format_list_does_not_take_the_printer_off_the_network(avahi, monkeypatch):
+    """An mDNS TXT string is capped at 255 bytes (RFC 6763 6.1) and avahi does
+    not truncate an oversized one — it rejects the whole service group with
+    "Invalid record" and publishes nothing for that printer.
+
+    Found live: two printers reporting 15 document formats produced a 456-byte
+    pdl record, so both were absent from the network while this script reported
+    "Wrote ..." for each. It went unnoticed because cupsd was advertising every
+    queue itself until #110 turned that off.
+    """
+    formats = [
+        "application/vnd.hp-PCL",
+        "application/vnd.hp-PCLXL",
+        "application/postscript",
+        "application/pdf",
+        "image/urf",
+        "image/jpeg",
+        "image/png",
+        "image/pwg-raster",
+        "application/octet-stream",
+        "text/plain",
+        "application/vnd.ms-xpsdocument",
+        "image/tiff",
+        "image/gif",
+        "application/vnd.cups-postscript",
+        "application/vnd.cups-raster",
+    ]
+    _install(avahi, _printer(capabilities={"document_formats": formats}))
+    monkeypatch.setattr(avahi.sys, "argv", ["generate_avahi_service.py", PRINTER_ID])
+
+    assert avahi.main() == 0
+    xml = _service_file(avahi).read_text()
+
+    records = re.findall(r"<txt-record>(.*?)</txt-record>", xml, re.S)
+    assert records
+    for record in records:
+        assert len(record.encode()) <= 255, f"{record[:60]}... is {len(record.encode())} bytes"
+
+    # image/urf is what makes a queue an AirPrint destination at all, so it has
+    # to survive the trim rather than being dropped as the 15th entry.
+    pdl = next(r for r in records if r.startswith("pdl="))
+    assert "image/urf" in pdl
+    assert "application/pdf" in pdl
+
+
+def test_a_list_that_already_fits_is_left_exactly_as_it_is(avahi, monkeypatch):
+    """The 52 printers already advertising must keep byte-identical records —
+    trimming reorders, and a client's format preference follows this order."""
+    formats = ["application/pdf", "application/postscript", "image/jpeg"]
+    _install(avahi, _printer(capabilities={"document_formats": formats}))
+    monkeypatch.setattr(avahi.sys, "argv", ["generate_avahi_service.py", PRINTER_ID])
+
+    assert avahi.main() == 0
+    xml = _service_file(avahi).read_text()
+    assert f"<txt-record>pdl={','.join(formats)}</txt-record>" in xml
