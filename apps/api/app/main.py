@@ -637,6 +637,12 @@ app = FastAPI(
     description="PrintOps backend API — enterprise print management platform.",
     version=get_current_version(),
     lifespan=lifespan,
+    # None removes the route entirely rather than hiding it — see
+    # Settings.expose_api_docs. The reverse proxy still forwards /docs, so
+    # what a stranger gets is this app's own 404 rather than a schema.
+    docs_url="/docs" if settings.expose_api_docs else None,
+    redoc_url="/redoc" if settings.expose_api_docs else None,
+    openapi_url="/openapi.json" if settings.expose_api_docs else None,
 )
 
 app.add_middleware(

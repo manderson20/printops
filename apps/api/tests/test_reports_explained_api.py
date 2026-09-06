@@ -250,8 +250,20 @@ async def _make_copy(
                 activity_type=activity_type,
                 page_count=page_count,
                 occurred_at=occurred_at,
-                period_start=None if occurred_at else datetime.now(UTC),
-                period_end=None if occurred_at else datetime.now(UTC),
+                # The window a counter delta covers, ending at the poll that
+                # observed it — so period_end *is* created_at, which is both
+                # truer to what the poller produces and the only version that
+                # survives SQLite.
+                #
+                # These used to be `datetime.now(UTC)`. Harmless while the
+                # filter read created_at; since the copy-window fix
+                # (app/reports/aggregation.py:COPY_INSTANT) period_end is what
+                # decides the period, and an aware value here walks straight
+                # into the string-comparison artifact _in_window() describes.
+                # The suite passed for a day and then began failing on the
+                # clock alone.
+                period_start=None if occurred_at else (created_at or _in_window()),
+                period_end=None if occurred_at else (created_at or _in_window()),
                 created_at=created_at or _in_window(),
                 raw_payload={},
             )

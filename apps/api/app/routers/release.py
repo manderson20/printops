@@ -13,12 +13,10 @@ no endpoint here for it to call.
 
 Since this is reachable over the network (unlike a physical copier
 touchscreen), repeated-guess PIN attempts are rate-limited per printer
-token (see _RateLimiter below) — in-memory, fine for this app's single
-uvicorn worker process."""
+token — app/core/rate_limit.py, shared with the admin sign-in, in-memory
+and fine for this app's single uvicorn worker process."""
 
 import asyncio
-import time
-from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -27,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.rate_limit import RateLimiter
 from app.db import get_db
 from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.job import Job
@@ -36,32 +35,14 @@ from app.schemas.release import HeldJobOut, HeldJobsOut, ReleasePinRequest
 
 router = APIRouter()
 
-FAILURE_WINDOW_SECONDS = 300
-MAX_FAILURES = 8
-
-
-class _RateLimiter:
-    def __init__(self) -> None:
-        self._failures: dict[str, list[float]] = defaultdict(list)
-
-    def check(self, key: str) -> None:
-        now = time.monotonic()
-        recent = [t for t in self._failures[key] if now - t < FAILURE_WINDOW_SECONDS]
-        self._failures[key] = recent
-        if len(recent) >= MAX_FAILURES:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many incorrect PIN attempts — try again in a few minutes.",
-            )
-
-    def record_failure(self, key: str) -> None:
-        self._failures[key].append(time.monotonic())
-
-    def record_success(self, key: str) -> None:
-        self._failures.pop(key, None)
-
-
-_rate_limiter = _RateLimiter()
+# Same budget the admin sign-in gets, from the same limiter — one place
+# that knows how a sliding window of failures behaves, rather than two
+# that have to be kept in step.
+_rate_limiter = RateLimiter(
+    max_failures=8,
+    window_seconds=300,
+    message="Too many incorrect PIN attempts — try again in a few minutes.",
+)
 
 
 async def _get_printer_by_token(db: AsyncSession, token: str) -> Printer:

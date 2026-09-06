@@ -398,12 +398,15 @@ export default function PrinterOverviewTab() {
             onChange={(e) => setAirprintEnabled(e.target.checked)}
           />
           <span>
-            Discoverable via AirPrint (Bonjour)
+            Publish a Bonjour record for this queue
             <br />
             <span className="text-xs text-zinc-500">
-              Off = hidden from automatic discovery on Macs/iPads; only devices
-              explicitly configured (e.g. via MDM) can print to it. Recommended
-              off for printers handling confidential documents.
+              Controls PrintOps&rsquo; own Avahi service file for this queue.{" "}
+              <strong>It does not currently make a queue undiscoverable.</strong>{" "}
+              CUPS advertises every shared queue over DNS-SD by itself, and a
+              queue has to be shared to accept jobs from the network at all — so
+              a Mac on the print server&rsquo;s own VLAN will still see this
+              printer with the box unticked. Tracked in issue #110.
             </span>
           </span>
         </label>

@@ -62,10 +62,13 @@ const CSV_COLUMNS: { header: string; value: (printer: Printer) => string }[] = [
   { header: "Department", value: (p) => p.department ?? "" },
   { header: "Page Count", value: (p) => p.page_count_total?.toString() ?? "" },
   {
-    // Renamed: this is PrintOps' own queue being discoverable, which is a
-    // different question from whether the *printer* speaks AirPrint.
-    header: "Queue Discovery",
-    value: (p) => (p.airprint_enabled ? "Discoverable" : "Hidden"),
+    // Named for what it actually reports. It used to say "Queue Discovery"
+    // with values Discoverable/Hidden, which was false in one direction:
+    // cupsd advertises every shared queue over DNS-SD on its own, so a
+    // queue this called Hidden was still discoverable. All this field has
+    // ever controlled is PrintOps' own Avahi service file — see issue #110.
+    header: "Bonjour Record",
+    value: (p) => (p.airprint_enabled ? "Published" : "Not published"),
   },
   {
     // The fleet-wide answer to "who could bypass the server". Exported so it
@@ -504,12 +507,19 @@ export default function PrintersPage() {
                                   </dd>
                                 </div>
                                 <div>
-                                  <dt className="text-xs text-zinc-500">Queue discovery</dt>
+                                  <dt className="text-xs text-zinc-500">
+                                    Bonjour record
+                                  </dt>
                                   <dd>
+                                    {/* Not "Discoverable/Hidden": cupsd
+                                        advertises every shared queue itself,
+                                        so this only ever reported whether
+                                        PrintOps publishes its own Avahi
+                                        service file. Issue #110. */}
                                     {printer.airprint_enabled ? (
-                                      <Badge tone="success">Discoverable</Badge>
+                                      <Badge tone="success">Published</Badge>
                                     ) : (
-                                      <Badge tone="neutral">Hidden</Badge>
+                                      <Badge tone="neutral">Not published</Badge>
                                     )}
                                   </dd>
                                 </div>

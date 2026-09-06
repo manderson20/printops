@@ -5,6 +5,93 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.72.0] - 2026-09-06
+
+- **Your Printing, Explained.** Two new pages turn page counts into something
+  a person can picture. **My Printing** shows what you have printed and copied
+  this school year, laid end to end, stacked up, weighed. **Our Printing** —
+  in the menu where "Together" used to be — does the same for the district as
+  a whole, and is open to everyone: no names, no buildings, no departments.
+  Below ten contributors in a period it withholds the figures entirely rather
+  than showing a total two people could work out between them.
+- **The district is on a road trip.** Those pages measure the distance against
+  real places, and **Settings › Road Trip** is where you choose them. Search
+  for a town by name — it knows North America down to about a thousand people,
+  so Marceline is in there — or press **Suggest places** for one city at each
+  of a series of distances, each further out than the last.
+- **The map follows actual roads.** Every destination is a waypoint on one
+  continuous trip, in the order you put them, and the driving distance is
+  measured by a routing service rather than typed: Brookfield to Jefferson
+  City is 123 miles by road against 96 as the crow flies. Reorder with the
+  arrows and everything after the move re-measures. A trip that doubles back
+  retraces the same road, and the pins are numbered so the order is readable.
+  Zoom in with **Where we are**; the map returns to the whole trip on its own
+  after a minute, so a lobby screen is never left on a street corner.
+- Routing is asked once, when you save a destination, and never while anyone
+  is looking at a dashboard. The service is a setting, so a district can point
+  it at their own; switch it off entirely and distances stay whatever you type.
+- **Settings › Locations.** The district's own buildings, with addresses, and
+  one marked home — the point the road trip starts from. Until now that address
+  was compiled into the server, which is fine for one district and no use to
+  the next. Buildings your printers name but this page doesn't know about are
+  listed so the gap is visible.
+- **The print-release kiosk says who is signed in, and has a Done button.**
+  It used to stay on one person until every one of their jobs had been
+  released — no way out for someone collecting one thing and leaving the rest
+  for the office, and the next person in the hallway found a stranger's
+  document titles waiting. It now also shows the name it resolved from the ID,
+  which is how a mistyped digit gets caught before somebody else's documents
+  come out, and returns to the ID screen after a minute untouched.
+- **Jobs are listed with the number CUPS gave them** — at the kiosk, and on
+  the Print Queue page. "Please release job 4821" is a sentence the office can
+  act on.
+- **PrintOps now notices pages a printer was sent but never printed.** A
+  printer can accept a job, report that it finished, and print nothing: an HP
+  LaserJet did it to the same PDF three times while CUPS, PrintOps and the
+  printer's own history all recorded success. The only witness is the device's
+  page counter, which this server has sampled every half hour for months and
+  had never once compared against what it sent. It compares them now. It
+  cannot speak about a single job — the readings are half an hour apart — but
+  "these three jobs together lost thirty pages" is the sentence that gets
+  someone to look. Biased towards silence throughout: every judgement call is
+  made in the direction of not raising an alarm.
+- **Signing in is rate-limited.** Eight failed attempts from one address buys
+  a five-minute wait. This server answers from the public internet and the
+  break-glass admin password could previously be guessed as fast as the machine
+  would check it. The count is per caller, never per account, so nobody can
+  lock the local admin out of a print server.
+- **The API documentation is no longer served.** `/docs`, `/redoc` and
+  `/openapi.json` described every endpoint, schema and parameter to anyone who
+  found the hostname, without signing in. Set `PRINTOPS_EXPOSE_API_DOCS=true`
+  on a development box if you want them.
+- **The queue discovery column now says what it means.** It reported printers
+  as "Hidden" that were nothing of the sort: CUPS advertises every shared queue
+  over Bonjour by itself, and a queue has to be shared to accept jobs at all.
+  The field only ever controlled PrintOps' own Avahi record, so it now says
+  **Bonjour record: published / not published**, and the toggle says plainly
+  that it does not make a queue undiscoverable. Making it actually do that is
+  tracked separately.
+- Five gaps closed in the personal and district figures: a median and mean
+  computed over everybody were being shown on a personal page with no
+  contributor floor; scan-only and fax-only users were counting toward the
+  anonymity floor for a total that excludes their pages; the job list and the
+  header above it disagreed about which jobs to count; a copy imported months
+  after it happened was counted in the month it was imported; and the
+  department breakdown silently dropped everything it could not name.
+- "Colour" is now "color" throughout, matching the database, the API and CUPS.
+
+### Under the hood
+
+- CI migrates a real Postgres and compares the result against the models. Two
+  migration bugs reached production the day before this release, and neither
+  could have been caught by a test suite that builds its schema from the models
+  and never reads a migration.
+- The CUPS backend counts a job's pages before handing it over, giving the
+  unprinted-pages check a figure that does not depend on the printer agreeing
+  to report one. 11.5% of jobs over thirty days had no page count at all.
+  Requires `poppler-utils`, which the backend installer now checks for.
+- Dependency updates: Next 16.3.4, and the usual type and tooling bumps.
+
 ## [0.71.0] - 2026-08-25
 
 - **You can now see which printers are running a Wi-Fi network of their own.**
