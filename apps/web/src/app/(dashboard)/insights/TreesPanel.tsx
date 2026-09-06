@@ -29,9 +29,18 @@ type Placed = {
   depth: number;
 };
 
-const GROUND_Y = 258;
+const GROUND_Y = 262;
 const CANVAS_W = 900;
 const CANVAS_H = 300;
+
+/** Every tree is drawn up to here; past it they stand for several.
+ *
+ *  At this district's rate — a tree every four days — a full school year
+ *  is about 97 trees, so the scene has to keep working well past the
+ *  point where each one is a comfortable size. Below the limit they
+ *  shrink and the forest thickens, which is what a forest does. Above it,
+ *  shrinking further would turn the picture into moss. */
+const DRAW_EVERY_TREE_UP_TO = 120;
 
 /** Where each tree stands.
  *
@@ -45,9 +54,17 @@ const CANVAS_H = 300;
  *  spacing is an avenue; a forest is trees that grew where they landed. */
 function place(count: number, remainder: number): Placed[] {
   const trees: Placed[] = [];
-  // A few trees on a canvas built for sixty is a field with something in
-  // the corner, so they grow to fill it.
-  const roominess = count < 12 ? 1 + (12 - count) * 0.05 : 1;
+  // How big each tree is drawn. A handful on a canvas built for a hundred
+  // is a field with something in the corner, so they grow; a hundred at
+  // that size would be a single green mass, so they shrink. Square-rooted
+  // because the canvas grows in two dimensions as trees fill it — halving
+  // the size of each makes room for four, not two.
+  const roominess =
+    count < 12 ? 1 + (12 - count) * 0.05 : count <= 24 ? 1 : Math.sqrt(24 / count);
+
+  // And the band they stand in deepens as the forest thickens, so a
+  // hundred trees fill the canvas rather than lining its bottom edge.
+  const spread = 72 + Math.min(78, Math.max(0, (count - 24) * 0.85));
 
   for (let i = 0; i < count; i += 1) {
     const depth = jitter(i, 7, 0, 1);
@@ -72,7 +89,7 @@ function place(count: number, remainder: number): Placed[] {
       index: i,
       kind: i % 6,
       x: 48 + (CANVAS_W - 96) * span,
-      base: GROUND_Y - 72 * (1 - depth),
+      base: GROUND_Y - spread * (1 - depth),
       scale: (0.52 + 0.6 * depth) * roominess,
       depth,
     });
@@ -86,7 +103,7 @@ function place(count: number, remainder: number): Placed[] {
       kind: 0,
       x: CANVAS_W - 52,
       base: GROUND_Y + 2,
-      scale: 0.26 + 0.22 * remainder,
+      scale: (0.26 + 0.22 * remainder) * Math.max(roominess, 0.6),
       depth: 1,
     });
   }
@@ -207,74 +224,88 @@ function Forest({ count, remainder }: { count: number; remainder: number }) {
   );
 }
 
-/** A ream drawn as a block of paper, filled from the bottom.
+/** What one person's printing looks like: a pack of paper, some loose
+ *  sheets, and one tree for the relationship between them.
  *
- *  This is the personal page's unit, and the reason the two pages differ.
- *  The average person here is at 0.046 trees — four and a half percent of
- *  one — and a panel that opens to reveal a sliver of a tree tells them
- *  nothing they can hold. A ream is a thing they carry from the supply
- *  closet.
+ *  This is the personal page's picture, and the reason the two pages
+ *  differ. The average person here is at 0.046 trees — four and a half
+ *  percent of one — so any drawing in proportion to a tree is a sliver,
+ *  and a tree filled to 5% reads as "you have done nothing" rather than
+ *  as a fact. The paper is drawn at human scale instead, and the tree
+ *  carries the comparison in a sentence.
  *
- *  Drawn as a block seen slightly from above rather than as a stack of
- *  horizontal lines, which was the first attempt and read as a progress
- *  bar — the same complaint the trees got. */
-function Ream({ fraction }: { fraction: number }) {
-  const filled = Math.max(0, Math.min(1, fraction));
-  const x = 20;
-  const y = 190;
-  const w = 190;
-  const h = 150;
-  const d = 46;
-  const fillTop = y - h * filled;
-  const sheets = Math.max(1, Math.round(26 * filled));
+ *  Two earlier attempts are worth recording, because each was wrong in a
+ *  way the next fixed. A flat stack of horizontal lines was a progress
+ *  bar. A tall column of loose sheets read as paper but had a ream the
+ *  wrong shape — a 500-sheet pack is wide and shallow, not a tower. */
+function PaperStack({ reams }: { reams: number }) {
+  const packFill = Math.max(0, Math.min(1, reams));
+  const x = 24;
+  const base = 176;
+  const w = 250;
+  const h = 105;
+  const depth = 40;
+  const top = base - h;
+  const fillTop = base - h * packFill;
+  const lines = Math.max(1, Math.round(30 * packFill));
 
   return (
-    <svg viewBox="0 0 300 230" className="h-auto w-full" role="img" aria-label="a ream of paper">
-      {/* top and side faces, so it reads as a physical block */}
+    <svg viewBox="0 0 560 210" className="h-auto w-full" role="img" aria-label="a pack of paper">
+      {/* the pack, in three-quarter view */}
       <polygon
-        points={`${x},${y - h} ${x + w},${y - h} ${x + w + d},${y - h - d * 0.55} ${x + d},${y - h - d * 0.55}`}
-        fill="#d6deec"
+        points={`${x},${top} ${x + w},${top} ${x + w + depth},${top - depth * 0.5} ${x + depth},${top - depth * 0.5}`}
+        fill="#e2e8f2"
       />
       <polygon
-        points={`${x + w},${y - h} ${x + w + d},${y - h - d * 0.55} ${x + w + d},${y - d * 0.55} ${x + w},${y}`}
-        fill="#c4cee0"
+        points={`${x + w},${top} ${x + w + depth},${top - depth * 0.5} ${x + w + depth},${base - depth * 0.5} ${x + w},${base}`}
+        fill="#d0d8e8"
       />
-      <rect x={x} y={y - h} width={w} height={h} fill="#e8ecf4" />
-      <rect x={x} y={fillTop} width={w} height={y - fillTop} fill="#4a7bd8" />
-      {Array.from({ length: sheets }).map((_, i) => {
-        const lineY = y - ((i + 0.5) * (h * filled)) / sheets;
+      <rect x={x} y={top} width={w} height={h} fill="#f0f3f9" />
+      <rect x={x} y={fillTop} width={w} height={base - fillTop} fill="#4a7bd8" />
+      {Array.from({ length: lines }).map((_, i) => {
+        const lineY = base - ((i + 0.5) * (h * packFill)) / lines;
         return (
-          <line
-            key={i}
-            x1={x + 3}
-            x2={x + w - 3}
-            y1={lineY}
-            y2={lineY}
-            stroke="#608ee2"
-            strokeWidth="1"
-          />
+          <line key={i} x1={x + 3} x2={x + w - 3} y1={lineY} y2={lineY} stroke="#7098e6" strokeWidth="1" />
         );
       })}
-      {filled < 0.99 && (
+      {packFill < 0.99 && (
         <line
           x1={x}
           x2={x + w}
           y1={fillTop}
           y2={fillTop}
-          stroke="#8b9bbd"
+          stroke="#8c9bba"
           strokeWidth="2"
-          strokeDasharray="6 6"
+          strokeDasharray="5 6"
         />
       )}
-      <rect
-        x={x}
-        y={y - h}
-        width={w}
-        height={h}
-        fill="none"
-        stroke="#96a4be"
-        strokeWidth="2"
-      />
+      <rect x={x} y={top} width={w} height={h} fill="none" stroke="#94a2be" strokeWidth="2" />
+
+      {/* loose sheets beside it — a block on its own reads as a carton */}
+      {[0, 1, 2, 3].map((i) => {
+        const dx = 300 + i * 16 + jitter(i, 9, -3, 3);
+        const dy = base - i * 7;
+        return (
+          <polygon
+            key={i}
+            points={`${dx},${dy} ${dx + 74},${dy - 12} ${dx + 70},${dy - 58} ${dx - 4},${dy - 46}`}
+            fill="#ffffff"
+            stroke="#a4b1c8"
+            strokeWidth="1.5"
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+/** One tree at readable size, for the sentence beside it to point at. */
+function LoneTree() {
+  return (
+    <svg viewBox="0 0 120 150" className="h-auto w-full" role="img" aria-label="one tree">
+      <g transform="translate(60 142)">
+        <Broadleaf scale={1.1} />
+      </g>
     </svg>
   );
 }
@@ -347,11 +378,16 @@ export function TreesPanel({
   const perTree = sheetsPerTree;
   const trees = perTree > 0 ? sheets / perTree : 0;
   const whole = Math.floor(trees);
-  const remainder = trees - whole;
-  // Past this many the picture stops being countable and starts being
-  // wallpaper, which is the opposite of the point.
-  const drawn = Math.min(whole, 60);
-  const undrawn = whole - drawn;
+  // Above the limit each drawn tree stands for several, rather than the
+  // scene silently dropping the rest. Grouping is stated on the page: a
+  // picture that quietly represents 97 trees with 60 is a picture that
+  // lies about the number printed beneath it.
+  const perDrawnTree = whole > DRAW_EVERY_TREE_UP_TO ? Math.ceil(whole / DRAW_EVERY_TREE_UP_TO) : 1;
+  // Rounded up, so the groups always cover the count rather than coming
+  // up one short. The exact number is printed beneath the picture either
+  // way, so the drawing rounding is a drawing decision, not a claim.
+  const drawn = perDrawnTree > 1 ? Math.ceil(whole / perDrawnTree) : whole;
+  const remainder = perDrawnTree > 1 ? 0 : trees - whole;
 
   // How many people printing at this rate it takes to reach one tree.
   // Only meaningful below a whole tree, which on the personal page is
@@ -399,37 +435,44 @@ export function TreesPanel({
             <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">
               {whole === 0
                 ? "Not yet a whole tree."
-                : `${whole} whole ${whole === 1 ? "tree" : "trees"}`}
+                : `${formatNumber(whole)} whole ${whole === 1 ? "tree" : "trees"}`}
               {remainder > 0.02 && whole > 0 && `, and ${Math.round(remainder * 100)}% of another`}
-              {undrawn > 0 && ` — ${formatNumber(undrawn)} more than can be drawn here`}.
+              {perDrawnTree > 1 && ` — each tree drawn here stands for ${perDrawnTree}`}.
             </p>
           </>
         ) : (
           <>
-            <div className="flex items-end gap-6 rounded-xl bg-sky-50/60 p-4 dark:bg-sky-950/20">
-              <div className="w-44 shrink-0">
-                {/* Filled to the whole amount when it is under one ream,
-                    and full above that — the number beside it carries the
-                    count. Drawing the remainder of the *last* ream would
-                    show 40% next to a figure reading 6.40, which invites
-                    exactly the wrong reading. */}
-                <Ream fraction={Math.min(sheets / 500, 1)} />
-              </div>
-              <div className="min-w-0">
-                <p className="text-3xl font-semibold tabular-nums tracking-tight">
+            <div className="flex flex-wrap items-end gap-6 rounded-xl bg-sky-50/60 p-4 dark:bg-sky-950/20">
+              <div className="min-w-[16rem] flex-1">
+                {/* Filled to the whole amount below one pack, full above —
+                    the number beside it carries the count. Drawing the
+                    remainder of the *last* pack would show 40% next to a
+                    figure reading 6.40, which invites the wrong reading. */}
+                <PaperStack reams={Math.min(sheets / 500, 1)} />
+                <p className="mt-1 text-3xl font-semibold tabular-nums tracking-tight">
                   {(sheets / 500).toFixed(2)}
                 </p>
                 <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  reams of paper — the packs in the supply closet, 500 sheets each.
+                  packs of paper — 500 sheets each, the ones in the supply closet.
                 </p>
               </div>
+              {trees < 1 && (
+                <div className="flex w-40 shrink-0 flex-col items-center">
+                  <div className="w-24">
+                    <LoneTree />
+                  </div>
+                  <p className="mt-1 text-center text-xs text-zinc-600 dark:text-zinc-400">
+                    about {formatNumber(peoplePerTree)} people printing like you
+                    <br />
+                    makes one of these
+                  </p>
+                </div>
+              )}
             </div>
             <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">
               {trees >= 1
                 ? `That is ${trees.toFixed(2)} trees' worth of wood.`
-                : `That is ${(trees * 100).toFixed(1)}% of one tree — it takes about ${formatNumber(
-                    peoplePerTree,
-                  )} people printing like you to use a whole one.`}
+                : `That is ${(trees * 100).toFixed(1)}% of one tree.`}
             </p>
           </>
         )}

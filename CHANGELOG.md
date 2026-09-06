@@ -5,6 +5,23 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.74.0] - 2026-09-06
+
+- **The forest keeps working as it grows.** Trees now shrink as more of them
+  appear, so the scene thickens the way a wood does instead of running out of
+  room — every tree is drawn individually up to 120 of them. Past that each
+  drawn tree stands for several, and the picture says so. At this district's
+  rate a new tree appears about every four days, and a full school year comes
+  to roughly a hundred.
+- **A new picture on My Printing.** One person's printing is not trees — the
+  average here is four and a half percent of one, and a tree filled to 5% reads
+  as "you have done nothing" rather than as a fact. It now shows a pack of
+  paper filled to what you have used, a few loose sheets beside it, and one
+  tree with the number of people printing at your rate it would take to use it.
+  The paper is drawn at the shape a real 500-sheet pack is — wide and shallow —
+  rather than as a tall column, and the earlier flat stack of lines that read
+  as a progress bar is gone.
+
 ## [0.73.2] - 2026-09-06
 
 - **The "we are here" marker was stopping short.** On the road-trip map it sat
