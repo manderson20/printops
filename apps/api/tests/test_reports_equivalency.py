@@ -274,12 +274,15 @@ def test_district_scale_produces_the_full_set():
 
 def test_district_scale_values_match_hand_calculation():
     facts = _by_key(build_equivalencies(pages=118_952, sheets=116_048))
-    assert facts["trees"].value == pytest.approx(13.98, abs=0.01)
+    # 116,048 sheets / 8,333 sheets a tree.
+    assert facts["trees"].value == pytest.approx(13.93, abs=0.01)
     assert facts["reams"].value == pytest.approx(232.1, abs=0.1)
     assert facts["cases"].value == pytest.approx(23.21, abs=0.01)
     assert facts["weight"].value == pytest.approx(1_160.48, abs=0.01)
-    assert facts["co2"].value == pytest.approx(594_760.0)
-    assert facts["miles_driven"].value == pytest.approx(1_486.9, abs=0.1)
+    # Sheets x 12.7 g, not pages x 5 g — the carbon is in the paper, so
+    # duplexing halves it. Was 594,760 g on the old per-page basis.
+    assert facts["co2"].value == pytest.approx(1473809.6, abs=0.1)
+    assert facts["miles_driven"].value == pytest.approx(3684.5, abs=0.1)
 
 
 def test_only_ladder_backed_facts_carry_a_milestone():

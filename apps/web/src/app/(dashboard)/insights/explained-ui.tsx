@@ -1,7 +1,8 @@
 "use client";
 
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { Equivalency, ExplainedPeriod, MilestoneProgress } from "@/lib/api";
+import { TreesPanel } from "./TreesPanel";
 
 // Display-only conversions. The server sends each equivalency in one base
 // unit (feet, pounds, litres) and lets the client decide how to say it,
@@ -74,7 +75,13 @@ export function describeEquivalency(
         caption: passed ? `Heavier than ${passed}.` : null,
       };
     case "trees":
-      return { label: "Trees", value: `🌳 ${scaled(value)}`, caption: "At 8,300 sheets per tree." };
+      // The divisor is not written here any more. It was "8,300" while
+      // the cost report used 8,333 — two copies of one number, and the
+      // caption was the copy nobody was checking. The panel derives it
+      // from the figures the API actually sent.
+      // Not "trees felled" — most office paper comes from managed
+      // plantations, and the panel this opens says so at length.
+      return { label: "Trees", value: `🌳 ${scaled(value)}`, caption: "Worth of wood." };
     case "reams":
       return { label: "Reams", value: scaled(value), caption: "500 sheets each." };
     case "cases":
@@ -86,7 +93,10 @@ export function describeEquivalency(
           value >= 1_000_000
             ? `💧 ${scaled(value / 1_000_000)}M L`
             : `💧 ${formatNumber(value)} L`,
-        caption: "Used producing the paper.",
+        // A water footprint, most of it rain that fell on the trees.
+        // Process water is a thirtieth of this, and "used" invited a
+        // comparison with a tap that was wrong by that factor.
+        caption: "Water footprint, mostly rain.",
       };
     case "co2":
       return {
@@ -240,26 +250,98 @@ export function MilestoneBar({
 
 export function EquivalencyCards({
   equivalencies,
+  sheets,
+  sheetsPerTree,
+  collective,
   skip = [],
 }: {
   equivalencies: Equivalency[];
+  /** Needed by the paper panel so it can show its arithmetic rather than
+   *  assert a result. Omit either and the cards stay plain tiles. */
+  sheets?: number;
+  sheetsPerTree?: number;
+  collective?: boolean;
   skip?: string[];
 }) {
+  const [openTrees, setOpenTrees] = useState(false);
+
   const cards = equivalencies
     .filter((e) => !skip.includes(e.key))
-    .map((e) => ({ key: e.key, display: describeEquivalency(e) }))
-    .filter((c): c is { key: string; display: EquivalencyDisplay } => c.display !== null);
+    .map((e) => ({ key: e.key, equivalency: e, display: describeEquivalency(e) }))
+    .filter(
+      (c): c is { key: string; equivalency: Equivalency; display: EquivalencyDisplay } =>
+        c.display !== null,
+    );
+
+  const trees = cards.find((c) => c.key === "trees")?.equivalency;
+  const canOpenPanel = sheets !== undefined && sheetsPerTree !== undefined;
+
+  // Which card opens the panel. Trees when there is one — and on a
+  // personal page there usually is not: build_equivalencies drops any
+  // fact under 0.05, and 0.05 trees is 417 sheets, more than the average
+  // person prints in a year here. The panel exists for exactly those
+  // people, so below that it opens from Reams, which is the unit their
+  // page shows anyway.
+  const opensPanel = trees !== undefined ? "trees" : "reams";
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      {cards.map((card) => (
-        <StatCard
-          key={card.key}
-          label={card.display.label}
-          value={card.display.value}
-          caption={card.display.caption}
+    <>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {cards.map((card) =>
+          card.key === opensPanel && canOpenPanel ? (
+            // A button rather than a click handler on the card: this opens
+            // a dialog, so it has to be reachable and announced without a
+            // mouse.
+            <button
+              key={card.key}
+              type="button"
+              onClick={() => setOpenTrees(true)}
+              className="rounded-xl text-left transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+              aria-haspopup="dialog"
+            >
+              <StatCard
+                label={card.display.label}
+                value={card.display.value}
+                // The hint goes on whichever card opens the panel, which
+                // differs by page — trees on the district's, reams on a
+                // personal one. Putting it in describeEquivalency would
+                // promise a tap on the page where that card is inert.
+                caption={
+                  <>
+                    {card.display.caption}
+                    {card.display.caption ? " " : ""}
+                    <span className="whitespace-nowrap underline underline-offset-2">
+                      See it
+                    </span>
+                  </>
+                }
+              />
+            </button>
+          ) : (
+            <StatCard
+              key={card.key}
+              label={card.display.label}
+              value={card.display.value}
+              caption={card.display.caption}
+            />
+          ),
+        )}
+      </div>
+
+      {openTrees && canOpenPanel && (
+        <TreesPanel
+          sheets={sheets}
+          sheetsPerTree={sheetsPerTree}
+          collective={collective ?? false}
+          // The trees card carries the citation, and it is often absent
+          // on a personal page — so the URL is read from whichever fact
+          // has one rather than from the card that opened the panel.
+          sourceUrl={
+            equivalencies.find((e) => e.key === "trees")?.source_url ?? null
+          }
+          onClose={() => setOpenTrees(false)}
         />
-      ))}
-    </div>
+      )}
+    </>
   );
 }

@@ -3170,9 +3170,17 @@ export type Equivalency = {
   unit: string;
   /** Set only for distance, stack height and weight. */
   milestone: MilestoneProgress | null;
+  /** Where the figure behind this fact was published, for the facts that
+   *  rest on an estimate rather than on arithmetic. Null for the ones that
+   *  need no citation — a ream is 500 sheets by definition. */
+  source_url: string | null;
 };
 
 export type PersonalExplained = {
+  /** The divisor behind the trees figure. Sent rather than derived: the
+   *  equivalency values are rounded to two decimals, and the trees fact is
+   *  dropped entirely below 0.05 — which is most people. */
+  sheets_per_tree: number;
   period: ExplainedPeriod;
   range_start: string;
   range_end: string;
@@ -3216,6 +3224,10 @@ export type PersonalExplained = {
 };
 
 export type DistrictFunFacts = {
+  /** The divisor behind the trees figure. Sent rather than derived: the
+   *  equivalency values are rounded to two decimals, and the trees fact is
+   *  dropped entirely below 0.05 — which is most people. */
+  sheets_per_tree: number;
   period: ExplainedPeriod;
   range_start: string;
   range_end: string;

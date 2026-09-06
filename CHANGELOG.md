@@ -5,6 +5,44 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.73.0] - 2026-09-06
+
+- **The trees figure now opens up, and cites where it comes from.** Tap the
+  **Trees** tile on Our Printing and the district's paper is drawn as a stand
+  of trees you can count — whole ones, and a smaller one for the part of
+  another. On My Printing it draws reams instead, because one person's
+  printing is not trees: the average here is 4.6% of one, and a panel showing
+  a sliver of a tree tells you nothing you can hold. A ream is a thing you
+  carry from the supply closet. It also says how many people printing like you
+  it takes to use a whole tree.
+- Both panels show their arithmetic — sheets ÷ sheets-per-tree — and link the
+  published figure behind it. The facts that rest on an estimate now carry
+  their source; the ones that are arithmetic don't, because a ream is 500
+  sheets by definition and citing a source for division would teach people the
+  links mean nothing.
+- **"Wood used" rather than "trees felled",** stated on the panel. Most office
+  paper comes from managed plantations and recycled content, so this is a way
+  of expressing an amount of wood in units people can picture — not a count of
+  trees that were standing and now aren't. A drawing makes that claim much
+  louder than a line of text did, which is the reason to be careful about it.
+- **Three figures corrected.**
+  - Trees: 8,333 sheets, derived from 24 trees per ton of virgin office paper
+    over 200,000 sheets. Two constants had been carrying 8,300 and 8,333 for
+    one quantity.
+  - CO2: 12.7 g per **sheet**, from the Environmental Paper Network's Paper
+    Calculator, replacing 5 g per *page*. Per page meant a duplexed sheet was
+    charged twice for carbon one piece of paper emitted once — so
+    double-siding, which the same page recommends, changed the CO2 fact not at
+    all. It does now.
+  - Water: the 10 litres a sheet is a **water footprint**, most of it rain that
+    fell on the trees, and the sentence says so. Process water is nearer a
+    thirtieth of it, and a reader comparing the old wording to their kitchen
+    tap was being misled by a factor of thirty.
+- The admin-editable CO2 default moves to 12.7 g for new installs. An existing
+  district keeps whatever is in its settings until someone changes it in
+  **Settings › Insights**, which is the right behaviour for a number a district
+  is allowed to set.
+
 ## [0.72.0] - 2026-09-06
 
 - **Your Printing, Explained.** Two new pages turn page counts into something

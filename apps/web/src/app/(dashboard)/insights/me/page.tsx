@@ -212,6 +212,8 @@ function Explained({ data }: { data: PersonalExplained }) {
         </h2>
         <EquivalencyCards
           equivalencies={data.equivalencies}
+          sheets={data.sheets}
+          sheetsPerTree={data.sheets_per_tree}
           skip={["sheets_per_student"]}
         />
       </section>

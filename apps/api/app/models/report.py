@@ -25,7 +25,17 @@ class ReportFormulaSettings(Base, TimestampMixin):
     # EPA-style rough estimate: ~8,333 sheets of office paper per tree.
     sheets_per_tree: Mapped[float] = mapped_column(default=8333.0, server_default="8333.0")
     # Rough estimate: ~4.6 grams of CO2 per sheet (production + printing).
-    co2_grams_per_sheet: Mapped[float] = mapped_column(default=4.6, server_default="4.6")
+    # 12.7 g, from the Environmental Paper Network's Paper Calculator:
+    # 5,601 lb CO2e per ton of virgin copy paper over 200,000 sheets. The
+    # default was 4.6 with no source behind it, roughly a third of what a
+    # cited figure gives.
+    #
+    # Admin-editable, so this changes the default for a new install only.
+    # An existing district keeps whatever is in its row until somebody
+    # updates it in Settings > Insights — which is the right behaviour for
+    # a number a district is allowed to set, and worth knowing when the
+    # cost report and the fun facts disagree about carbon.
+    co2_grams_per_sheet: Mapped[float] = mapped_column(default=12.7, server_default="12.7")
     # Fallback paper cost when computing real per-job cost (app/reports/formulas.py)
     # — this one's a single global rate by design (paper is bought org-wide,
     # not per-printer), unlike toner which comes from each printer's own

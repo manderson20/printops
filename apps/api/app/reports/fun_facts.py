@@ -203,12 +203,20 @@ def _cases_fact(equivalency, collective: bool) -> str | None:
 
 
 def _water_fact(equivalency, collective: bool) -> str | None:
+    """The water *footprint*, and the sentence has to say so.
+
+    Most of this figure is rain that fell on the trees, not water anyone
+    drew from a tap — process water is nearer a thirtieth of it. "About
+    40,000 litres of water went into making it" invites a comparison with
+    a kitchen sink that is wrong by more than an order of magnitude, so
+    the phrase names what is being counted.
+    """
     litres = equivalency.value
     if litres >= 1_000_000:
         amount = f"{_number(litres / 1_000_000)} million litres"
     else:
         amount = f"{_number(litres)} litres"
-    return f"About {amount} of water went into making it."
+    return f"Growing and making the paper took about {amount} of water, most of it rain."
 
 
 def _co2_fact(equivalency, miles_driven, collective: bool) -> str | None:

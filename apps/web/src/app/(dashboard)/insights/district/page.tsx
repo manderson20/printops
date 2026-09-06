@@ -169,7 +169,12 @@ export default function DistrictFunFactsPage() {
             <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
               What that looks like
             </h2>
-            <EquivalencyCards equivalencies={data.equivalencies} />
+            <EquivalencyCards
+              equivalencies={data.equivalencies}
+              sheets={data.sheets}
+              sheetsPerTree={data.sheets_per_tree}
+              collective
+            />
           </section>
 
           <section className="flex flex-col gap-3">

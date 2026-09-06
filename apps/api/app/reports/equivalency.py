@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 from app.reports.equivalency_config import (
-    CO2_G_PER_PAGE,
+    CO2_G_PER_SHEET,
     G_PER_MILE_DRIVEN,
     GUTENBERG_PAGES_PER_DAY,
     INCHES_PER_FOOT,
@@ -246,8 +246,12 @@ def build_equivalencies(
         Equivalency("reams", _divide(sheets, SHEETS_PER_REAM), "reams"),
         Equivalency("cases", _divide(_divide(sheets, SHEETS_PER_REAM), REAMS_PER_CASE), "cases"),
         Equivalency("water", sheets * LITRES_PER_SHEET, "litres"),
-        Equivalency("co2", pages * CO2_G_PER_PAGE, "grams"),
-        Equivalency("miles_driven", _divide(pages * CO2_G_PER_PAGE, G_PER_MILE_DRIVEN), "miles"),
+        # Sheets, not pages. The carbon is in the paper, so two pages
+        # duplexed onto one sheet emit what one sheet emits — and charging
+        # per page meant double-siding, which this same feature recommends
+        # in the next breath, changed the CO2 fact not at all.
+        Equivalency("co2", sheets * CO2_G_PER_SHEET, "grams"),
+        Equivalency("miles_driven", _divide(sheets * CO2_G_PER_SHEET, G_PER_MILE_DRIVEN), "miles"),
         Equivalency("sheets_per_student", _divide(sheets, STUDENT_COUNT), "sheets per student"),
         Equivalency("gutenberg_days", _divide(pages, GUTENBERG_PAGES_PER_DAY), "days"),
     ]
