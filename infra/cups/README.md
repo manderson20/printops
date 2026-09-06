@@ -74,3 +74,50 @@ log-then-forward mechanism end-to-end. Not yet built: AirPrint/mDNS advertisemen
 (Avahi), policy checks (quotas/secure-release) before forwarding, and real user
 attribution (currently just whatever CUPS reports, unverified) — see
 `ARCHITECTURE.md` §3-4 for the full target design and phased plan.
+
+## Queue discovery (mDNS / AirPrint)
+
+Two separate things advertise printers over DNS-SD on this box, and confusing
+them is what made `airprint_enabled` a lie for 53 printers (#110).
+
+**cupsd advertises every *shared* queue.** Every PrintOps queue is shared —
+`scripts/sync_cups_queue.sh` sets `printer-is-shared=true` unconditionally,
+because CUPS refuses network job submission to a queue that isn't shared. So
+when cupsd is publishing, it publishes all of them, and there is no per-queue
+switch in CUPS to map a PrintOps flag onto.
+
+**PrintOps advertises the queues an admin has opted in.**
+`generate_avahi_service.py` writes one static Avahi service file per printer
+with `airprint_enabled = true`, and removes it when the flag goes false.
+avahi-daemon picks the files up by inotify — no restart needed.
+
+Both at once means the second is invisible: cupsd's blanket advertisement
+covers every queue whatever PrintOps does or doesn't publish. The Printers page
+read "Queue discovery: Hidden" for all 53 printers while a browse of
+`_ipp._tcp` returned 108 records, all of them PrintOps queues.
+
+So **cupsd's DNS-SD publishing must stay off** for the per-printer toggle to
+mean anything:
+
+```
+# /etc/cups/cupsd.conf
+Browsing Yes
+# BrowseLocalProtocols dnssd   <- must stay disabled; see #110
+```
+
+`Browsing Yes` on its own is harmless — it governs whether cupsd browses at
+all, and with no local protocols enabled it publishes nothing. Re-adding
+`dnssd` silently restores the old behaviour: everything discoverable, the
+toggle inert again, and no error anywhere to say so. After changing it,
+`sudo systemctl restart cups`.
+
+### A note on the previous explanation
+
+Earlier comments in `sync_cups_queue.sh` and this file said the static-file
+mechanism existed because *cupsd's own DNS-SD publishing did not work on this
+box*, confirmed at the time via debug logging showing no avahi activity. That
+is no longer true — cupsd publishes fine here now, and the records it produces
+carry its signature (`rp=printers/printops-<uuid>`, an `adminurl` pointing at
+this server). The static files are still the right mechanism, but for a
+different reason: cupsd's publishing is all-or-nothing, and this needs to be
+per-printer.

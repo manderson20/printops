@@ -183,9 +183,18 @@ sudo lpadmin -p "$QUEUE_NAME" -o printer-is-shared=true -E
 # Off (airprint_enabled=false) means the queue won't show up in automatic
 # "Add Printer" pickers, but still accepts jobs from explicitly-configured
 # clients (e.g. MDM) since sharing itself (above) is unaffected by this.
-# cupsd's own DNS-SD publishing doesn't work on this box (confirmed via
-# debug logging — see infra/cups/README.md), so we publish the AirPrint
-# advertisement ourselves via a static Avahi service file instead.
+#
+# Published as a static Avahi service file rather than by cupsd, because the
+# thing cupsd offers is all-or-nothing: it advertises every *shared* queue,
+# and every queue here is shared for the reason directly above. There is no
+# per-queue "advertise this one" in CUPS to map this flag onto.
+#
+# This block used to carry the claim that cupsd's own DNS-SD publishing did
+# not work on this box at all. That was true once and is not true now — it
+# publishes fine, which is precisely what made this toggle a lie for 53
+# printers (#110): PrintOps wrote zero service files, reported every queue
+# as Hidden, and cupsd advertised all of them anyway. The fix is on the cupsd
+# side (BrowseLocalProtocols, see infra/cups/README.md), not here.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 sudo python3 "${SCRIPT_DIR}/../infra/cups/generate_avahi_service.py" "$PRINTER_ID"
 

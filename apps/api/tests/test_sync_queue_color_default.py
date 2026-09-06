@@ -210,9 +210,7 @@ def test_both_sync_scripts_share_one_color_decision():
             f"{name} does not call the shared color decision"
         )
         own_query = [ln for ln in lines if "ipp://localhost/printers/" in ln]
-        assert not own_query, (
-            f"{name} still asks a queue about color on its own: {own_query}"
-        )
+        assert not own_query, f"{name} still asks a queue about color on its own: {own_query}"
 
 
 def test_the_shared_decision_consults_the_device_before_the_queue():

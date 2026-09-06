@@ -2,12 +2,19 @@
 """Generates (or removes) a static Avahi service file for a printer's
 AirPrint/Bonjour advertisement.
 
-This CUPS build's own dnssd publishing doesn't work on this box — confirmed
-via debug-level logging showing zero avahi/dnssd activity despite correct
-config (Browsing Yes, shared queue, AppArmor net_admin capability granted).
-Avahi's static service-file mechanism (this script) is the workaround: drop
-an XML file in /etc/avahi/services/ and avahi-daemon picks it up itself
-(inotify-watched, no restart needed). See infra/cups/README.md.
+Static Avahi service files rather than cupsd's own DNS-SD publishing, because
+what cupsd offers is all-or-nothing: it advertises every *shared* queue, and
+every PrintOps queue is shared unconditionally (CUPS refuses network job
+submission to one that isn't). There is no per-queue "advertise this one" to
+map airprint_enabled onto. Drop an XML file in /etc/avahi/services/ and
+avahi-daemon picks it up itself (inotify-watched, no restart needed).
+
+This used to say the mechanism existed because cupsd's dnssd publishing did
+not work on this box at all, confirmed at the time by debug logging. It works
+now, and that was the whole of #110: cupsd advertised all 53 queues while
+PrintOps published none and the UI reported every one of them as Hidden.
+cupsd's publishing has to stay off for this file to be the thing that decides.
+See infra/cups/README.md.
 
 Usage: generate_avahi_service.py <printer-id>
 

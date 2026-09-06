@@ -5,6 +5,23 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.75.2] - 2026-09-06
+
+- **The queue discovery toggle now controls queue discovery.** It never did.
+  The Printers page reported "Queue discovery: Hidden" for all 53 printers
+  while every one of them was discoverable, because cupsd advertises every
+  shared queue itself and PrintOps queues are all shared — CUPS refuses
+  network jobs to a queue that isn't. cupsd's blanket advertisement is now
+  off, leaving PrintOps' own per-printer advertisement as the only one, so
+  turning a printer off actually hides it.
+  **Existing printers are all marked discoverable on upgrade**, because that
+  is what they already were — nobody loses a printer from their Add Printer
+  picker, and the setting starts describing the estate rather than resetting
+  it. New printers still start hidden until an admin opts in. (#110)
+- Requires one change to `/etc/cups/cupsd.conf` and a `cups` restart; see
+  `infra/cups/README.md`. Re-adding `BrowseLocalProtocols dnssd` silently
+  restores the old behaviour with no error anywhere to say so.
+
 ## [0.75.1] - 2026-09-06
 
 - **Mono printers stop offering color, and one color copier starts printing
