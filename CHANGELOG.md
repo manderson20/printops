@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.77.0] - 2026-09-06
+
+- **Ask for double-sided, a staple or a hole punch when you upload.** The Print
+  page now offers whatever the printer you picked actually reported it can do,
+  instead of giving you whatever that queue's defaults happened to be. Seven
+  machines here have a finisher; the rest simply show no extra options.
+- Options you cannot use are never shown, and never sent. Switching printers
+  clears them, and anything a printer did not report is dropped before the job
+  is submitted — an option that silently does nothing is worse than no option,
+  because you believe you used it.
+
 ## [0.76.1] - 2026-09-06
 
 - **The audit log now covers the fifteen actions it shipped without.** Print

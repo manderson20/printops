@@ -3022,7 +3022,19 @@ export type SelfServicePrinter = {
   room: string | null;
   department: string | null;
   is_virtual: boolean;
+  // Derived from what this printer reported when PrintOps probed it, so the
+  // page only offers what the machine will actually honour. Empty means no
+  // finisher, or never successfully probed — either way, offer nothing.
+  supports_duplex: boolean;
+  finishings: string[];
 };
+
+export type PrintFinishing = "staple" | "punch";
+
+export type PrintSides =
+  | "one-sided"
+  | "two-sided-long-edge"
+  | "two-sided-short-edge";
 
 export type SelfServicePrintResult = {
   printer_id: string;
@@ -3111,10 +3123,17 @@ export async function submitSelfServicePrint(
   printerId: string,
   file: File,
   copies: number,
+  options?: { sides?: PrintSides; finishings?: PrintFinishing[] },
 ): Promise<SelfServicePrintResult> {
   const formData = new FormData();
   formData.append("printer_id", printerId);
   formData.append("copies", String(copies));
+  if (options?.sides) formData.append("sides", options.sides);
+  // Repeated field rather than a joined string — the API reads it as a list,
+  // and the server filters it against the printer's capabilities regardless.
+  for (const finishing of options?.finishings ?? []) {
+    formData.append("finishings", finishing);
+  }
   formData.append("file", file);
   const response = await authorizedFetch("/api/v1/self-service-print", {
     method: "POST",

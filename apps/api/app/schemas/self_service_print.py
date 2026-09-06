@@ -15,6 +15,12 @@ class SelfServicePrinterOut(BaseModel):
     room: str | None
     department: str | None
     is_virtual: bool
+    # What this printer will actually honour at submission time, from its own
+    # discovered capabilities. Empty means "never probed, or has no finisher" —
+    # the page shows no options rather than offering ones that would be
+    # silently dropped.
+    supports_duplex: bool = False
+    finishings: list[str] = []
 
     model_config = {"from_attributes": True}
 

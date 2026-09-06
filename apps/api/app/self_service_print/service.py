@@ -74,7 +74,12 @@ async def user_may_print_to(db: AsyncSession, printer_id, user_email: str) -> bo
 
 
 def submit_uploaded_print_job(
-    printer_id: str, file_bytes: bytes, filename: str, user_email: str, copies: int
+    printer_id: str,
+    file_bytes: bytes,
+    filename: str,
+    user_email: str,
+    copies: int,
+    options: list[str] | None = None,
 ) -> str:
     """Delivers straight to the printer's normal queue via `lp`, same
     "shell out to lp" primitive as app/printers/test_print.py:
@@ -100,6 +105,7 @@ def submit_uploaded_print_job(
                 filename,
                 "-n",
                 str(copies),
+                *(options or []),
                 str(path),
             ],
             capture_output=True,
