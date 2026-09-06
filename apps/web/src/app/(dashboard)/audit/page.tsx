@@ -4,8 +4,10 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ApiError,
+  getAuditSettings,
   listAuditActions,
   listAuditEvents,
+  updateAuditSettings,
   type AuditChange,
   type AuditEvent,
 } from "@/lib/api";
@@ -66,6 +68,69 @@ function Changes({ changes }: { changes: Record<string, AuditChange> }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+/** Retention, inline rather than on the Settings page: it is the one setting
+ *  whose effect is visible right here — it decides how far back this list can
+ *  go — and the one an auditor is most likely to want to check. */
+function RetentionControl() {
+  const [days, setDays] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getAuditSettings()
+      .then((settings) => {
+        setDays(settings.retention_days);
+        setDraft(String(settings.retention_days));
+      })
+      .catch(() => setDays(null));
+  }, []);
+
+  if (days === null) return null;
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await updateAuditSettings(Number(draft));
+      setDays(saved.retention_days);
+      setDraft(String(saved.retention_days));
+    } catch (caught) {
+      // The API floors this at 90 days; surfacing its refusal is more useful
+      // than a client-side rule that could drift from the server's.
+      setError(
+        caught instanceof Error
+          ? "Retention must be between 90 and 3650 days."
+          : "Could not save.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="flex flex-wrap items-center gap-2 text-sm" onSubmit={save}>
+      <span className="text-zinc-500">Keep entries for</span>
+      <Input
+        type="number"
+        min={90}
+        max={3650}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        className="w-24"
+      />
+      <span className="text-zinc-500">days</span>
+      {draft !== String(days) ? (
+        <Button type="submit" variant="secondary" disabled={saving}>
+          {saving ? "Saving…" : "Save"}
+        </Button>
+      ) : null}
+      {error ? <span className="text-red-600 dark:text-red-400">{error}</span> : null}
+    </form>
   );
 }
 
@@ -143,6 +208,8 @@ function AuditList() {
           here can describe something that did not happen.
         </p>
       </div>
+
+      <RetentionControl />
 
       <div className="flex flex-wrap items-center gap-2">
         <select

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.audit.record import diff, record_audit, snapshot
+from app.audit.record import auditable_fields, diff, record_audit, snapshot
 from app.copiers.account_counters import poll_account_counters
 from app.copiers.connector import CapabilityNotSupported, ConnectionTestResult, refresh_device_meter
 from app.copiers.device_admin import DeviceCredentialsMissing
@@ -35,6 +35,35 @@ from app.schemas.mfp_device import (
     ProvisioningPreviewOut,
     SyncJobOut,
     available_connector_types,
+)
+
+# Detected capabilities, meter readings and the results of the last
+# sync/poll/test move on their own. Everything else on the row is admin-set
+# config and is audited, credentials included — see POLLED_PRINTER_FIELDS in
+# routers/printers.py for why this is a deny-list rather than an allow-list.
+POLLED_DEVICE_FIELDS = frozenset(
+    {
+        "tenant_id",
+        "capabilities_source",
+        "capabilities_detected_at",
+        "page_count_total",
+        "page_count_copy",
+        "page_count_print",
+        "page_count_confidence",
+        "page_count_vendor_profile_used",
+        "page_count_checked_at",
+        "page_count_error",
+        "last_user_sync_at",
+        "last_user_sync_ok",
+        "last_user_sync_message",
+        "last_counter_poll_at",
+        "last_counter_poll_ok",
+        "last_counter_poll_message",
+        "last_test_connection_at",
+        "last_test_connection_ok",
+        "last_test_connection_message",
+        "default_owner_attributed_through",
+    }
 )
 
 router = APIRouter(dependencies=[Depends(require_role("admin"))])
@@ -241,22 +270,7 @@ async def update_mfp_device(
     request: Request = None,
 ):
     device = await _get_device_or_404(device_id, db)
-    # Named rather than derived: an MfpDevice row also carries polled meter and
-    # capability state that moves on its own.
-    audited = [
-        "name",
-        "vendor",
-        "model",
-        "serial_number",
-        "ip_address",
-        "hostname",
-        "building",
-        "room",
-        "department",
-        "printer_id",
-        "connector_type",
-        "enabled",
-    ]
+    audited = auditable_fields(MfpDevice, POLLED_DEVICE_FIELDS)
     before = snapshot(device, audited)
     updates = payload.model_dump(
         exclude_unset=True, exclude={"snmp_community", "admin_password", "capabilities"}

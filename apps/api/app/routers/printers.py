@@ -9,7 +9,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
-from app.audit.record import diff, record_audit, snapshot
+from app.audit.record import auditable_fields, diff, record_audit, snapshot
 from app.core.config import Settings, get_settings
 from app.core.crypto import decrypt, encrypt
 from app.core.security import hash_password
@@ -72,6 +72,51 @@ from app.server_settings.service import get_or_create_server_settings
 from app.syslog.service import list_events as list_syslog_events
 
 logger = logging.getLogger(__name__)
+
+
+# State the machine writes on its own — poll results, probe errors, derived
+# capability data, page counters. Everything *not* listed here is audited on an
+# update, including every stored credential, which is recorded as having changed
+# with both values withheld.
+#
+# A deny-list rather than an allow-list on purpose. The first version of this
+# listed the fields to audit and quietly omitted the SNMP community, the LDAP
+# bind password and the web-login password, so rotating a credential on a
+# printer produced no event at all. Forgetting to exclude something here is
+# noise; forgetting to include something there was a hole.
+POLLED_PRINTER_FIELDS = frozenset(
+    {
+        "tenant_id",
+        "capabilities",
+        "capabilities_raw",
+        "capabilities_detected_at",
+        "capabilities_error",
+        "queue_sync_error",
+        "last_auto_queue_sync_at",
+        "auto_queue_sync_failures",
+        "status",
+        "status_reasons",
+        "status_message",
+        "status_checked_at",
+        "status_probe_failures",
+        "last_online_at",
+        "network_probe_log",
+        "pages_not_printed",
+        "ipp_path_detected",
+        "pending_redirect",
+        "page_count_total",
+        "page_count_copy",
+        "page_count_print",
+        "page_count_confidence",
+        "page_count_vendor_profile_used",
+        "page_count_checked_at",
+        "page_count_error",
+        "wireless_broadcasting",
+        "wireless_radios",
+        "wireless_checked_at",
+        "wireless_error",
+    }
+)
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -169,6 +214,10 @@ async def create_printer(
     finishings = (printer.capabilities or {}).get("finishings") or []
     printer.roll_autocut = "trim" in finishings
     db.add(printer)
+    # Printer.id comes from a Python-side default applied at flush, so reading it
+    # straight after add() records a null and the creation row cannot be tied to
+    # later updates or the deletion of the same printer.
+    await db.flush()
     record_audit(
         db,
         current_user,
@@ -218,6 +267,10 @@ async def create_virtual_queue(
         notes=payload.notes,
     )
     db.add(printer)
+    # Printer.id comes from a Python-side default applied at flush, so reading it
+    # straight after add() records a null and the creation row cannot be tied to
+    # later updates or the deletion of the same printer.
+    await db.flush()
     record_audit(
         db,
         current_user,
@@ -403,26 +456,7 @@ async def update_printer(
     request: Request = None,
 ):
     printer = await _get_printer_or_404(printer_id, db)
-    # Named explicitly rather than derived from the mapper: a Printer row also
-    # carries polled state (status, page counts, capabilities, toner) that
-    # changes constantly without anybody deciding anything, and diffing all of
-    # it would bury the admin's edit under machine churn.
-    audited = [
-        "name",
-        "ip_address",
-        "port",
-        "use_tls",
-        "ipp_path",
-        "location",
-        "building",
-        "room",
-        "department",
-        "airprint_enabled",
-        "follow_me_enabled",
-        "release_required",
-        "archived_at",
-        "roll_autocut",
-    ]
+    audited = auditable_fields(Printer, POLLED_PRINTER_FIELDS)
     before = snapshot(printer, audited)
     updates = payload.model_dump(exclude_unset=True)
     # A virtual queue (app/models/printer.py:is_virtual) has no physical

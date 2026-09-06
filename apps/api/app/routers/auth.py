@@ -297,9 +297,34 @@ async def google_callback(
     user.name = claims.get("name")
     user.picture_url = claims.get("picture")
     user.last_login_at = datetime.now(UTC)
+    # Google SSO is how everybody except the break-glass admin actually signs
+    # in, so a page that says it records every sign-in has to record these —
+    # the first version only covered the password handler, which in practice
+    # meant almost no real logins appeared.
+    record_audit(
+        db,
+        UserOut(
+            username=user.email,
+            role=user.role,
+            email=user.email,
+            name=user.name,
+            subject=str(user.id),
+        ),
+        action="auth.login",
+        summary="Signed in with Google",
+        entity_type="auth",
+    )
     await db.commit()
 
     if not user.is_active:
+        record_audit(
+            db,
+            UserOut(username=user.email, role=user.role, email=user.email, subject=str(user.id)),
+            action="auth.login.refused",
+            summary="Sign-in refused: the account is deactivated",
+            entity_type="auth",
+        )
+        await db.commit()
         return _fail("Your account has been deactivated. Contact an administrator.")
 
     session_settings = await get_or_create_session_settings(db)

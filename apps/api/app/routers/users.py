@@ -88,7 +88,13 @@ async def create_user(
         summary=f"Created {payload.role} account for {email}",
         entity_type="user",
         entity_label=email,
-        changes={"role": payload.role, "granted_ou_paths": payload.granted_ou_paths},
+        # Same {from, to} shape as every other event: a creation has no
+        # "before", which reads as "— → viewer" rather than a bare value the
+        # UI would render as two blanks.
+        changes={
+            "role": {"from": None, "to": payload.role},
+            "granted_ou_paths": {"from": None, "to": payload.granted_ou_paths},
+        },
         request=request,
     )
     try:
@@ -233,7 +239,7 @@ async def impersonate_user(
         entity_type="user",
         entity_id=target.id,
         entity_label=target.email,
-        changes={"target_role": target.role},
+        changes={"target_role": {"from": None, "to": target.role}},
     )
     await db.commit()
 

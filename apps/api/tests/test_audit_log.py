@@ -336,3 +336,77 @@ def test_a_failed_sign_in_to_the_real_account_names_it(client, auth_headers):
         "/api/v1/audit", params={"action_prefix": "auth.login.failed"}, headers=auth_headers
     ).json()["events"]
     assert [e["actor_email"] for e in events] == ["admin"]
+
+
+def test_rotating_a_printer_credential_is_recorded(client, auth_headers, monkeypatch):
+    """The gap review found in the first version: the printer diff was a
+    hand-written allow-list that omitted every stored credential, so rotating an
+    SNMP community or a bind password on a printer produced no event at all."""
+    from app.routers import printers as printers_router
+
+    monkeypatch.setattr(printers_router, "sync_queue", lambda *a, **k: None)
+    created = client.post(
+        "/api/v1/printers",
+        json={"name": "Audit Test Printer", "ip_address": "10.0.0.5", "port": 631},
+        headers=auth_headers,
+    )
+    assert created.status_code == 201, created.text
+    printer_id = created.json()["id"]
+
+    client.patch(
+        f"/api/v1/printers/{printer_id}",
+        json={"snmp_community": "not-public-either"},
+        headers=auth_headers,
+    )
+
+    response = client.get(
+        "/api/v1/audit", params={"action_prefix": "printer"}, headers=auth_headers
+    )
+    assert "not-public-either" not in response.text
+    updates = [e for e in response.json()["events"] if e["action"] == "printer.update"]
+    assert updates, "rotating a stored credential recorded nothing"
+    assert updates[0]["changes"]["snmp_community_encrypted"] == {
+        "from": REDACTED,
+        "to": REDACTED,
+    }
+
+
+def test_a_created_printer_records_the_id_it_was_given(client, auth_headers, monkeypatch):
+    """entity_id is what ties a creation to the later updates and the deletion
+    of the same printer. It comes from a Python-side default applied at flush,
+    so reading it straight after add() records a null."""
+    from app.routers import printers as printers_router
+
+    monkeypatch.setattr(printers_router, "sync_queue", lambda *a, **k: None)
+    created = client.post(
+        "/api/v1/printers",
+        json={"name": "Identified Printer", "ip_address": "10.0.0.6", "port": 631},
+        headers=auth_headers,
+    )
+    assert created.status_code == 201, created.text
+
+    events = client.get(
+        "/api/v1/audit", params={"action_prefix": "printer.create"}, headers=auth_headers
+    ).json()["events"]
+    assert events[0]["entity_id"] == created.json()["id"]
+
+
+def test_every_change_entry_uses_the_from_to_shape(client, auth_headers):
+    """The UI reads change.from and change.to; a bare value renders as two
+    blanks. Checked across whatever this session happens to have recorded rather
+    than one endpoint, since the shape is a contract every call site shares."""
+    client.put("/api/v1/settings/snmp", json={"port": 1161}, headers=auth_headers)
+    client.post(
+        "/api/v1/users",
+        json={"email": "shape@example.org", "role": "viewer"},
+        headers=auth_headers,
+    )
+
+    events = client.get("/api/v1/audit", headers=auth_headers).json()["events"]
+    with_changes = [e for e in events if e["changes"]]
+    assert with_changes
+    for event in with_changes:
+        for field, change in event["changes"].items():
+            assert isinstance(change, dict) and {"from", "to"} <= set(change), (
+                f"{event['action']}.{field} is not a from/to pair: {change!r}"
+            )

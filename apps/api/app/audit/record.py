@@ -171,19 +171,27 @@ def _actor_user_id(actor: UserOut) -> UUID | None:
 NON_AUDITABLE_COLUMNS = frozenset({"id", "created_at", "updated_at"})
 
 
-def auditable_fields(model: Any) -> list[str]:
-    """Every column on a settings model worth diffing.
+def auditable_fields(model: Any, exclude: frozenset[str] = frozenset()) -> list[str]:
+    """Every column on a model worth diffing.
 
-    Derived from the mapper rather than hand-listed per endpoint. A hand-list is
-    the more careful-looking option and is the wrong one here: a new setting
-    added next year would silently stop being audited, and the failure is
-    invisible — the log simply never mentions it. Deriving means new settings
-    are audited by default and secrets are excluded by name, which puts the
-    burden of remembering on the thing that is good at remembering.
+    Derived from the mapper minus an explicit exclusion set — never the other
+    way round. An allow-list is the more careful-looking option and is exactly
+    wrong for an audit log: a field left off one is not audited, silently and
+    forever, and the failure is invisible because the log simply never mentions
+    that kind of change.
+
+    Caught in review on the first version of this. A hand-written list for
+    Printer omitted the stored SNMP community, the LDAP bind password and the
+    web-login password among others, so rotating a credential on a printer
+    produced no event at all. Inverting it makes the default for a new column
+    "audited", and forgetting produces noise rather than a hole.
+
+    `exclude` is for state the machine writes on its own — poll results, probe
+    errors, page counters. Diffing those buries an admin's edit under churn
+    nobody decided on.
     """
-    return [
-        column.key for column in model.__mapper__.columns if column.key not in NON_AUDITABLE_COLUMNS
-    ]
+    skip = NON_AUDITABLE_COLUMNS | exclude
+    return [column.key for column in model.__mapper__.columns if column.key not in skip]
 
 
 def snapshot(obj: Any, fields: list[str] | None = None) -> dict[str, Any]:
