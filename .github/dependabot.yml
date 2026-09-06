@@ -31,9 +31,16 @@ updates:
       # does not ship, does not run in production and does not touch the print
       # path, and 9.x is still on its own maintenance line.
       #
-      # REMOVE THIS once eslint-plugin-react publishes ESLint 10 support (or
-      # eslint-config-next drops it) — tracked in #125, which should be closed
-      # in the same change.
+      # REMOVE THIS once *every* plugin above accepts ESLint 10 — or
+      # eslint-config-next stops depending on the ones that don't. Not just
+      # eslint-plugin-react: it is only listed first because it is the one that
+      # throws first, and clearing it would simply move the failure to
+      # jsx-a11y. The check is the whole list, not the loudest entry:
+      #
+      #   pnpm why eslint-plugin-react eslint-plugin-jsx-a11y eslint-plugin-import
+      #   npm view <each> peerDependencies.eslint
+      #
+      # Tracked in #125, which should be closed in the same change.
       - dependency-name: "eslint"
         update-types: ["version-update:semver-major"]
 
