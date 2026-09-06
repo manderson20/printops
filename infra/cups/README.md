@@ -102,13 +102,31 @@ mean anything:
 ```
 # /etc/cups/cupsd.conf
 Browsing Yes
-# BrowseLocalProtocols dnssd   <- must stay disabled; see #110
+BrowseLocalProtocols none   # NOT commented out — see below. #110
 ```
 
-`Browsing Yes` on its own is harmless — it governs whether cupsd browses at
-all, and with no local protocols enabled it publishes nothing. Re-adding
-`dnssd` silently restores the old behaviour: everything discoverable, the
+**Set it to `none`; do not comment it out.** `BrowseLocalProtocols` defaults to
+`dnssd` when absent, so deleting or commenting the line leaves cupsd publishing
+exactly as before. This was got wrong once on this box: the line was commented
+out, cups restarted, and all 108 cupsd records were still there afterwards —
+the only sign being a browse still returning 212 records instead of the
+expected 108.
+
+`Browsing Yes` alongside it is harmless: it governs whether cupsd browses at
+all, and with local protocols set to `none` it publishes nothing. Re-adding
+`dnssd` silently restores the old behaviour — everything discoverable, the
 toggle inert again, and no error anywhere to say so.
+
+Check it with a browse rather than by reading the config, since the failure
+mode here is a setting that looks disabled and isn't:
+
+```
+avahi-browse -rpt _ipp._tcp | grep -c '^='                       # total
+avahi-browse -rpt _ipp._tcp | grep -c 'Published by PrintOps'    # ours
+```
+
+Those two numbers should be equal. If the first is larger, cupsd is still
+publishing.
 
 ### Upgrading an estate that was relying on cupsd's advertisement
 

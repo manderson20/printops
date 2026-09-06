@@ -15,7 +15,9 @@
 #   1. alembic upgrade head        — the flags become true
 #   2. this script                 — the service files appear, and are now
 #                                    advertised *alongside* cupsd's own
-#   3. disable BrowseLocalProtocols dnssd in /etc/cups/cupsd.conf
+#   3. set BrowseLocalProtocols to none in /etc/cups/cupsd.conf — set, not
+#      comment out: it defaults to dnssd when absent, so a commented line
+#      leaves cupsd publishing exactly as before
 #   4. sudo systemctl restart cups — cupsd's blanket advertisement stops
 #
 # Run in that order there is never a moment when a printer is unadvertised;
