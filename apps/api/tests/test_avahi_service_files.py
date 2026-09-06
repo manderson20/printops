@@ -140,3 +140,30 @@ def test_capabilities_missing_entirely_still_produces_a_usable_file(avahi, monke
     xml = _service_file(avahi).read_text()
     assert "pdl=application/pdf" in xml
     assert "<txt-record>Color=F</txt-record>" in xml
+
+
+def test_the_bulk_regenerate_script_calls_a_route_that_exists():
+    """scripts/regenerate_avahi_services.sh runs once, during an upgrade, as
+    root, in the window where cupsd's advertisement is about to be switched
+    off. A wrong URL there is not a 404 in a log — it is every printer on the
+    estate missing from Add Printer pickers.
+
+    It shipped with one: `/internal/printers` instead of `/internal/printers/ids`,
+    caught only by running it against the live API. Shell scripts naming REST
+    paths are invisible to every other check in this repo, so the path is
+    matched against the routes the app actually serves.
+    """
+    import re
+
+    from app.main import app
+
+    script = (REPO / "scripts" / "regenerate_avahi_services.sh").read_text()
+    called = set(re.findall(r"\$API_BASE(/api/v1/[A-Za-z0-9/_-]+)", script))
+    assert called, "the script no longer calls the API — update this test"
+
+    # Via the OpenAPI schema rather than app.routes: this FastAPI version keeps
+    # included routers as lazy _IncludedRouter wrappers with no .path, so
+    # walking app.routes finds 23 objects and no paths at all.
+    served = set(app.openapi()["paths"])
+    for path in called:
+        assert path in served, f"{path} is not a route this app serves"
