@@ -35,6 +35,21 @@ source .venv/bin/activate
 # exactly that mid-session.
 uv sync --quiet --extra dev
 
+# Removing the service from infra/docker-compose.yml does not stop a container
+# that is already running, and this one was published on 0.0.0.0:6379 with no
+# password (0.75.8). An install that upgrades without this keeps the open port
+# indefinitely, so the removal has to happen on the upgrade path rather than in
+# a compose file nobody re-applies.
+#
+# Idempotent and deliberately narrow: one container, by exact name, ignored if
+# absent. This is not a general "prune what compose no longer declares" step —
+# that would be a much larger promise than an updater should make.
+if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'printops-redis-1'; then
+    echo "== Removing the unused Redis container (0.75.8) =="
+    docker rm -f printops-redis-1 >/dev/null 2>&1 || \
+        echo "WARNING: could not remove printops-redis-1 — it may still be listening on 6379" >&2
+fi
+
 echo "== Running database migrations =="
 timeout 120 alembic upgrade head
 

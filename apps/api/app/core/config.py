@@ -49,7 +49,15 @@ class Settings(BaseSettings):
     # python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     encryption_key: str
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="PRINTOPS_")
+    # extra="ignore" so a deployed .env carrying a key the code no longer has
+    # cannot stop the API booting. Environment variables were always ignored,
+    # but dotenv entries are not: pydantic-settings rejects those by default,
+    # and removing `redis_url` in 0.75.8 would otherwise have bricked every
+    # install whose .env still had PRINTOPS_REDIS_URL — which was all of them,
+    # since it shipped in .env.example. A deployed config file drifting ahead
+    # of the code is normal and must not be fatal; a missing *required*
+    # setting still is, which is the check that matters.
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="PRINTOPS_", extra="ignore")
 
 
 @lru_cache

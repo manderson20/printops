@@ -13,7 +13,15 @@ schedules an update.
   with no password, on a host with no firewall enabled. So it was reachable
   from anywhere that can route to this server. The container, the `redis_url`
   setting and the env var are all gone; the architecture no longer claims a
-  dependency that does not exist.
+  dependency that does not exist. Existing installs have the container removed
+  as part of the upgrade, since deleting it from the compose file does not stop
+  one that is already running.
+- Settings now ignore entries a deployed `.env` still carries that the code has
+  since dropped. Unknown environment variables were always ignored, but unknown
+  entries in the file itself were rejected, so removing a setting could stop the
+  API starting anywhere the old key was still on disk. A config file that has
+  drifted ahead of the code is a normal state and no longer a fatal one; a
+  genuinely missing setting still fails loudly.
 
 ## [0.75.7] - 2026-09-06
 
