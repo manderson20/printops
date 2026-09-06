@@ -314,12 +314,14 @@ function PaperPile({ reams, packsPerTree }: { reams: number; packsPerTree: numbe
   const x = 60;
   const y0 = PILE_GROUND - 7;
 
-  let below = 0;
   const packs = caps.map((cap, i) => {
+    // Summed rather than accumulated across the map: react-hooks
+    // /immutability rejects a running total mutated during render, and it
+    // is right to — at 30 shapes the cost of doing it purely is nothing.
+    const below = caps.slice(0, i).reduce((a, b) => a + b, 0);
     const h = Math.max(3, cap * unit - 1.6);
     const bottom = y0 - below * unit;
     const used = Math.max(0, Math.min(1, (reams - below) / cap));
-    below += cap;
     return { i, h, top: bottom - h, bottom, used, cap };
   });
 
