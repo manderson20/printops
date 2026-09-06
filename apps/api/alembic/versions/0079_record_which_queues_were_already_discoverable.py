@@ -46,12 +46,17 @@ def upgrade() -> None:
     it just never had any effect on the ones already here. This backfills
     history; it does not change what happens next.
 
-    Archived printers are included. Their queues are still on this box and
-    still being advertised by cupsd today, so leaving them false would be
-    recording something that isn't so; if an archived printer's queue should
-    not be advertised, that is a queue-removal question, not a discovery flag.
+    Archived printers are excluded, and an earlier version of this migration
+    had that wrong on a wrong premise — that their queues were still on the box
+    being advertised. They are not: archiving removes the CUPS queue and
+    scripts/remove_cups_queue.sh deletes the Avahi service file with it. An
+    archived printer is not discoverable, so marking it discoverable would
+    record something untrue, and unarchiving it later would then quietly
+    publish a printer the admin never asked to publish. There are none on this
+    estate today, which is exactly why it is worth getting right now rather
+    than discovering it the first time somebody unarchives something.
     """
-    op.execute("UPDATE printers SET airprint_enabled = true")
+    op.execute("UPDATE printers SET airprint_enabled = true WHERE archived_at IS NULL")
 
 
 def downgrade() -> None:
@@ -64,5 +69,8 @@ def downgrade() -> None:
     entirely about in a state it never had. Downgrading also implies restoring
     cupsd's blanket advertisement, at which point the column means nothing
     again either way.
+
+    Scoped to the same rows the upgrade touched, so an archived printer that
+    was already false is not "restored" to a value it never left.
     """
-    op.execute("UPDATE printers SET airprint_enabled = false")
+    op.execute("UPDATE printers SET airprint_enabled = false WHERE archived_at IS NULL")

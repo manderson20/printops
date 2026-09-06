@@ -18,8 +18,10 @@ schedules an update.
   is what they already were — nobody loses a printer from their Add Printer
   picker, and the setting starts describing the estate rather than resetting
   it. New printers still start hidden until an admin opts in. (#110)
-- Requires one change to `/etc/cups/cupsd.conf` and a `cups` restart; see
-  `infra/cups/README.md`. Re-adding `BrowseLocalProtocols dnssd` silently
+- Requires one change to `/etc/cups/cupsd.conf`, a `cups` restart, and one run
+  of the new `scripts/regenerate_avahi_services.sh` — **in the order given in
+  `infra/cups/README.md`**, which is chosen so no printer is ever unadvertised
+  in the middle of the upgrade. Re-adding `BrowseLocalProtocols dnssd` silently
   restores the old behaviour with no error anywhere to say so.
 
 ## [0.75.1] - 2026-09-06

@@ -108,8 +108,27 @@ Browsing Yes
 `Browsing Yes` on its own is harmless — it governs whether cupsd browses at
 all, and with no local protocols enabled it publishes nothing. Re-adding
 `dnssd` silently restores the old behaviour: everything discoverable, the
-toggle inert again, and no error anywhere to say so. After changing it,
-`sudo systemctl restart cups`.
+toggle inert again, and no error anywhere to say so.
+
+### Upgrading an estate that was relying on cupsd's advertisement
+
+Order matters here and getting it wrong is an outage, because until the
+service files exist cupsd is the only thing publishing anything:
+
+```
+alembic upgrade head                        # 1. flags become true (0079)
+sudo ./scripts/regenerate_avahi_services.sh # 2. service files appear
+#    3. disable BrowseLocalProtocols dnssd in /etc/cups/cupsd.conf
+sudo systemctl restart cups                 # 4. cupsd stops advertising
+```
+
+In that order no printer is ever unadvertised — steps 2-4 briefly
+double-advertise instead, which avahi handles by disambiguating the names and
+which nobody notices. Do step 4 before step 2 and every printer on the estate
+disappears from Add Printer pickers until something happens to resync it.
+
+`regenerate_avahi_services.sh` is idempotent and converges on whatever the
+database currently says, so it is safe to re-run at any point.
 
 ### A note on the previous explanation
 
