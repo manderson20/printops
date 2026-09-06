@@ -8,6 +8,13 @@ from app.deps import get_current_user
 from app.models.printer import Printer
 from app.schemas.auth import UserOut
 from app.schemas.self_service_print import SelfServicePrinterOut, SelfServicePrintResultOut
+from app.self_service_print.options import (
+    DEFAULT_SIDES,
+    SIDES_CHOICES,
+    lp_options,
+    offered_finishings,
+    offered_sides,
+)
 from app.self_service_print.service import (
     MAX_UPLOAD_BYTES,
     SelfServicePrintError,
@@ -38,13 +45,33 @@ async def list_self_service_printers(
     current_user: UserOut = Depends(get_current_user),
 ):
     email = _require_email(current_user)
-    return await get_allowed_printers_for_user(db, email)
+    # Built explicitly rather than serialised straight off the ORM rows: the
+    # finishing options are derived from each printer's discovered capabilities,
+    # not stored as columns.
+    return [
+        SelfServicePrinterOut(
+            id=printer.id,
+            name=printer.name,
+            building=printer.building,
+            room=printer.room,
+            department=printer.department,
+            is_virtual=printer.is_virtual,
+            sides=offered_sides(printer.capabilities),
+            finishings=offered_finishings(printer.capabilities),
+        )
+        for printer in await get_allowed_printers_for_user(db, email)
+    ]
 
 
 @router.post("", response_model=SelfServicePrintResultOut, status_code=status.HTTP_201_CREATED)
 async def submit_self_service_print(
     printer_id: UUID = Form(...),
     copies: int = Form(1),
+    sides: str = Form(DEFAULT_SIDES),
+    # Repeated form field, so the browser can send several: finishings=staple
+    # &finishings=punch. Defaulted to an empty list rather than required, so an
+    # older client that has never heard of finishing options keeps working.
+    finishings: list[str] = Form(default_factory=list),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     current_user: UserOut = Depends(get_current_user),
@@ -54,6 +81,12 @@ async def submit_self_service_print(
     if copies < 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Copies must be at least 1."
+        )
+
+    if sides and sides not in SIDES_CHOICES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown sides option: {sides!r}",
         )
 
     # Re-checked server-side — the printer picker (GET /printers above) is
@@ -86,7 +119,17 @@ async def submit_self_service_print(
 
     try:
         submit_uploaded_print_job(
-            str(printer_id), raw_bytes, file.filename or "document.pdf", email, copies
+            str(printer_id),
+            raw_bytes,
+            file.filename or "document.pdf",
+            email,
+            copies,
+            # Filtered against this printer's own capabilities, not taken on
+            # trust: the picker only offers what a machine supports, but this
+            # endpoint is reachable directly, and an unsupported finishing is
+            # either dropped silently or rejects the job — in both cases the
+            # person is told their document printed.
+            lp_options(sides=sides, finishings=finishings, capabilities=printer.capabilities),
         )
     except SelfServicePrintError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc

@@ -215,8 +215,22 @@ def _parse_color_supported(raw: dict[str, Any]) -> bool:
 
 
 def _parse_duplex_supported(raw: dict[str, Any]) -> bool:
-    sides = [_scalar(v) for v in _as_list(raw.get("sides-supported"))]
-    return any(str(s).startswith("two-sided") for s in sides)
+    return bool(_parse_sides_supported(raw))
+
+
+def _parse_sides_supported(raw: dict[str, Any]) -> list[str]:
+    """The two-sided binding modes this device reports, not just whether it has
+    any.
+
+    `duplex_supported` collapses this to a boolean, which is all most callers
+    need and is not enough for the self-service print form: a printer reporting
+    only two-sided-long-edge would otherwise be offered short-edge binding as
+    well, and the job would come out bound the wrong way or be rejected. Kept
+    alongside the boolean rather than replacing it so nothing that reads the
+    old field has to change.
+    """
+    sides = [str(_scalar(v)) for v in _as_list(raw.get("sides-supported"))]
+    return [side for side in sides if side.startswith("two-sided")]
 
 
 def _parse_collation_supported(raw: dict[str, Any]) -> bool:
@@ -308,6 +322,7 @@ def parse_capabilities(raw: dict[str, Any]) -> dict[str, Any]:
         "make_model": raw.get("printer-make-and-model"),
         "firmware_version": _parse_firmware_version(raw),
         "duplex_supported": _parse_duplex_supported(raw),
+        "sides_supported": _parse_sides_supported(raw),
         "color_supported": _parse_color_supported(raw),
         "copies_max": _parse_copies_max(raw),
         "resolutions": _parse_resolutions(raw),

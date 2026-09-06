@@ -5,6 +5,8 @@ import {
   ApiError,
   listSelfServicePrinters,
   submitSelfServicePrint,
+  type PrintFinishing,
+  type PrintSides,
   type SelfServicePrinter,
 } from "@/lib/api";
 import { useCurrentUser } from "@/lib/useCurrentUser";
@@ -32,6 +34,8 @@ export default function SelfServicePrintPage() {
   const [printerId, setPrinterId] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [copies, setCopies] = useState("1");
+  const [sides, setSides] = useState<PrintSides>("");
+  const [finishings, setFinishings] = useState<PrintFinishing[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -50,6 +54,20 @@ export default function SelfServicePrintPage() {
       );
   }, []);
 
+  const selected =
+    state.phase === "ok" ? state.printers.find((p) => p.id === printerId) : undefined;
+
+  // Options are per-printer, so switching printers has to clear them. Without
+  // this, picking a machine with a stapler, ticking Staple, then switching to
+  // one without would send a staple the server drops — the person would have
+  // asked for something and been told it printed.
+  const [optionsFor, setOptionsFor] = useState(printerId);
+  if (printerId !== optionsFor) {
+    setOptionsFor(printerId);
+    setSides("");
+    setFinishings([]);
+  }
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!file || !printerId) return;
@@ -57,7 +75,10 @@ export default function SelfServicePrintPage() {
     setError(null);
     setSuccessMessage(null);
     try {
-      const result = await submitSelfServicePrint(printerId, file, Number(copies) || 1);
+      const result = await submitSelfServicePrint(printerId, file, Number(copies) || 1, {
+        sides,
+        finishings,
+      });
       setSuccessMessage(`Sent "${result.filename}" to ${result.printer_name}.`);
       setFile(null);
       const input = document.getElementById("self-service-file-input") as HTMLInputElement | null;
@@ -124,6 +145,57 @@ export default function SelfServicePrintPage() {
                 onChange={(e) => setCopies(e.target.value)}
               />
             </Field>
+
+            {/* Only what the selected printer reported. A stapler checkbox on a
+                machine with no stapler produces a job that quietly comes out
+                unstapled, which is worse than no checkbox — the same shape of
+                problem as a colour option on a monochrome printer. */}
+            {(selected?.sides.length ?? 0) > 0 && (
+              <Field label="Sides" className="max-w-[20rem]">
+                <select
+                  className="w-full rounded-lg border border-black/[.15] bg-white px-3 py-2 text-sm dark:border-white/[.2] dark:bg-black dark:text-zinc-50"
+                  value={sides}
+                  onChange={(e) => setSides(e.target.value as PrintSides)}
+                >
+                  {/* The default says what it does. Labelling it "One-sided"
+                      while sending nothing meant a queue set to duplex printed
+                      duplex under a form that read One-sided. */}
+                  <option value="">Printer default</option>
+                  <option value="one-sided">One-sided</option>
+                  {selected?.sides.includes("two-sided-long-edge") && (
+                    <option value="two-sided-long-edge">Double-sided</option>
+                  )}
+                  {selected?.sides.includes("two-sided-short-edge") && (
+                    <option value="two-sided-short-edge">
+                      Double-sided, flipped on the short edge
+                    </option>
+                  )}
+                </select>
+              </Field>
+            )}
+
+            {(selected?.finishings.length ?? 0) > 0 && (
+              <Field label="Finishing">
+                <div className="flex flex-wrap gap-4">
+                  {selected?.finishings.map((finishing) => (
+                    <label key={finishing} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={finishings.includes(finishing as PrintFinishing)}
+                        onChange={(e) =>
+                          setFinishings((current) =>
+                            e.target.checked
+                              ? [...current, finishing as PrintFinishing]
+                              : current.filter((f) => f !== finishing),
+                          )
+                        }
+                      />
+                      {finishing === "staple" ? "Staple" : "Hole punch"}
+                    </label>
+                  ))}
+                </div>
+              </Field>
+            )}
 
             {successMessage && <SuccessState>{successMessage}</SuccessState>}
             {error && <ErrorState>{error}</ErrorState>}

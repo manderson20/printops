@@ -244,7 +244,7 @@ def test_submit_success(client, auth_headers, viewer_headers, monkeypatch):
     monkeypatch.setattr(
         self_service_print_router,
         "submit_uploaded_print_job",
-        lambda pid, raw_bytes, filename, email, copies: "request id is printops-xyz-1",
+        lambda pid, raw_bytes, filename, email, copies, options: "request id is printops-xyz-1",
     )
     response = client.post(
         "/api/v1/self-service-print",
@@ -264,7 +264,7 @@ def test_submit_translates_lp_error(client, auth_headers, viewer_headers, monkey
 
     printer_id = _create_printer(client, auth_headers)
 
-    def fake_submit(pid, raw_bytes, filename, email, copies):
+    def fake_submit(pid, raw_bytes, filename, email, copies, options):
         raise SelfServicePrintError("No CUPS queue exists for this printer yet")
 
     monkeypatch.setattr(self_service_print_router, "submit_uploaded_print_job", fake_submit)
@@ -276,3 +276,72 @@ def test_submit_translates_lp_error(client, auth_headers, viewer_headers, monkey
     )
     assert response.status_code == 502
     assert "No CUPS queue" in response.json()["detail"]
+
+
+# --- print-time finishing options -------------------------------------------
+
+
+def _capture_submit(monkeypatch):
+    """Records the lp options a submission would have used."""
+    captured: dict = {}
+
+    def fake_submit(pid, raw_bytes, filename, email, copies, options):
+        captured["options"] = options
+        return "request id is printops-xyz-1"
+
+    monkeypatch.setattr(self_service_print_router, "submit_uploaded_print_job", fake_submit)
+    return captured
+
+
+def test_a_printer_offers_only_the_finishings_it_reports(client, auth_headers, viewer_headers):
+    """An option that does nothing is worse than no option, because the person
+    believes they used it — the same class of problem as a colour default on a
+    monochrome printer (#94)."""
+    printer_id = _create_printer(client, auth_headers)
+    client.patch(
+        f"/api/v1/printers/{printer_id}",
+        json={},
+        headers=auth_headers,
+    )
+
+    listed = client.get("/api/v1/self-service-print/printers", headers=viewer_headers).json()
+    mine = next(p for p in listed if p["id"] == printer_id)
+
+    # Never probed in this test, so nothing is claimed.
+    assert mine["finishings"] == []
+    assert mine["sides"] == []
+
+
+def test_an_unsupported_finishing_is_dropped_rather_than_sent(
+    client, auth_headers, viewer_headers, monkeypatch
+):
+    """The picker only offers what a machine supports, but this endpoint is
+    reachable directly. A staple sent to a printer with no stapler is at best
+    ignored and at worst rejects the job — either way the person is told their
+    document printed."""
+    printer_id = _create_printer(client, auth_headers)
+    captured = _capture_submit(monkeypatch)
+
+    response = client.post(
+        "/api/v1/self-service-print",
+        headers=viewer_headers,
+        data={"printer_id": printer_id, "copies": "1", "finishings": ["staple", "punch"]},
+        files={"file": ("doc.pdf", io.BytesIO(PDF_BYTES), "application/pdf")},
+    )
+
+    assert response.status_code == 201, response.text
+    assert captured["options"] == []
+
+
+def test_an_unknown_sides_value_is_refused(client, auth_headers, viewer_headers, monkeypatch):
+    printer_id = _create_printer(client, auth_headers)
+    _capture_submit(monkeypatch)
+
+    response = client.post(
+        "/api/v1/self-service-print",
+        headers=viewer_headers,
+        data={"printer_id": printer_id, "copies": "1", "sides": "two-sided-diagonal"},
+        files={"file": ("doc.pdf", io.BytesIO(PDF_BYTES), "application/pdf")},
+    )
+
+    assert response.status_code == 400
