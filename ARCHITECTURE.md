@@ -75,11 +75,77 @@ HTTPS everywhere, CSRF protection on browser-facing state changes, MFA support, 
 
 ## 10. Open Questions / Deferred Decisions
 
-- IPP proxy transport and deployment shape (in-process with the API vs. standalone service; how it shares state with `apps/api`).
+### Still open
+
 - Tenant data strategy: shared-schema row-level scoping vs. schema-per-tenant vs. database-per-tenant.
 - Timing and shape of GraphQL support.
-- Event bus / message queue choice for the domain event stream that notifications, audit logging, and future AI modules will consume (candidate: Redis Streams, given Redis is already in the stack).
-- CUPS's role long-term: primarily a legacy-protocol bridge (JetDirect/LPD/SMB) and local rendering fallback, vs. a larger role in the IPP proxy itself.
 - The current login page stores its JWT in `localStorage` (not an httpOnly cookie) — a deliberate minimal-scope choice, not a final design. Should be revisited (session cookie + CSRF protection, or a proper refresh-token flow) once the real Auth/RBAC module is built, per the Security Posture requirements in §9.
 
 These are intentionally undecided — future sessions should treat them as open, not assume an answer from the absence of code.
+
+### Decided 2026-09-06
+
+Three questions were blocking work rather than waiting on information, so they
+are answered here. Each records what the evidence actually was, because in two
+cases the premise the question was written on had stopped being true.
+
+**Domain event stream: a Postgres outbox table, not a broker.**
+
+The question named Redis Streams as the leading candidate "given Redis is
+already in the stack". It is not. `printops-redis-1` runs, and
+`PRINTOPS_REDIS_URL` is set, but no Python code touches it: `redis` is not a
+dependency of `apps/api`, the database holds zero keys, and the only genuine
+mention of it anywhere in the app is a comment in `app/core/rate_limit.py`
+explaining that the rate limiter deliberately has *no* Redis in its path. The
+container is running infrastructure nobody has ever depended on, so there is no
+sunk investment to build on and adding one would be new operational surface
+rather than reuse.
+
+Meanwhile the property that actually matters for the two consumers waiting on
+this — audit logging and notifications — is that an event and the state change
+it describes are written together or not at all. An audit log that can record a
+change that did not happen, or miss one that did, is not an audit log. Only a
+transactional write gives that, which means an outbox table in Postgres even if
+a broker sits downstream of it. Postgres is already migrated, backed up and
+monitored here; `LISTEN`/`NOTIFY` covers waking a consumer without polling.
+
+At this district's scale — 54 printers, a few thousand jobs a week — a broker
+solves a throughput problem nobody has. Revisit if a consumer ever needs
+low-latency fan-out to a separate process; the outbox is the correct first hop
+either way, so that change would be additive rather than a rewrite.
+
+Follow-up: the unused Redis container and `redis_url` setting should either be
+removed or given a purpose, rather than sitting as a dependency the
+architecture claims to have.
+
+**CUPS: a spool and a legacy-protocol bridge. Not a growing role.**
+
+The direction is PrintOps decides, CUPS executes, and two changes on
+2026-09-06 moved that way for concrete reasons rather than taste. A queue's
+color default now comes from PrintOps' own device probe instead of from the PPD
+CUPS generated, because a printer too old for driverless IPP gets a generic PPD
+that claims color unconditionally and CUPS believed it (#94). Queue discovery
+now comes from PrintOps' own Avahi service files instead of cupsd's DNS-SD
+publishing, because what cupsd offers is all-or-nothing and the per-printer
+setting could not be expressed through it (#110).
+
+That is the pattern: wherever CUPS holds a *policy*, it holds a version of it
+PrintOps cannot express, and the fix each time is to move the decision out. So
+keep CUPS for what only it does — spooling with retry, the classic protocols
+(JetDirect/LPD/SMB), driver negotiation for clients that are not driverless —
+and treat any new behaviour that lives in a PPD or a cupsd directive as a thing
+to be owned by PrintOps instead.
+
+**IPP proxy: stays as the CUPS backend plus the API. No new service.**
+
+The proxy boundary already exists and is already out-of-process:
+`infra/cups/backends/printops` runs as its own process per job, under CUPS, and
+talks to the API over HTTP with a backend token. Splitting it into a
+long-running standalone service would add deployment surface without changing
+that boundary.
+
+There is precedent either way on this box — `printops-ldap-relay` and
+`printops-syslog-relay` are standalone units — and the distinction is worth
+naming: both of those exist because something external needs to *connect to
+them* on a port. The print path has no such requirement; CUPS invokes it. Build
+a service when something needs to listen, not before.
