@@ -191,14 +191,33 @@ function Slender({ scale: s }: { scale: number }) {
  *  The first version laid clones out in a flex-wrap grid: same tree, same
  *  size, same spacing, thin brown trunks in tidy rows. It read as a bar
  *  chart, which is what it was. */
-function Forest({ count, remainder }: { count: number; remainder: number }) {
+function Forest({
+  count,
+  remainder,
+  represents,
+  perTree,
+}: {
+  /** How many trees are drawn. */
+  count: number;
+  remainder: number;
+  /** How many the picture is *about* — the same as `count` until grouping
+   *  starts, and the number a screen reader has to hear. Announcing the
+   *  drawn count would have said "61 trees" a moment before the text
+   *  beneath said 121. */
+  represents: number;
+  perTree: number;
+}) {
   const trees = place(count, remainder);
+  const label =
+    perTree > 1
+      ? `${represents} trees, drawn as ${count} groups of ${perTree}`
+      : `${count} trees${remainder > 0.02 ? " and part of another" : ""}`;
   return (
     <svg
       viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
       className="h-auto w-full"
       role="img"
-      aria-label={`${count} trees${remainder > 0.02 ? " and part of another" : ""}`}
+      aria-label={label}
     >
       <ellipse cx={CANVAS_W / 2} cy={GROUND_Y + 66} rx={CANVAS_W * 0.8} ry={104} fill="#d8efde" />
       <ellipse cx={CANVAS_W * 0.3} cy={GROUND_Y + 98} rx={CANVAS_W * 0.45} ry={84} fill="#cde8d4" />
@@ -430,7 +449,12 @@ export function TreesPanel({
         {collective ? (
           <>
             <div className="overflow-hidden rounded-xl bg-emerald-50/60 dark:bg-emerald-950/20">
-              <Forest count={drawn} remainder={remainder} />
+              <Forest
+                count={drawn}
+                remainder={remainder}
+                represents={whole}
+                perTree={perDrawnTree}
+              />
             </div>
             <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">
               {whole === 0
@@ -443,7 +467,11 @@ export function TreesPanel({
         ) : (
           <>
             <div className="flex flex-wrap items-end gap-6 rounded-xl bg-sky-50/60 p-4 dark:bg-sky-950/20">
-              <div className="min-w-[16rem] flex-1">
+              {/* min-w-0, not a fixed minimum: inside the dialog on a
+                  320px screen this column has about 208px to live in, and
+                  a 16rem floor pushed it past the edge. The drawing is an
+                  SVG with its own viewBox, so it scales down cleanly. */}
+              <div className="min-w-0 flex-1 basis-64">
                 {/* Filled to the whole amount below one pack, full above —
                     the number beside it carries the count. Drawing the
                     remainder of the *last* pack would show 40% next to a
