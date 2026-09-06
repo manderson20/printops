@@ -243,87 +243,142 @@ function Forest({
   );
 }
 
-/** What one person's printing looks like: a pack of paper, some loose
- *  sheets, and one tree for the relationship between them.
+/** One tree's worth of paper, drawn as the packs it would fill.
  *
- *  This is the personal page's picture, and the reason the two pages
- *  differ. The average person here is at 0.046 trees — four and a half
- *  percent of one — so any drawing in proportion to a tree is a sliver,
- *  and a tree filled to 5% reads as "you have done nothing" rather than
- *  as a fact. The paper is drawn at human scale instead, and the tree
- *  carries the comparison in a sentence.
+ *  This is the picture below one whole tree, and it is the third attempt
+ *  at that. The two before it are worth recording because each failed in
+ *  a way that pointed at this one.
  *
- *  Two earlier attempts are worth recording, because each was wrong in a
- *  way the next fixed. A flat stack of horizontal lines was a progress
- *  bar. A tall column of loose sheets read as paper but had a ream the
- *  wrong shape — a 500-sheet pack is wide and shallow, not a tower. */
-function PaperStack({ reams }: { reams: number }) {
-  const packFill = Math.max(0, Math.min(1, reams));
-  const x = 24;
-  const base = 176;
-  const w = 250;
-  const h = 105;
-  const depth = 40;
-  const top = base - h;
-  const fillTop = base - h * packFill;
-  const lines = Math.max(1, Math.round(30 * packFill));
+ *  Drawing a tree and filling it to the fraction used was the obvious
+ *  idea and the worst one. The average person here is at 0.046 trees, so
+ *  the fill is a sliver of trunk and the other 95% is a grey ghost — the
+ *  eye lands on the part you *haven't* used, and a tree drawn mostly in
+ *  grey reads as a dying tree rather than as a measurement.
+ *
+ *  A single pack with a fill level was better but was still a gauge
+ *  wearing a pack's clothes: the pack was a container being filled, when
+ *  a ream is a thing you count.
+ *
+ *  So count them. One tree is about seventeen packs of the paper in the
+ *  supply closet, and that is a whole fact on its own — most people have
+ *  never been told it. The pile is drawn at that height, yours coloured
+ *  in from the bottom, and the tree stands beside it at the same height
+ *  as the other half of the equation. Nothing is ghosted that a reader
+ *  should not be looking at: the pale packs are paper nobody has used,
+ *  which is exactly what they are.
+ *
+ *  Every pack is drawn while the count is reasonable. Past that each one
+ *  stands for several, the same bargain Forest makes above 120 trees, and
+ *  the caption says so — a picture that quietly draws 30 of 200 packs is
+ *  a picture that lies about the number printed beside it. */
+const MAX_DRAWN_PACKS = 30;
+const PILE_HEIGHT = 200;
+const PILE_GROUND = 270;
 
-  return (
-    <svg viewBox="0 0 560 210" className="h-auto w-full" role="img" aria-label="a pack of paper">
-      {/* the pack, in three-quarter view */}
-      <polygon
-        points={`${x},${top} ${x + w},${top} ${x + w + depth},${top - depth * 0.5} ${x + depth},${top - depth * 0.5}`}
-        fill="#e2e8f2"
-      />
-      <polygon
-        points={`${x + w},${top} ${x + w + depth},${top - depth * 0.5} ${x + w + depth},${base - depth * 0.5} ${x + w},${base}`}
-        fill="#d0d8e8"
-      />
-      <rect x={x} y={top} width={w} height={h} fill="#f0f3f9" />
-      <rect x={x} y={fillTop} width={w} height={base - fillTop} fill="#4a7bd8" />
-      {Array.from({ length: lines }).map((_, i) => {
-        const lineY = base - ((i + 0.5) * (h * packFill)) / lines;
-        return (
-          <line key={i} x1={x + 3} x2={x + w - 3} y1={lineY} y2={lineY} stroke="#7098e6" strokeWidth="1" />
-        );
-      })}
-      {packFill < 0.99 && (
-        <line
-          x1={x}
-          x2={x + w}
-          y1={fillTop}
-          y2={fillTop}
-          stroke="#8c9bba"
-          strokeWidth="2"
-          strokeDasharray="5 6"
-        />
-      )}
-      <rect x={x} y={top} width={w} height={h} fill="none" stroke="#94a2be" strokeWidth="2" />
-
-      {/* loose sheets beside it — a block on its own reads as a carton */}
-      {[0, 1, 2, 3].map((i) => {
-        const dx = 300 + i * 16 + jitter(i, 9, -3, 3);
-        const dy = base - i * 7;
-        return (
-          <polygon
-            key={i}
-            points={`${dx},${dy} ${dx + 74},${dy - 12} ${dx + 70},${dy - 58} ${dx - 4},${dy - 46}`}
-            fill="#ffffff"
-            stroke="#a4b1c8"
-            strokeWidth="1.5"
-          />
-        );
-      })}
-    </svg>
-  );
+/** How much of a pack each drawn shape stands for, bottom of the pile up.
+ *
+ *  Below the grouping threshold every shape is exactly one pack, because
+ *  that is what a reader counting them will assume. The first version
+ *  rounded the slot count instead — 16.67 packs became 17 slots of 0.98
+ *  packs each, so one real pack filled a slot and 2% of the next while
+ *  the caption beside it read 1.00. A shape presented as a pack has to
+ *  hold a pack.
+ *
+ *  A tree is not a whole number of packs, so the top of an ungrouped pile
+ *  is a short pack holding the remainder. Drawing it full height would
+ *  make the pile 17 packs tall when a tree is 16.67 of them — small, but
+ *  it is the one number on this screen a reader could check against the
+ *  arithmetic printed underneath it. */
+function packCapacities(packsPerTree: number): number[] {
+  if (packsPerTree > MAX_DRAWN_PACKS) {
+    const each = packsPerTree / MAX_DRAWN_PACKS;
+    return Array.from({ length: MAX_DRAWN_PACKS }, () => each);
+  }
+  const whole = Math.floor(packsPerTree);
+  const rest = packsPerTree - whole;
+  const caps = Array.from({ length: whole }, () => 1);
+  // 0.02 rather than 0, so a tree that lands a hair over a whole number
+  // of packs does not get a hairline shape on top of the pile.
+  if (rest > 0.02) caps.push(rest);
+  // A mis-set sheets_per_tree could put a whole tree inside one pack; a
+  // pile of nothing is not a drawing.
+  return caps.length > 0 ? caps : [packsPerTree];
 }
 
-/** One tree at readable size, for the sentence beside it to point at. */
-function LoneTree() {
+function PaperPile({ reams, packsPerTree }: { reams: number; packsPerTree: number }) {
+  const caps = packCapacities(packsPerTree);
+  // Pixels per pack, so the pile measures one tree however it is split.
+  const unit = PILE_HEIGHT / Math.max(packsPerTree, 0.0001);
+  const pw = 96;
+  const depth = 13;
+  const x = 60;
+  const y0 = PILE_GROUND - 7;
+
+  const packs = caps.map((cap, i) => {
+    // Summed rather than accumulated across the map: react-hooks
+    // /immutability rejects a running total mutated during render, and it
+    // is right to — at 30 shapes the cost of doing it purely is nothing.
+    const below = caps.slice(0, i).reduce((a, b) => a + b, 0);
+    const h = Math.max(3, cap * unit - 1.6);
+    const bottom = y0 - below * unit;
+    const used = Math.max(0, Math.min(1, (reams - below) / cap));
+    return { i, h, top: bottom - h, bottom, used, cap };
+  });
+
   return (
-    <svg viewBox="0 0 120 150" className="h-auto w-full" role="img" aria-label="one tree">
-      <g transform="translate(60 142)">
-        <Broadleaf scale={1.1} />
+    <svg
+      viewBox="0 0 560 300"
+      className="h-auto w-full"
+      role="img"
+      aria-label={`${reams.toFixed(2)} packs of paper out of the ${packsPerTree.toFixed(
+        1,
+      )} that make one tree`}
+    >
+      <rect x="0" y={PILE_GROUND} width="560" height={300 - PILE_GROUND} fill="#e3f1e8" />
+
+      {packs.map(({ i, top, bottom, h, used }) => {
+        const full = used >= 0.999;
+        return (
+          <g key={i}>
+            <polygon
+              points={`${x},${top} ${x + pw},${top} ${x + pw + depth},${top - depth * 0.55} ${x + depth},${top - depth * 0.55}`}
+              fill={full ? "#7aa2ea" : "#f0f4fa"}
+            />
+            <polygon
+              points={`${x + pw},${top} ${x + pw + depth},${top - depth * 0.55} ${x + pw + depth},${bottom - depth * 0.55} ${x + pw},${bottom}`}
+              fill={full ? "#3864bc" : "#d4dceb"}
+            />
+            <rect x={x} y={top} width={pw} height={h} fill={full ? "#4a7bd8" : "#e6ecf5"} />
+            {used > 0 && !full && (
+              <rect x={x} y={top} width={pw * used} height={h} fill="#4a7bd8" />
+            )}
+            <rect
+              x={x}
+              y={top}
+              width={pw}
+              height={h}
+              fill="none"
+              stroke="#92a0be"
+              strokeWidth="1.2"
+            />
+          </g>
+        );
+      })}
+
+      <text
+        x="250"
+        y={PILE_GROUND - PILE_HEIGHT / 2 + 12}
+        fontSize="34"
+        fontWeight="600"
+        fill="#8aa294"
+      >
+        =
+      </text>
+
+      {/* Same tree as the forest, at the pile's height — the equation is
+          the point, so the two sides have to measure the same. */}
+      <g transform={`translate(400 ${PILE_GROUND})`}>
+        <Broadleaf scale={1.55} />
       </g>
     </svg>
   );
@@ -413,6 +468,12 @@ export function TreesPanel({
   // almost everybody.
   const peoplePerTree = trees > 0 ? Math.round(1 / trees) : 0;
 
+  // Below the threshold every drawn pack is one pack, so there is nothing
+  // to explain. Above it they are grouped and the caption has to say so,
+  // or the pile quietly under-draws the tree it is measuring.
+  const packsPerTree = perTree / 500;
+  const packsGrouped = packsPerTree > MAX_DRAWN_PACKS;
+
   return (
     <div
       // Above Leaflet, whose controls reach z-index 1000. The map is also
@@ -433,7 +494,13 @@ export function TreesPanel({
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-semibold tracking-tight">
-              {collective ? "Our paper, as trees" : "Your paper, as reams"}
+              {trees >= 1
+                ? collective
+                  ? "Our paper, as trees"
+                  : "Your paper, as trees"
+                : collective
+                  ? "Our paper, as packs"
+                  : "Your paper, as packs"}
             </h2>
             <p className="mt-1 text-sm text-zinc-500">
               {formatNumber(sheets)} sheets ÷ {formatNumber(Math.round(perTree))} sheets a
@@ -450,7 +517,7 @@ export function TreesPanel({
           </button>
         </div>
 
-        {collective ? (
+        {trees >= 1 ? (
           <>
             <div className="overflow-hidden rounded-xl bg-emerald-50/60 dark:bg-emerald-950/20">
               <Forest
@@ -470,42 +537,25 @@ export function TreesPanel({
           </>
         ) : (
           <>
-            <div className="flex flex-wrap items-end gap-6 rounded-xl bg-sky-50/60 p-4 dark:bg-sky-950/20">
-              {/* min-w-0, not a fixed minimum: inside the dialog on a
-                  320px screen this column has about 208px to live in, and
-                  a 16rem floor pushed it past the edge. The drawing is an
-                  SVG with its own viewBox, so it scales down cleanly. */}
-              <div className="min-w-0 flex-1 basis-64">
-                {/* Filled to the whole amount below one pack, full above —
-                    the number beside it carries the count. Drawing the
-                    remainder of the *last* pack would show 40% next to a
-                    figure reading 6.40, which invites the wrong reading. */}
-                <PaperStack reams={Math.min(sheets / 500, 1)} />
-                <p className="mt-1 text-3xl font-semibold tabular-nums tracking-tight">
-                  {(sheets / 500).toFixed(2)}
-                </p>
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  packs of paper — 500 sheets each, the ones in the supply closet.
-                </p>
-              </div>
-              {trees < 1 && (
-                <div className="flex w-40 shrink-0 flex-col items-center">
-                  <div className="w-24">
-                    <LoneTree />
-                  </div>
-                  <p className="mt-1 text-center text-xs text-zinc-600 dark:text-zinc-400">
-                    about {formatNumber(peoplePerTree)} people printing like you
-                    <br />
-                    makes one of these
-                  </p>
-                </div>
-              )}
+            <div className="overflow-hidden rounded-xl bg-sky-50/60 dark:bg-sky-950/20">
+              <PaperPile reams={sheets / 500} packsPerTree={packsPerTree} />
             </div>
             <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">
-              {trees >= 1
-                ? `That is ${trees.toFixed(2)} trees' worth of wood.`
-                : `That is ${(trees * 100).toFixed(1)}% of one tree.`}
+              <strong className="tabular-nums">{(sheets / 500).toFixed(2)}</strong> packs
+              of paper — 500 sheets each, the ones in the supply closet. It takes about{" "}
+              {formatNumber(Math.round(packsPerTree))} of them to make one tree&rsquo;s
+              worth of wood, so this is {(trees * 100).toFixed(1)}% of a tree.
+              {packsGrouped &&
+                ` Each pack drawn here stands for ${(
+                  packsPerTree / MAX_DRAWN_PACKS
+                ).toFixed(1)}.`}
             </p>
+            {!collective && peoplePerTree > 1 && (
+              <p className="mt-1 text-sm text-zinc-500">
+                About {formatNumber(peoplePerTree)} people printing like you would use
+                the whole tree.
+              </p>
+            )}
           </>
         )}
 
