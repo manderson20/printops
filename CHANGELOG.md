@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.76.1] - 2026-09-06
+
+- **The audit log now covers the fifteen actions it shipped without.** Print
+  quotas, print-release exemptions, the OU restrictions that decide who can use
+  a printer at all, the cartridge prices behind every chargeback figure,
+  release-token rotation, walk-up copy tracking, adopting a redirected device,
+  and purging a printer's queued jobs. Every one of them changes something an
+  admin decided, and none of them left a trace before.
+- Deleting a quota, an exemption or a restriction now records what it was for,
+  read before the row goes rather than after it is gone.
+
 ## [0.76.0] - 2026-09-06
 
 - **Audit log.** A new admin-only page records every configuration change,
