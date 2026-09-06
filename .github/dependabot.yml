@@ -9,6 +9,40 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      # ESLint 10 removed the legacy rule-context API (context.getFilename()
+      # and friends). Three plugins that eslint-config-next depends on still
+      # call it and still cap their peer range at ESLint 9:
+      #
+      #   eslint-plugin-react     7.37.5  ^3 ... ^9.7   <- fails first, loudly
+      #   eslint-plugin-jsx-a11y  6.10.2  ^3 ... ^9
+      #   eslint-plugin-import    2.32.0  ^2 ... ^9
+      #
+      # eslint-plugin-react has had no release of any kind since 2025-04-03,
+      # so there is nothing to upgrade to; the `next` dist-tag points at a
+      # 7.8.0-rc from 2018, which is older than latest, not newer.
+      #
+      # Not the eslintrc compat layer, which #125 originally blamed —
+      # eslint-config-next 16.3.x carries no @eslint/eslintrc reference at all,
+      # and our config has been flat since it was written.
+      #
+      # Reproposing this weekly costs a red CI run on a PR nobody can merge, so
+      # it is ignored rather than repeatedly closed. ESLint is dev-only: it
+      # does not ship, does not run in production and does not touch the print
+      # path, and 9.x is still on its own maintenance line.
+      #
+      # REMOVE THIS once *every* plugin above accepts ESLint 10 — or
+      # eslint-config-next stops depending on the ones that don't. Not just
+      # eslint-plugin-react: it is only listed first because it is the one that
+      # throws first, and clearing it would simply move the failure to
+      # jsx-a11y. The check is the whole list, not the loudest entry:
+      #
+      #   pnpm why eslint-plugin-react eslint-plugin-jsx-a11y eslint-plugin-import
+      #   npm view <each> peerDependencies.eslint
+      #
+      # Tracked in #125, which should be closed in the same change.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "pip"
     directory: "/"

@@ -5,6 +5,15 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.75.4] - 2026-09-06
+
+- Stopped Dependabot reproposing ESLint 10 every week. It cannot be taken yet:
+  ESLint 10 removed the legacy rule-context API and three plugins that
+  `eslint-config-next` depends on still call it, the loudest being
+  `eslint-plugin-react`, which has had no release of any kind since April 2025.
+  Dev-only tooling, so nothing ships or is at risk either way — the config
+  records the exact condition for lifting the block. (#125)
+
 ## [0.75.3] - 2026-09-06
 
 - Fixed the API path in `scripts/regenerate_avahi_services.sh`, which shipped
