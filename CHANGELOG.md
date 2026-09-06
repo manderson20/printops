@@ -7,25 +7,28 @@ schedules an update.
 
 ## [0.75.1] - 2026-09-06
 
-- **Mono printers stop offering colour, and one colour copier starts printing
-  in colour again.** A queue's colour default now comes from what PrintOps
+- **Mono printers stop offering color, and one color copier starts printing
+  in color again.** A queue's color default now comes from what PrintOps
   probed from the printer itself, instead of from the queue CUPS had just
   built. Printers too old to answer the driverless request land on a generic
-  driver that claims colour because it has to claim everything, and the sync
-  script believed it — so three monochrome printers offered a colour option
+  driver that claims color because it has to claim everything, and the sync
+  script believed it — so three monochrome printers offered a color option
   that only ever produced grey paper. The same check ran one way only, so a
-  colour copier whose queue had drifted to monochrome could never be corrected
+  color copier whose queue had drifted to monochrome could never be corrected
   and had been printing grey for Word and Adobe jobs regardless of what the
   user picked. Both directions are now set explicitly on every sync.
   A printer PrintOps has never successfully probed is left alone rather than
-  guessed at. (#94)
+  guessed at. The release queue that delivers held jobs gets the same
+  treatment, and a printer whose color capability changes — a swapped device,
+  or a first successful probe — now resyncs its queue instead of keeping the
+  old answer. (#94)
 
 ## [0.75.0] - 2026-09-06
 
 - **Below one tree, the picture is now the pile of paper that makes one.**
   A tree's worth of wood is about 17 packs of the paper in the supply closet
   — a fact most people have never been told — so the panel draws those 17
-  packs standing next to one tree, with yours coloured in from the bottom.
+  packs standing next to one tree, with yours colored in from the bottom.
   It replaces a single pack with a fill level, which was a gauge wearing a
   pack's clothes, and it fills up as you print until the tree beside it is
   earned.
@@ -208,7 +211,7 @@ schedules an update.
   header above it disagreed about which jobs to count; a copy imported months
   after it happened was counted in the month it was imported; and the
   department breakdown silently dropped everything it could not name.
-- "Colour" is now "color" throughout, matching the database, the API and CUPS.
+- "Color" is now "color" throughout, matching the database, the API and CUPS.
 
 ### Under the hood
 

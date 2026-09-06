@@ -18,6 +18,10 @@ set -euo pipefail
 # first time this was fixed.
 . "$(dirname "${BASH_SOURCE[0]}")/lib/everywhere_probe.sh"
 
+# apply_color_default(): the #94 fix. Shared with sync_release_queue.sh for the
+# same reason everywhere_probe.sh is.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/color_default.sh"
+
 PRINTER_ID="${1:?Usage: sync_cups_queue.sh <printer-id>}"
 API_BASE="${PRINTOPS_API_BASE:-http://localhost:8000}"
 ENV_FILE="${PRINTOPS_ENV_FILE:-/home/itadmin/printops/apps/api/.env}"
@@ -111,92 +115,10 @@ fi
 sudo cupsenable "$QUEUE_NAME"
 sudo cupsaccept "$QUEUE_NAME"
 
-# Which way this queue's color default should point.
-#
-# Both directions of this go wrong, and both are silent. Apps that name a
-# color mode explicitly (Chrome) are unaffected either way, but apps that
-# submit without one (Word, Adobe, confirmed live) inherit the queue
-# default — so a color printer defaulting to monochrome prints grey no
-# matter what the user picked in the print dialog, and a mono printer
-# defaulting to color offers a choice that does nothing but waste the
-# user's time and make the job look like a color job.
-#
-# This used to ask `ipp://localhost/printers/$QUEUE_NAME` — the queue this
-# script had just built — which is the bug in #94. A printer too old to
-# answer the driverless attribute request lands on the generic
-# cupsfilters PPD above, and that PPD hardcodes `*ColorDevice: True`
-# because it has to claim everything. Asking the queue therefore read back
-# the fallback's own guess, believed it, and set color as the default on
-# genuinely monochrome hardware. The device was never consulted.
-#
-# So consult the device — or rather, consult what PrintOps already learned
-# from the device. app/printers/discovery.py probes each printer directly
-# and stores capabilities.color_supported, and its targeted request
-# succeeds on printers where `-m everywhere` fails (confirmed live: both
-# printers in #94 are probed, both report false). The API hands it over in
-# the connection payload this script already fetches.
-#
-# Three states, and the third is the important one. A printer PrintOps has
-# never successfully probed reports no capabilities at all, and must not be
-# guessed at in either direction: assuming mono there would downgrade a
-# color printer to grey, which is the same error #94 describes with the
-# sign flipped. Unknown keeps the old queue-interrogating behaviour, which
-# is at worst what shipped before this change.
-COLOR_SUPPORTED=$(python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-caps = d.get('capabilities')
-if caps is None or caps.get('color_supported') is None:
-    print('unknown')
-else:
-    print('true' if caps['color_supported'] else 'false')
-" <<<"$PRINTER_JSON")
-
-# A virtual Follow-Me queue has no device to have probed, so it reports
-# unknown — but its answer is not in doubt. Real delivery happens later at
-# whichever physical printer the job is released to, and this queue must not
-# be the thing that quietly strips color on the way through.
-if [ "$IS_VIRTUAL" = true ]; then
-    COLOR_SUPPORTED=true
-fi
-
-if [ "$COLOR_SUPPORTED" = "unknown" ]; then
-    QUEUE_CLAIMS_COLOR=$(ipptool -X "ipp://localhost/printers/$QUEUE_NAME" /dev/stdin <<IPPTOOL_EOF 2>/dev/null | grep -A1 "<key>color-supported</key>" | grep -c "<true" || true
-{
-    OPERATION Get-Printer-Attributes
-    GROUP operation-attributes-tag
-    ATTR charset attributes-charset utf-8
-    ATTR language attributes-natural-language en
-    ATTR uri printer-uri ipp://localhost/printers/$QUEUE_NAME
-    ATTR keyword requested-attributes color-supported
-}
-IPPTOOL_EOF
-)
-    if [ "$QUEUE_CLAIMS_COLOR" -ge 1 ]; then
-        COLOR_SUPPORTED=true
-    else
-        COLOR_SUPPORTED=false
-    fi
-    echo "NOTE: $PRINTER_NAME has no probed color capability — falling back to what the queue claims (color=$COLOR_SUPPORTED). Run a capability detection against this printer to settle it." >&2
-fi
-
-# print-color-mode-default covers the modern IPP attribute. The driverless
-# PPD carries its OWN, separate default — *DefaultColorModel, exposed as the
-# "ColorModel" option — which CUPS's classic PPD-based print path reads
-# instead, and `-m everywhere` rewrites it on every sync regardless of the
-# device's real capability (confirmed live). Both have to be set, every run,
-# or a queue fixed once silently reverts the next time the printer
-# reconnects and re-triggers this script. RGB and Gray are consistently the
-# PPD's choice labels across the current fleet — tolerated on failure in
-# case a future device's PPD names them differently, since
-# print-color-mode-default still covers the apps that read it.
-if [ "$COLOR_SUPPORTED" = true ]; then
-    sudo lpadmin -p "$QUEUE_NAME" -o print-color-mode-default=color
-    sudo lpadmin -p "$QUEUE_NAME" -o ColorModel=RGB || true
-else
-    sudo lpadmin -p "$QUEUE_NAME" -o print-color-mode-default=monochrome
-    sudo lpadmin -p "$QUEUE_NAME" -o ColorModel=Gray || true
-fi
+# Color default, from the device rather than from the queue we just built.
+# See lib/color_default.sh — shared with sync_release_queue.sh, because a
+# color rule applied to one script and not the other is half a fix.
+apply_color_default "$QUEUE_NAME" "$PRINTER_JSON" "$IS_VIRTUAL" "$PRINTER_NAME"
 
 # Roll-media auto-cut (Printer.roll_autocut) — for roll-fed printers with a
 # cutter (e.g. the Canon TM-300 plotter). Same "-m everywhere resets it every

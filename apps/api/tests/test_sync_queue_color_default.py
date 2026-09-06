@@ -188,21 +188,68 @@ def test_virtual_queue_always_keeps_color(tmp_path):
     assert _color_model(log) == "RGB"
 
 
-def test_color_default_is_not_decided_by_asking_the_queue_first(tmp_path):
-    """A mechanical guard on the shape of the fix, not just its result.
+def test_both_sync_scripts_share_one_color_decision():
+    """The mistake this repo has already made once, mechanically guarded.
 
-    The regression is easy to reintroduce by adding a convenience query for the
-    local queue above the capability check, so this asserts the localhost query
-    appears only inside the unknown-capability branch."""
-    body = SCRIPT.read_text()
-    lines = [ln for ln in body.splitlines() if not ln.lstrip().startswith("#")]
-    localhost_queries = [ln for ln in lines if "ipp://localhost/printers/" in ln]
-    assert localhost_queries, "the unknown-capability fallback should still query the queue"
+    lib/everywhere_probe.sh exists because the first version of that fix
+    guarded only sync_cups_queue.sh — queue_sync.py runs both scripts, so the
+    leak survived and the connection storm came back two minutes after the
+    deploy. The color decision has the same shape: released jobs go through
+    the release queue with `lp -d` and inherit its default the same way, so a
+    rule applied to one script and not the other is half a fix.
 
-    capability_read = next(
-        i for i, ln in enumerate(lines) if "color_supported" in ln
-    )
+    Codex caught exactly that on the first version of this change.
+    """
+    for name in ("sync_cups_queue.sh", "sync_release_queue.sh"):
+        body = (REPO / "scripts" / name).read_text()
+        lines = [ln for ln in body.splitlines() if not ln.lstrip().startswith("#")]
+        assert any("lib/color_default.sh" in ln for ln in lines), (
+            f"{name} does not source the shared color decision"
+        )
+        assert any("apply_color_default" in ln for ln in lines), (
+            f"{name} does not call the shared color decision"
+        )
+        own_query = [ln for ln in lines if "ipp://localhost/printers/" in ln]
+        assert not own_query, (
+            f"{name} still asks a queue about color on its own: {own_query}"
+        )
+
+
+def test_the_shared_decision_consults_the_device_before_the_queue():
+    """A guard on the shape of the fix, not just its result. The regression is
+    easy to reintroduce by adding a convenience query for the local queue above
+    the capability check, so the localhost query must stay inside the
+    unknown-capability fallback."""
+    lines = [
+        ln
+        for ln in (REPO / "scripts" / "lib" / "color_default.sh").read_text().splitlines()
+        if not ln.lstrip().startswith("#")
+    ]
+    capability_read = next(i for i, ln in enumerate(lines) if "color_supported" in ln)
     first_query = next(i for i, ln in enumerate(lines) if "ipp://localhost/printers/" in ln)
     assert capability_read < first_query, (
         "the device's probed capability must be consulted before the queue is"
+    )
+
+
+def test_a_changed_color_capability_triggers_a_queue_resync():
+    """Since #94 the queue's color default comes from the stored capability
+    rather than from the PPD cupsd generates, so a capability that changes
+    without a resync leaves the queue pointed the old way indefinitely — swap
+    the device at an address, or probe a printer successfully for the first
+    time, and nothing repairs it.
+
+    The rediscovery loop previously resynced on media changes alone.
+    """
+    from app.main import queue_affecting_capability_change as changed
+
+    assert changed({"color_supported": False}, {"color_supported": True})
+    assert changed({"color_supported": True}, {"color_supported": False})
+    # First successful probe of a printer that had none.
+    assert changed({}, {"color_supported": False})
+    # Media still counts, and unrelated churn still doesn't.
+    assert changed({"default_media_size": "na_letter"}, {"default_media_size": "iso_a4"})
+    assert not changed(
+        {"color_supported": True, "firmware_version": "1.0"},
+        {"color_supported": True, "firmware_version": "2.0"},
     )
