@@ -5,6 +5,20 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.75.0] - 2026-09-06
+
+- **Below one tree, the picture is now the pile of paper that makes one.**
+  A tree's worth of wood is about 17 packs of the paper in the supply closet
+  — a fact most people have never been told — so the panel draws those 17
+  packs standing next to one tree, with yours coloured in from the bottom.
+  It replaces a single pack with a fill level, which was a gauge wearing a
+  pack's clothes, and it fills up as you print until the tree beside it is
+  earned.
+- **The picture is chosen by the number, not by the page.** A district early
+  in a period is under one tree too, and was getting an empty forest; it now
+  gets the packs. Anyone past a whole tree gets the forest, personal page
+  included.
+
 ## [0.74.1] - 2026-09-06
 
 - **The trees panel opened underneath the map.** On Our Printing the road-trip
