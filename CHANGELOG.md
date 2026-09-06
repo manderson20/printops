@@ -5,6 +5,14 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.75.3] - 2026-09-06
+
+- Fixed the API path in `scripts/regenerate_avahi_services.sh`, which shipped
+  in 0.75.2 pointing at a route that does not exist and so published nothing.
+  A shell script naming a REST path was invisible to every check in the repo;
+  the paths it calls are now matched against the routes the app actually
+  serves.
+
 ## [0.75.2] - 2026-09-06
 
 - **The queue discovery toggle now controls queue discovery.** It never did.

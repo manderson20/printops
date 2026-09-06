@@ -39,7 +39,7 @@ TOKEN=$(grep '^PRINTOPS_BACKEND_TOKEN=' "$ENV_FILE" | cut -d= -f2)
 # Archived printers are deliberately absent from this endpoint — their queues
 # and service files were removed when they were archived, and republishing one
 # would advertise a printer nobody expects to exist.
-PRINTER_IDS=$(curl -sf -H "X-Backend-Token: $TOKEN" "$API_BASE/api/v1/internal/printers" \
+PRINTER_IDS=$(curl -sf -H "X-Backend-Token: $TOKEN" "$API_BASE/api/v1/internal/printers/ids" \
     | python3 -c "import json,sys; print('\n'.join(p['id'] for p in json.load(sys.stdin)))")
 
 if [ -z "$PRINTER_IDS" ]; then
