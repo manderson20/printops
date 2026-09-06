@@ -45,23 +45,50 @@ LB_PER_100_SHEETS = 1.0
 SHEETS_PER_REAM = 500
 REAMS_PER_CASE = 10
 
-# EPA-style rough estimate. ReportFormulaSettings.sheets_per_tree carries
-# 8333.0 as its own default for the existing cost report; this is the
-# same estimate rounded, and the two are allowed to differ because that
-# one is admin-editable and this one is not. See open question in the
-# proposal — if the district wants a single number, this should read from
-# ReportFormulaSettings instead.
-SHEETS_PER_TREE = 8300.0
+# One ton of virgin uncoated office paper takes 24 trees, at 40 ft tall
+# and 6-8 inches in diameter, through the kraft process. A ton is about
+# 400 reams — 200,000 sheets — so 200,000 / 24 = 8,333 sheets a tree.
+#
+# Derivable rather than remembered, which matters: this is the number the
+# tree illustration is built on, and a figure a reader can check is worth
+# more than one they have to believe. It also now matches
+# ReportFormulaSettings.sheets_per_tree, which had 8333.0 while this
+# carried 8300.0 — two constants for one quantity, differing by a
+# rounding nobody had chosen.
+#
+# Conservatree, who publish the 24-trees figure, warn that the older "17
+# trees per ton" number everybody quotes was calculated for *newsprint*
+# in the 1970s and then applied to office paper for decades. Tree size
+# swamps everything else regardless: Harvard's BioNumbers puts one large
+# pine at 119,100 sheets, fourteen times this.
+SHEETS_PER_TREE = 8333.0
+SHEETS_PER_TREE_SOURCE = "https://conservatree.org/learn/EnviroIssues/TreeStats.shtml"
 
-# ~10 litres of water per sheet, production end to end. Widely cited
-# environmental estimate, not a measured local figure.
+# Litres of *water footprint* per sheet — green plus blue, which counts
+# the rain that fell on the trees, not water from a tap. The Water
+# Footprint Network puts printing and writing paper at 300-2600 m3/ton,
+# which they give as 2-13 litres for an A4 sheet; 10 is the upper-middle
+# of that range.
+#
+# The distinction has to survive into the wording. Process water is
+# nearer 0.1-0.4 litres a sheet, so a reader comparing "10 litres" to
+# their kitchen tap is being misled by a factor of thirty — see
+# app/reports/fun_facts.py, which says "counting the rain that grew the
+# trees" for exactly this reason.
 LITRES_PER_SHEET = 10.0
+LITRES_PER_SHEET_SOURCE = "https://waterfootprint.org/resources/Report46-WaterFootprintPaper.pdf"
 
-# ~5 g CO2e per printed page (paper production plus printing). Compare
-# ReportFormulaSettings.co2_grams_per_sheet (4.6), which prices *sheets*
-# for the cost report; this prices *pages*, which is what the fun facts
-# talk about.
-CO2_G_PER_PAGE = 5.0
+# Grams of CO2e per *sheet*, from the Environmental Paper Network's Paper
+# Calculator: 5,601 lb CO2e per ton of virgin copy paper, over 200,000
+# sheets, is 12.7 g a sheet.
+#
+# Per sheet, not per page, and that is a correction rather than a
+# refinement. This used to be 5 g per *page*, so a duplexed sheet was
+# charged twice for carbon that one piece of paper emitted once — and
+# double-siding, which the same page recommends, made no difference to
+# the CO2 fact at all. The emission is in the paper.
+CO2_G_PER_SHEET = 12.7
+CO2_G_PER_SHEET_SOURCE = "https://environmentalpaper.org/wp-content/uploads/2017/08/Paperwork.pdf"
 
 # ~400 g CO2 per mile for an average passenger vehicle — the divisor that
 # turns a CO2 mass into the "miles driven" comparison people can picture.

@@ -3170,6 +3170,10 @@ export type Equivalency = {
   unit: string;
   /** Set only for distance, stack height and weight. */
   milestone: MilestoneProgress | null;
+  /** Where the figure behind this fact was published, for the facts that
+   *  rest on an estimate rather than on arithmetic. Null for the ones that
+   *  need no citation — a ream is 500 sheets by definition. */
+  source_url: string | null;
 };
 
 export type PersonalExplained = {

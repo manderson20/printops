@@ -407,6 +407,34 @@ async def test_the_route_is_drawn_once_a_home_and_a_destination_exist(
     assert route["miles_travelled"] >= 0
 
 
+async def test_a_fact_resting_on_a_published_figure_carries_its_source(
+    client, printer_id, db_session_factory, viewer_headers
+):
+    """ "8,333 sheets per tree" is exactly the sort of claim somebody's
+    parent will ask about, so the page has to be able to link where it
+    came from rather than asking to be believed."""
+    await _seed_a_crowd(db_session_factory, printer_id)
+
+    body = client.get(f"{EXPLAINED}/district", headers=viewer_headers).json()
+    by_key = {e["key"]: e for e in body["equivalencies"]}
+
+    assert by_key["water"]["source_url"].startswith("https://")
+    assert by_key["co2"]["source_url"].startswith("https://")
+    assert by_key["miles_driven"]["source_url"] == by_key["co2"]["source_url"]
+
+
+async def test_arithmetic_needs_no_citation(client, printer_id, db_session_factory, viewer_headers):
+    """A ream is 500 sheets by definition. Citing a source for division
+    would teach a reader that the links mean nothing."""
+    await _seed_a_crowd(db_session_factory, printer_id)
+
+    body = client.get(f"{EXPLAINED}/district", headers=viewer_headers).json()
+    by_key = {e["key"]: e for e in body["equivalencies"]}
+
+    assert by_key["reams"]["source_url"] is None
+    assert by_key["distance"]["source_url"] is None
+
+
 async def test_the_route_carries_configuration_and_no_usage(
     client, printer_id, db_session_factory, viewer_headers
 ):

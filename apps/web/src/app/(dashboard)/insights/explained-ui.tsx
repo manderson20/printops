@@ -1,7 +1,8 @@
 "use client";
 
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { Equivalency, ExplainedPeriod, MilestoneProgress } from "@/lib/api";
+import { TreesPanel } from "./TreesPanel";
 
 // Display-only conversions. The server sends each equivalency in one base
 // unit (feet, pounds, litres) and lets the client decide how to say it,
@@ -74,7 +75,15 @@ export function describeEquivalency(
         caption: passed ? `Heavier than ${passed}.` : null,
       };
     case "trees":
-      return { label: "Trees", value: `🌳 ${scaled(value)}`, caption: "At 8,300 sheets per tree." };
+      // The divisor is not written here any more. It was "8,300" while
+      // the cost report used 8,333 — two copies of one number, and the
+      // caption was the copy nobody was checking. The panel derives it
+      // from the figures the API actually sent.
+      return {
+        label: "Trees",
+        value: `🌳 ${scaled(value)}`,
+        caption: "Worth of wood. Tap to see it.",
+      };
     case "reams":
       return { label: "Reams", value: scaled(value), caption: "500 sheets each." };
     case "cases":
@@ -240,26 +249,71 @@ export function MilestoneBar({
 
 export function EquivalencyCards({
   equivalencies,
+  sheets,
+  collective,
   skip = [],
 }: {
   equivalencies: Equivalency[];
+  /** Needed by the trees panel so it can show its arithmetic rather than
+   *  assert a result. Omit and the trees tile stays a plain tile. */
+  sheets?: number;
+  collective?: boolean;
   skip?: string[];
 }) {
+  const [openTrees, setOpenTrees] = useState(false);
+
   const cards = equivalencies
     .filter((e) => !skip.includes(e.key))
-    .map((e) => ({ key: e.key, display: describeEquivalency(e) }))
-    .filter((c): c is { key: string; display: EquivalencyDisplay } => c.display !== null);
+    .map((e) => ({ key: e.key, equivalency: e, display: describeEquivalency(e) }))
+    .filter(
+      (c): c is { key: string; equivalency: Equivalency; display: EquivalencyDisplay } =>
+        c.display !== null,
+    );
+
+  const trees = cards.find((c) => c.key === "trees")?.equivalency;
+  const treesAreOpenable = trees !== undefined && sheets !== undefined;
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      {cards.map((card) => (
-        <StatCard
-          key={card.key}
-          label={card.display.label}
-          value={card.display.value}
-          caption={card.display.caption}
+    <>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {cards.map((card) =>
+          card.key === "trees" && treesAreOpenable ? (
+            // A button rather than a click handler on the card: this opens
+            // a dialog, so it has to be reachable and announced without a
+            // mouse.
+            <button
+              key={card.key}
+              type="button"
+              onClick={() => setOpenTrees(true)}
+              className="rounded-xl text-left transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+              aria-haspopup="dialog"
+            >
+              <StatCard
+                label={card.display.label}
+                value={card.display.value}
+                caption={card.display.caption}
+              />
+            </button>
+          ) : (
+            <StatCard
+              key={card.key}
+              label={card.display.label}
+              value={card.display.value}
+              caption={card.display.caption}
+            />
+          ),
+        )}
+      </div>
+
+      {openTrees && trees !== undefined && sheets !== undefined && (
+        <TreesPanel
+          trees={trees.value}
+          sheets={sheets}
+          collective={collective ?? false}
+          sourceUrl={trees.source_url}
+          onClose={() => setOpenTrees(false)}
         />
-      ))}
-    </div>
+      )}
+    </>
   );
 }

@@ -52,7 +52,12 @@ from app.reports.equivalency import (
     sheets_from_totals,
     sheets_if_all_duplex,
 )
-from app.reports.equivalency_config import MIN_CONTRIBUTORS_FOR_DISTRICT_FACTS
+from app.reports.equivalency_config import (
+    CO2_G_PER_SHEET_SOURCE,
+    LITRES_PER_SHEET_SOURCE,
+    MIN_CONTRIBUTORS_FOR_DISTRICT_FACTS,
+    SHEETS_PER_TREE_SOURCE,
+)
 from app.reports.formulas import (
     FormulaValues,
     JobCost,
@@ -1004,6 +1009,17 @@ def _milestone_out(milestone) -> MilestoneProgressOut | None:
     )
 
 
+# Which published figure each fact rests on. Kept beside the mapping it
+# feeds rather than on the constants, so adding a fact that needs no
+# citation costs nothing and forgetting one is visible here.
+EQUIVALENCY_SOURCES = {
+    "trees": SHEETS_PER_TREE_SOURCE,
+    "water": LITRES_PER_SHEET_SOURCE,
+    "co2": CO2_G_PER_SHEET_SOURCE,
+    "miles_driven": CO2_G_PER_SHEET_SOURCE,
+}
+
+
 def _equivalencies_out(equivalencies) -> list[EquivalencyOut]:
     return [
         EquivalencyOut(
@@ -1011,6 +1027,7 @@ def _equivalencies_out(equivalencies) -> list[EquivalencyOut]:
             value=round(e.value, 2),
             unit=e.unit,
             milestone=_milestone_out(e.milestone),
+            source_url=EQUIVALENCY_SOURCES.get(e.key),
         )
         for e in equivalencies
     ]
