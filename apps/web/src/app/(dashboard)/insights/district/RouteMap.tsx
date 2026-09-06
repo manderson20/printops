@@ -321,7 +321,13 @@ export function RouteMap({ route }: { route: DistrictRoute }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="relative">
+      {/* `isolate` creates a stacking context around the map.
+          Leaflet's own panes run from z-index 200 to 1000, and without a
+          context of their own they compete with everything else on the
+          page — the trees panel opened *underneath* the map because its
+          overlay sat at z-50. Contained here, the whole map stacks as one
+          element wherever it happens to sit in the flow. */}
+      <div className="relative isolate">
         <div
           ref={container}
           // The height is fixed rather than an aspect ratio because this sits
