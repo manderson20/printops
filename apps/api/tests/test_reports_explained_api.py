@@ -353,6 +353,10 @@ async def test_district_response_has_no_field_that_could_carry_a_person(
         "has_enough_activity",
         "equivalencies",
         "facts",
+        # A constant, the same for every viewer and every period. Sent so
+        # the page can show its arithmetic instead of dividing two rounded
+        # numbers and inventing a divisor.
+        "sheets_per_tree",
         # Configuration an admin typed in Settings — the same home and the
         # same destinations for every viewer and every period — plus a
         # mileage that is `total_pages` in different units. See

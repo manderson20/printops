@@ -388,6 +388,16 @@ class PersonalExplainedOut(BaseModel):
     range_start: date
     range_end: date
 
+    # The divisor behind the trees figure, sent rather than left to be
+    # recovered from `sheets / trees`.
+    #
+    # Two reasons. Equivalency values are rounded to two decimals on the
+    # way out, so at personal scale that division is badly wrong — 700
+    # sheets arrives as 0.08 trees and implies 8,750 sheets a tree. And
+    # the trees equivalency is dropped entirely below 0.05, which is most
+    # people, so there is often nothing to divide by at all.
+    sheets_per_tree: float
+
     print_pages: int
     copy_pages: int
     total_pages: int
@@ -536,6 +546,16 @@ class DistrictFunFactsOut(BaseModel):
     equivalencies: list[EquivalencyOut]
     facts: list[str]
     route: RouteOut | None = None
+
+    # The divisor behind the trees figure, sent rather than left to be
+    # recovered from `sheets / trees`.
+    #
+    # Two reasons. Equivalency values are rounded to two decimals on the
+    # way out, so at personal scale that division is badly wrong — 700
+    # sheets arrives as 0.08 trees and implies 8,750 sheets a tree. And
+    # the trees equivalency is dropped entirely below 0.05, which is most
+    # people, so there is often nothing to divide by at all.
+    sheets_per_tree: float
 
 
 class DistrictSegmentOut(BaseModel):

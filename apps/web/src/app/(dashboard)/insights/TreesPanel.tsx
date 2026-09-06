@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 /** Local rather than imported from explained-ui, which imports *this*
  *  module — a cycle that bundles happily and then resolves to undefined
@@ -8,17 +8,6 @@ import { useEffect } from "react";
  *  cheaper than that class of bug. */
 function formatNumber(value: number): string {
   return Math.round(value).toLocaleString();
-}
-
-/** How many sheets one tree yields, derived rather than hardcoded.
- *
- *  The server sends both the sheet count and the tree figure, so the
- *  divisor is `sheets / trees` — which means this panel cannot drift from
- *  the constant the API actually used. The previous caption said "8,300
- *  sheets per tree" while the cost report said 8,333, and neither was
- *  wrong on its own; they were two copies of one number. */
-function sheetsPerTree(sheets: number, trees: number): number {
-  return trees > 0 ? sheets / trees : 0;
 }
 
 /** One stylised tree. Deliberately not a photograph or an emoji: at the
@@ -79,10 +68,16 @@ function Ream({ fraction }: { fraction: number }) {
 }
 
 export type TreesPanelProps = {
-  /** Trees' worth of wood — the equivalency's own value. */
-  trees: number;
   /** Sheets behind it, so the arithmetic can be shown rather than asserted. */
   sheets: number;
+  /** The divisor, straight from the API.
+   *
+   *  Deriving it as `sheets / trees` was the first attempt and it was
+   *  wrong twice over: equivalency values are rounded to two decimals, so
+   *  700 sheets arrives as 0.08 trees and implies 8,750 sheets a tree —
+   *  and below 0.05 the trees fact is dropped entirely, which is most
+   *  people, leaving nothing to divide by. */
+  sheetsPerTree: number;
   /** The district's view draws a stand; a person's draws reams. */
   collective: boolean;
   sourceUrl: string | null;
@@ -90,21 +85,55 @@ export type TreesPanelProps = {
 };
 
 export function TreesPanel({
-  trees,
   sheets,
+  sheetsPerTree,
   collective,
   sourceUrl,
   onClose,
 }: TreesPanelProps) {
+  const dialog = useRef<HTMLDivElement | null>(null);
+  const closeButton = useRef<HTMLButtonElement | null>(null);
+
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      // `role="dialog"` and `aria-modal` describe a modal; they do not
+      // make one. Without this, Tab walks out of the panel and through
+      // the card grid behind the overlay — the content is covered, still
+      // focusable, and unreachable by eye.
+      if (event.key !== "Tab" || !dialog.current) return;
+      const focusable = dialog.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const perTree = sheetsPerTree(sheets, trees);
+  useEffect(() => {
+    // Opened from a card, so focus is on the trigger behind the overlay.
+    // Moved in on open and handed back on close, which is what lets
+    // somebody working by keyboard carry on where they left off.
+    const trigger = document.activeElement as HTMLElement | null;
+    closeButton.current?.focus();
+    return () => trigger?.focus?.();
+  }, []);
+
+  const perTree = sheetsPerTree;
+  const trees = perTree > 0 ? sheets / perTree : 0;
   const whole = Math.floor(trees);
   const remainder = trees - whole;
   // Past this many the picture stops being countable and starts being
@@ -126,6 +155,7 @@ export function TreesPanel({
       onClick={onClose}
     >
       <div
+        ref={dialog}
         className="max-h-full w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-zinc-950"
         onClick={(event) => event.stopPropagation()}
       >
@@ -140,6 +170,7 @@ export function TreesPanel({
             </p>
           </div>
           <button
+            ref={closeButton}
             type="button"
             onClick={onClose}
             className="shrink-0 rounded-full border border-black/[.12] px-3 py-1.5 text-sm font-medium transition-colors hover:bg-black/[.04] dark:border-white/[.2] dark:hover:bg-white/[.06]"

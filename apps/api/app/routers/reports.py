@@ -56,6 +56,7 @@ from app.reports.equivalency_config import (
     CO2_G_PER_SHEET_SOURCE,
     LITRES_PER_SHEET_SOURCE,
     MIN_CONTRIBUTORS_FOR_DISTRICT_FACTS,
+    SHEETS_PER_TREE,
     SHEETS_PER_TREE_SOURCE,
 )
 from app.reports.formulas import (
@@ -1186,6 +1187,7 @@ async def report_explained_me(
         facts.append(opportunity)
 
     return PersonalExplainedOut(
+        sheets_per_tree=SHEETS_PER_TREE,
         period=period,
         range_start=start_date,
         range_end=end_date,
@@ -1290,6 +1292,7 @@ async def report_district_fun_facts(
     contributors = await count_contributors(db, filters)
     if contributors < MIN_CONTRIBUTORS_FOR_DISTRICT_FACTS:
         return DistrictFunFactsOut(
+            sheets_per_tree=SHEETS_PER_TREE,
             period=period,
             range_start=start_date,
             range_end=end_date,
@@ -1317,6 +1320,7 @@ async def report_district_fun_facts(
     # map — build_route is given zero rather than a guess.
     route = build_route(home, destinations, distance.value if distance else 0.0)
     return DistrictFunFactsOut(
+        sheets_per_tree=SHEETS_PER_TREE,
         period=period,
         range_start=start_date,
         range_end=end_date,

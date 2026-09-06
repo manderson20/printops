@@ -172,6 +172,7 @@ export default function DistrictFunFactsPage() {
             <EquivalencyCards
               equivalencies={data.equivalencies}
               sheets={data.sheets}
+              sheetsPerTree={data.sheets_per_tree}
               collective
             />
           </section>
