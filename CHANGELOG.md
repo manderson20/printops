@@ -5,6 +5,16 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.75.5] - 2026-09-06
+
+- Corrected the #110 deploy note. It said to disable `BrowseLocalProtocols
+  dnssd` in `cupsd.conf`; commenting the line out does nothing, because CUPS
+  defaults to `dnssd` when the directive is absent. It has to be set to `none`.
+  Found by following the instruction on this box and finding all 108 cupsd
+  advertisements still there after the restart. The README now gives the browse
+  commands to verify it, since the failure mode is a setting that looks
+  disabled and isn't.
+
 ## [0.75.4] - 2026-09-06
 
 - Stopped Dependabot reproposing ESLint 10 every week. It cannot be taken yet:
