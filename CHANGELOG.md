@@ -5,6 +5,21 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.73.2] - 2026-09-06
+
+- **The "we are here" marker was stopping short.** On the road-trip map it sat
+  at the last place reached rather than out on the road being driven — this
+  district's pin was parked on Marceline while the blue line ran 45% of the way
+  to Macon. The distance and the line were right all along; only the pin was
+  wrong.
+- The cause was a guard against dividing by zero that answered instead of
+  skipping. Routing services return one shape per step of a journey, and
+  consecutive steps share their boundary point, so every leg carries a handful
+  of repeated coordinates — eight on the Marceline leg alone. The walk along
+  the road stopped at the first of them. Repeated points are now dropped when
+  a route is fetched, and stepped over by anything reading one.
+- Existing trips are corrected on the next page load; nothing needs re-fetching.
+
 ## [0.73.1] - 2026-09-06
 
 - **The trees look like a forest now.** They were a grid of identical

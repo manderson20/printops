@@ -216,7 +216,16 @@ async def fetch_itinerary(
         coordinates: list[list[float]] = []
         for step in leg.get("steps") or []:
             for point in (step.get("geometry") or {}).get("coordinates") or []:
-                coordinates.append([point[1], point[0]])
+                latitude, longitude = point[1], point[0]
+                # Consecutive steps share their boundary coordinate, so
+                # stitching them produces a duplicate at every join. They
+                # are zero-length segments: they carry no shape, they cost
+                # payload, and anything walking the line has to know to
+                # step over them. Dropped here, once, rather than guarded
+                # against at each place that reads a geometry.
+                if coordinates and coordinates[-1] == [latitude, longitude]:
+                    continue
+                coordinates.append([latitude, longitude])
         if not coordinates:
             raise RoutingError("The routing service returned a leg with no shape.")
         built.append(

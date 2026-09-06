@@ -272,8 +272,19 @@ def _along(geometry: list[list[float]], fraction: float) -> tuple[float, float]:
     for (start, end), length in zip(
         zip(geometry, geometry[1:], strict=False), lengths, strict=False
     ):
-        if remaining <= length or length == 0:
-            share = (remaining / length) if length else 0.0
+        # A zero-length segment is skipped, not answered.
+        #
+        # This used to read `if remaining <= length or length == 0`, meant
+        # as a guard against dividing by zero, and it returned the segment's
+        # own start point instead — so the marker stopped at the first pair
+        # of identical points in the leg. OSRM's per-step geometries share
+        # their boundary coordinates, so every leg had several, and on this
+        # district's trip the "we are here" pin sat at Marceline while the
+        # travelled line ran 45% of the way to Macon.
+        if length <= 0:
+            continue
+        if remaining <= length:
+            share = remaining / length
             return (
                 start[0] + (end[0] - start[0]) * share,
                 start[1] + (end[1] - start[1]) * share,

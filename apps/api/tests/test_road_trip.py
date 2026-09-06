@@ -308,3 +308,48 @@ def test_a_rung_with_no_coordinates_is_not_a_waypoint():
         20.0 * FEET_PER_MILE,
     )
     assert [stop.label for stop in route.stops] == ["Marceline"]
+
+
+def test_the_marker_steps_over_repeated_points():
+    """The bug that parked the pin at Marceline.
+
+    OSRM returns one geometry per step and consecutive steps share their
+    boundary coordinate, so a stitched leg carries a duplicate at every
+    join — eight of them on this district's Marceline-to-Macon leg. The
+    walk used to treat a zero-length segment as the answer and return its
+    own start point, so the marker stopped dead at the first duplicate
+    while the travelled line ran on to 45%.
+    """
+    leg = [
+        [39.7115, -92.9478],
+        [39.7118, -92.9484],
+        [39.7118, -92.9484],
+        [39.8, -92.8],
+        [39.9, -92.6],
+    ]
+    route = build_route(
+        _home(),
+        [
+            _destination("Marceline", 12.1, MARCELINE, position=1, leg_miles=12.1),
+            _destination("Macon", 42.4, (39.9, -92.6), position=2, leg_miles=30.3, geometry=leg),
+        ],
+        25.8 * FEET_PER_MILE,
+    )
+    latitude, longitude = route.position.latitude, route.position.longitude
+    # Not stuck on the duplicated pair near the start of the leg.
+    assert (latitude, longitude) != (39.7118, -92.9484)
+    # And genuinely part-way along it, not at either end.
+    assert leg[0][0] < latitude < leg[-1][0]
+
+
+def test_a_leg_of_nothing_but_repeated_points_does_not_hang():
+    """Degenerate but reachable — a routing service can return a leg whose
+    every coordinate is the same. It should answer that point, not loop
+    or divide by zero."""
+    leg = [[39.5, -92.5]] * 5
+    route = build_route(
+        _home(),
+        [_destination("Nowhere", 10.0, (39.5, -92.5), position=1, leg_miles=10.0, geometry=leg)],
+        5.0 * FEET_PER_MILE,
+    )
+    assert (route.position.latitude, route.position.longitude) == (39.5, -92.5)
