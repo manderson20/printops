@@ -415,7 +415,11 @@ export function TreesPanel({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      // Above Leaflet, whose controls reach z-index 1000. The map is also
+      // isolated at its own end (RouteMap), so either fix alone would do
+      // — but a modal that can be covered by a map is the kind of thing
+      // that comes back, and only one of the two travels with the dialog.
+      className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/50 p-4"
       role="dialog"
       aria-modal="true"
       aria-label="What that is in trees"

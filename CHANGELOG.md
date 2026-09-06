@@ -5,6 +5,15 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.74.1] - 2026-09-06
+
+- **The trees panel opened underneath the map.** On Our Printing the road-trip
+  map covered the popup, so tapping the Trees tile appeared to do nothing.
+  Leaflet stacks its own layers high — up to the level browsers reserve for
+  things meant to sit on top of a page — and the panel was sitting below them.
+  The map is now contained so it can only ever stack as one element in the
+  page, and the panel sits above it.
+
 ## [0.74.0] - 2026-09-06
 
 - **The forest keeps working as it grows.** Trees now shrink as more of them
