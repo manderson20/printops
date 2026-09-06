@@ -16,6 +16,20 @@ class Settings(BaseSettings):
     dev_username: str = "admin"
     dev_password: str = "changeme"
 
+    # Whether /docs, /redoc and /openapi.json are served at all.
+    #
+    # Off by default because this host answers from the public internet
+    # and those three describe every endpoint, every schema and every
+    # parameter the API has, to anyone who finds the hostname. That is a
+    # map for somebody deciding what to try, and it was reachable without
+    # signing in.
+    #
+    # Not gated behind admin auth instead: the interactive docs are a
+    # browser page and the API authenticates with a bearer token, so a
+    # signed-in admin's browser has no way to present one. A setting that
+    # turns them on for a development box is the honest shape.
+    expose_api_docs: bool = False
+
     database_url: str
 
     # LAN address clients (and MDM profiles, e.g. Mosyle) print to directly —

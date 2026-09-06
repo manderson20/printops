@@ -33,7 +33,9 @@ async def db_session_factory():
 
 @pytest.fixture(autouse=True)
 def reset_rate_limiter():
-    release_router._rate_limiter = release_router._RateLimiter()
+    # Shared with the admin sign-in since 0.72.0 — resetting beats
+    # rebuilding, so the two callers keep pointing at one object.
+    release_router._rate_limiter.reset()
     yield
 
 

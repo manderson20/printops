@@ -2,13 +2,14 @@ import secrets
 from datetime import UTC, datetime
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.crypto import decrypt
+from app.core.rate_limit import RateLimiter, client_key
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db import get_db
 from app.deps import get_current_user
@@ -37,21 +38,42 @@ STATE_COOKIE_MAX_AGE_SECONDS = 5 * 60
 EXEMPT_TOKEN_MINUTES = 24 * 60
 
 
+# The break-glass admin password is one short secret on a host that
+# answers from the public internet, and until now it could be guessed as
+# fast as bcrypt would run. Eight wrong answers from one address buys a
+# five-minute wait — the same budget the kiosk PIN has had all along.
+#
+# Keyed on the caller, not the account. Locking the account would hand
+# any passer-by the ability to shut the only local admin out of a print
+# server, which is a worse day than the one this prevents.
+login_limiter = RateLimiter(
+    max_failures=8,
+    window_seconds=300,
+    message="Too many failed sign-in attempts — try again in a few minutes.",
+)
+
+
 @router.post("/login", response_model=TokenResponse)
 async def login(
+    request: Request,
     payload: LoginRequest,
     settings: Settings = Depends(get_settings),
     db: AsyncSession = Depends(get_db),
 ):
+    caller = client_key(request)
+    login_limiter.check(caller)
+
     dev_password_hash = hash_password(settings.dev_password)
     valid = payload.username == settings.dev_username and verify_password(
         payload.password, dev_password_hash
     )
     if not valid:
+        login_limiter.record_failure(caller)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
         )
+    login_limiter.record_success(caller)
     # The break-glass account has no User row to flag exempt_from_timeout
     # on (see app/models/user.py's docstring) — it always uses the
     # admin-configured idle timeout, never the exempt duration.

@@ -12,15 +12,11 @@ __PRINTOPS_DOMAIN__ {
 	handle /healthz {
 		reverse_proxy localhost:8000
 	}
-	handle /docs* {
-		reverse_proxy localhost:8000
-	}
-	handle /redoc* {
-		reverse_proxy localhost:8000
-	}
-	handle /openapi.json {
-		reverse_proxy localhost:8000
-	}
+	# /docs, /redoc and /openapi.json are deliberately not forwarded. The
+	# API does not serve them unless PRINTOPS_EXPOSE_API_DOCS is set, and
+	# forwarding them from a host that answers on the public internet was
+	# how the whole API surface came to be readable without signing in.
+	# A developer who wants them runs the API locally or tunnels to :8000.
 	handle {
 		reverse_proxy localhost:3000
 	}
