@@ -5,6 +5,17 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.75.7] - 2026-09-06
+
+- Three long-standing architecture questions answered in `ARCHITECTURE.md` §10
+  rather than left to block the work waiting behind them: the domain event
+  stream is a Postgres outbox table (not a broker), CUPS stays a spool and
+  legacy-protocol bridge rather than growing, and the IPP proxy stays as the
+  CUPS backend rather than becoming a service. Two were written on premises
+  that had stopped being true — notably that "Redis is already in the stack",
+  which is true of docker-compose and false of the code: nothing imports it,
+  it is not a dependency, and it holds zero keys.
+
 ## [0.75.6] - 2026-09-06
 
 - **Two printers were not being advertised at all, and now are.** A printer
