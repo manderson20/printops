@@ -5,6 +5,16 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.75.8] - 2026-09-06
+
+- **Removed an unused Redis instance that was listening to the whole network.**
+  Nothing has ever used it — it was not a dependency of the API, no code
+  imported it, and it held no data — but it was published on every interface
+  with no password, on a host with no firewall enabled. So it was reachable
+  from anywhere that can route to this server. The container, the `redis_url`
+  setting and the env var are all gone; the architecture no longer claims a
+  dependency that does not exist.
+
 ## [0.75.7] - 2026-09-06
 
 - Three long-standing architecture questions answered in `ARCHITECTURE.md` §10

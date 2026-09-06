@@ -49,9 +49,6 @@ class Settings(BaseSettings):
     # python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     encryption_key: str
 
-    # Reserved for future use — not connected to anything yet in this scaffold.
-    redis_url: str | None = None
-
     model_config = SettingsConfigDict(env_file=".env", env_prefix="PRINTOPS_")
 
 
