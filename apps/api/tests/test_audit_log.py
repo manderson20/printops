@@ -410,3 +410,91 @@ def test_every_change_entry_uses_the_from_to_shape(client, auth_headers):
             assert isinstance(change, dict) and {"from", "to"} <= set(change), (
                 f"{event['action']}.{field} is not a from/to pair: {change!r}"
             )
+
+
+def _printer(client, auth_headers, monkeypatch, name, ip):
+    from app.routers import printers as printers_router
+
+    monkeypatch.setattr(printers_router, "sync_queue", lambda *a, **k: None)
+    created = client.post(
+        "/api/v1/printers",
+        json={"name": name, "ip_address": ip, "port": 631},
+        headers=auth_headers,
+    )
+    assert created.status_code == 201, created.text
+    return created.json()["id"]
+
+
+def test_a_quota_change_is_recorded(client, auth_headers, monkeypatch):
+    """Quotas decide who can print and how much. They were in the deferred list
+    when auditing first shipped; this is the test that says they are not now."""
+    printer_id = _printer(client, auth_headers, monkeypatch, "Quota Printer", "10.0.0.10")
+
+    created = client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        # The per-printer default row rather than a named user: a user quota is
+        # validated against the synced Workspace roster, which is not the thing
+        # under test here.
+        json={"period": "monthly", "page_limit": 100},
+        headers=auth_headers,
+    )
+    assert created.status_code in (200, 201), created.text
+    quota_id = created.json()["id"]
+
+    client.patch(
+        f"/api/v1/printers/{printer_id}/quotas/{quota_id}",
+        json={"page_limit": 500},
+        headers=auth_headers,
+    )
+    client.delete(f"/api/v1/printers/{printer_id}/quotas/{quota_id}", headers=auth_headers)
+
+    actions = [
+        e["action"]
+        for e in client.get(
+            "/api/v1/audit", params={"action_prefix": "printer.quota"}, headers=auth_headers
+        ).json()["events"]
+    ]
+    assert sorted(actions) == [
+        "printer.quota.create",
+        "printer.quota.delete",
+        "printer.quota.update",
+    ]
+
+
+def test_deleting_a_quota_records_who_it_was_for(client, auth_headers, monkeypatch):
+    """The label has to be read before the delete — afterwards the instance is
+    detached and touching it raises, on the one action most worth recording."""
+    printer_id = _printer(client, auth_headers, monkeypatch, "Label Printer", "10.0.0.11")
+    quota_id = client.post(
+        f"/api/v1/printers/{printer_id}/quotas",
+        json={"period": "monthly", "page_limit": 10},
+        headers=auth_headers,
+    ).json()["id"]
+
+    client.delete(f"/api/v1/printers/{printer_id}/quotas/{quota_id}", headers=auth_headers)
+
+    events = client.get(
+        "/api/v1/audit", params={"action_prefix": "printer.quota.delete"}, headers=auth_headers
+    ).json()["events"]
+    assert events[0]["entity_label"] == "the printer default"
+
+
+def test_rotating_a_release_token_is_recorded_without_the_token(client, auth_headers, monkeypatch):
+    printer_id = _printer(client, auth_headers, monkeypatch, "Kiosk Printer", "10.0.0.12")
+
+    response = client.post(
+        f"/api/v1/printers/{printer_id}/regenerate-release-token", headers=auth_headers
+    )
+    assert response.status_code == 200, response.text
+    token = response.json().get("release_token")
+
+    body = client.get(
+        "/api/v1/audit",
+        params={"action_prefix": "printer.regenerate_release_token"},
+        headers=auth_headers,
+    )
+    assert token is None or token not in body.text
+    assert body.json()["events"][0]["changes"]["release_token"] == {
+        "from": REDACTED,
+        "to": REDACTED,
+    }

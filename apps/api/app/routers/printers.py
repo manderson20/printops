@@ -354,7 +354,10 @@ async def list_fleet_toner_cartridges(db: AsyncSession = Depends(get_db)):
     dependencies=[Depends(require_role("admin"))],
 )
 async def bulk_update_toner_cartridges(
-    payload: list[BulkCartridgeUpdateIn], db: AsyncSession = Depends(get_db)
+    payload: list[BulkCartridgeUpdateIn],
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     """Updates cost/yield_pages/model on existing PrinterTonerCartridge
     rows by id, across as many printers as the caller likes in one
@@ -381,6 +384,15 @@ async def bulk_update_toner_cartridges(
         row.cost = entry.cost
         row.yield_pages = entry.yield_pages
         row.model = entry.model
+    record_audit(
+        db,
+        current_user,
+        action="printer.bulk_update_toner_cartridges",
+        summary=f"Updated {len(payload)} cartridge prices across the fleet",
+        entity_type="toner_cartridges",
+        changes={"updated": {"from": None, "to": len(payload)}},
+        request=request,
+    )
     await db.commit()
 
     result = await db.execute(
@@ -686,12 +698,28 @@ async def resync_queue(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     response_model=PrinterOut,
     dependencies=[Depends(require_role("admin"))],
 )
-async def regenerate_release_token(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+async def regenerate_release_token(
+    printer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     """Rotates this printer's kiosk release URL (app/routers/release.py) —
     e.g. a lost/reissued kiosk iPad. The old URL stops working immediately
     since it's looked up by token on every call, not cached anywhere."""
     printer = await _get_printer_or_404(printer_id, db)
     printer.release_token = secrets.token_urlsafe(16)
+    record_audit(
+        db,
+        current_user,
+        action="printer.regenerate_release_token",
+        summary=f"Regenerated the release URL token for {printer.name}",
+        entity_type="printer",
+        entity_id=printer.id,
+        entity_label=printer.name,
+        changes={"release_token": {"from": "***", "to": "***"}},
+        request=request,
+    )
     await db.commit()
     await db.refresh(printer)
     return printer
@@ -702,7 +730,12 @@ async def regenerate_release_token(printer_id: UUID, db: AsyncSession = Depends(
     response_model=PrinterOut,
     dependencies=[Depends(require_role("admin"))],
 )
-async def confirm_redirect(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+async def confirm_redirect(
+    printer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     """Moves this printer to the address the device said it had moved to.
 
     A redirect that changes port, scheme or path is adopted automatically —
@@ -759,6 +792,16 @@ async def confirm_redirect(printer_id: UUID, db: AsyncSession = Depends(get_db))
         )
         printer.ipp_path = None
     printer.pending_redirect = None
+    record_audit(
+        db,
+        current_user,
+        action="printer.confirm_redirect",
+        summary=f"Adopted the new device answering for {printer.name}",
+        entity_type="printer",
+        entity_id=printer.id,
+        entity_label=printer.name,
+        request=request,
+    )
     await db.commit()
     await db.refresh(printer)
 
@@ -787,13 +830,28 @@ async def confirm_redirect(printer_id: UUID, db: AsyncSession = Depends(get_db))
     response_model=PrinterOut,
     dependencies=[Depends(require_role("admin"))],
 )
-async def dismiss_redirect(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+async def dismiss_redirect(
+    printer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     """Forgets a redirect an admin has decided against — a device that was
     replaced, or one answering for an address it should not be. It comes back
     if the device says it again, which is the point: this dismisses the
     suggestion, not the evidence."""
     printer = await _get_printer_or_404(printer_id, db)
     printer.pending_redirect = None
+    record_audit(
+        db,
+        current_user,
+        action="printer.dismiss_redirect",
+        summary=f"Dismissed the redirect reported for {printer.name}",
+        entity_type="printer",
+        entity_id=printer.id,
+        entity_label=printer.name,
+        request=request,
+    )
     await db.commit()
     await db.refresh(printer)
     return printer
@@ -818,7 +876,12 @@ async def get_printer_copier(printer_id: UUID, db: AsyncSession = Depends(get_db
     response_model=MfpDeviceOut,
     dependencies=[Depends(require_role("admin"))],
 )
-async def enable_printer_copier(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+async def enable_printer_copier(
+    printer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     """Turns on walk-up copy tracking for this machine.
 
     A copier is a capability of a printer, not a separate thing to be added
@@ -850,6 +913,17 @@ async def enable_printer_copier(printer_id: UUID, db: AsyncSession = Depends(get
         )
         db.add(device)
     printer.copier_enabled = True
+    record_audit(
+        db,
+        current_user,
+        action="printer.enable_copier",
+        summary=f"Turned on walk-up copy tracking for {printer.name}",
+        entity_type="printer",
+        entity_id=printer.id,
+        entity_label=printer.name,
+        changes={"copier_enabled": {"from": False, "to": True}},
+        request=request,
+    )
     await db.commit()
     await db.refresh(device)
     return mfp_device_out(device)
@@ -860,7 +934,12 @@ async def enable_printer_copier(printer_id: UUID, db: AsyncSession = Depends(get
     response_model=PrinterOut,
     dependencies=[Depends(require_role("admin"))],
 )
-async def disable_printer_copier(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+async def disable_printer_copier(
+    printer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     """Hides the copier side of this machine.
 
     Only the flag changes. The device row stays, and so does everything hanging
@@ -870,6 +949,17 @@ async def disable_printer_copier(printer_id: UUID, db: AsyncSession = Depends(ge
     must not be a way to destroy years of accounting."""
     printer = await _get_printer_or_404(printer_id, db)
     printer.copier_enabled = False
+    record_audit(
+        db,
+        current_user,
+        action="printer.disable_copier",
+        summary=f"Turned off walk-up copy tracking for {printer.name}",
+        entity_type="printer",
+        entity_id=printer.id,
+        entity_label=printer.name,
+        changes={"copier_enabled": {"from": True, "to": False}},
+        request=request,
+    )
     await db.commit()
     await db.refresh(printer)
     return printer
@@ -975,6 +1065,7 @@ async def purge_jobs(
     printer_id: UUID,
     db: AsyncSession = Depends(get_db),
     current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     """Cancels this printer's entire CUPS queue — not just the jobs PrintOps
     can see, but anything backed up behind them too, since a job only gets a
@@ -993,6 +1084,17 @@ async def purge_jobs(
         update(Job)
         .where(Job.printer_id == printer_id, Job.status == "forwarding")
         .values(status="cancelled", error_message=cancel_note, completed_at=datetime.now(UTC))
+    )
+    # Destroys job history, which is the kind of thing a trail exists for.
+    record_audit(
+        db,
+        current_user,
+        action="printer.purge_jobs",
+        summary=f"Purged the queued jobs on {printer.name}",
+        entity_type="printer",
+        entity_id=printer.id,
+        entity_label=printer.name,
+        request=request,
     )
     await db.commit()
     return {"cancelled_count": result.rowcount}
@@ -1138,7 +1240,11 @@ async def get_toner_cartridges(printer_id: UUID, db: AsyncSession = Depends(get_
     dependencies=[Depends(require_role("admin"))],
 )
 async def update_toner_cartridges(
-    printer_id: UUID, payload: list[CartridgeIn], db: AsyncSession = Depends(get_db)
+    printer_id: UUID,
+    payload: list[CartridgeIn],
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     """Replaces this printer's full cartridge set — simplest correct
     approach for a handful (<=4) of rows representing "current cost
@@ -1146,6 +1252,19 @@ async def update_toner_cartridges(
     PrinterTonerCartridge's docstring). Used by app/reports/ cost
     calculations (app/routers/reports.py's cost-breakdown endpoint)."""
     await _get_printer_or_404(printer_id, db)
+    printer = await _get_printer_or_404(printer_id, db)
+    # Read before the replace: this endpoint deletes the whole set and rebuilds
+    # it, so afterwards there is nothing left to compare against.
+    before_cartridges = [
+        f"{row.color}: {row.cost}"
+        for row in (
+            await db.execute(
+                select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer_id)
+            )
+        )
+        .scalars()
+        .all()
+    ]
     colors = [entry.color for entry in payload]
     if len(colors) != len(set(colors)):
         raise HTTPException(
@@ -1200,6 +1319,24 @@ async def update_toner_cartridges(
                 level_checked_at=level_checked_at,
             )
         )
+    # Cartridge prices feed the per-page cost model behind every chargeback
+    # figure, so a change here quietly moves numbers on other people's reports.
+    record_audit(
+        db,
+        current_user,
+        action="printer.update_toner_cartridges",
+        summary=f"Replaced the cartridge set for {printer.name}",
+        entity_type="printer",
+        entity_id=printer.id,
+        entity_label=printer.name,
+        changes={
+            "cartridges": {
+                "from": before_cartridges,
+                "to": [f"{e.color}: {e.cost}" for e in payload],
+            }
+        },
+        request=request,
+    )
     await db.commit()
 
     result = await db.execute(
@@ -1328,7 +1465,11 @@ async def list_printer_quotas(printer_id: UUID, db: AsyncSession = Depends(get_d
     dependencies=[Depends(require_role("admin"))],
 )
 async def create_printer_quota(
-    printer_id: UUID, payload: PrinterUserQuotaCreate, db: AsyncSession = Depends(get_db)
+    printer_id: UUID,
+    payload: PrinterUserQuotaCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     """A quota's user_email is a specific staff member, or None for a
     per-printer default/wildcard row (see PrinterUserQuota's docstring) —
@@ -1398,6 +1539,21 @@ async def create_printer_quota(
         page_limit=payload.page_limit,
     )
     db.add(quota)
+    await db.flush()
+    record_audit(
+        db,
+        current_user,
+        action="printer.quota.create",
+        summary=f"Added a print quota on {printer.name}",
+        entity_type="printer_quota",
+        entity_id=quota.id,
+        entity_label=printer.name,
+        changes={
+            "user_email": {"from": None, "to": quota.user_email},
+            "page_limit": {"from": None, "to": quota.page_limit},
+        },
+        request=request,
+    )
     await db.commit()
     await db.refresh(quota)
     return await _quota_out(db, quota, printer.quota_mode)
@@ -1413,11 +1569,17 @@ async def update_printer_quota(
     quota_id: UUID,
     payload: PrinterUserQuotaUpdate,
     db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     printer = await _get_printer_or_404(printer_id, db)
     quota = await db.get(PrinterUserQuota, quota_id)
     if quota is None or quota.printer_id != printer_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quota not found")
+    # printer_id is the row's own identity, not an edit, so it is excluded
+    # rather than showing up as a change on every quota update.
+    quota_fields = auditable_fields(PrinterUserQuota, frozenset({"printer_id"}))
+    before = snapshot(quota, quota_fields)
     if payload.period is not None:
         quota.period = payload.period
     if payload.page_limit is not None:
@@ -1427,6 +1589,19 @@ async def update_printer_quota(
                 detail="A page limit must be at least 1.",
             )
         quota.page_limit = payload.page_limit
+    changes = diff(before, snapshot(quota, quota_fields), quota_fields)
+    if changes:
+        record_audit(
+            db,
+            current_user,
+            action="printer.quota.update",
+            summary=f"Changed a print quota on {printer.name}",
+            entity_type="printer_quota",
+            entity_id=quota.id,
+            entity_label=quota.user_email or printer.name,
+            changes=changes,
+            request=request,
+        )
     await db.commit()
     await db.refresh(quota)
     return await _quota_out(db, quota, printer.quota_mode)
@@ -1438,12 +1613,29 @@ async def update_printer_quota(
     dependencies=[Depends(require_role("admin"))],
 )
 async def delete_printer_quota(
-    printer_id: UUID, quota_id: UUID, db: AsyncSession = Depends(get_db)
+    printer_id: UUID,
+    quota_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     quota = await db.get(PrinterUserQuota, quota_id)
     if quota is None or quota.printer_id != printer_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quota not found")
+    # Read before the delete — afterwards the instance is detached and its
+    # attributes are not safe to touch.
+    quota_label = quota.user_email or "the printer default"
     await db.delete(quota)
+    record_audit(
+        db,
+        current_user,
+        action="printer.quota.delete",
+        summary=f"Removed a print quota ({quota_label})",
+        entity_type="printer_quota",
+        entity_id=quota_id,
+        entity_label=quota_label,
+        request=request,
+    )
     await db.commit()
 
 
@@ -1465,7 +1657,11 @@ async def list_printer_release_bypasses(printer_id: UUID, db: AsyncSession = Dep
     dependencies=[Depends(require_role("admin"))],
 )
 async def create_printer_release_bypass(
-    printer_id: UUID, payload: PrinterReleaseBypassCreate, db: AsyncSession = Depends(get_db)
+    printer_id: UUID,
+    payload: PrinterReleaseBypassCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     """Lets a specific staff member skip the PIN-release hold at this one
     printer, even while release_required is on — see
@@ -1507,6 +1703,17 @@ async def create_printer_release_bypass(
 
     bypass = PrinterReleaseBypass(printer_id=printer_id, user_email=email)
     db.add(bypass)
+    await db.flush()
+    record_audit(
+        db,
+        current_user,
+        action="printer.release_bypass.create",
+        summary=f"Exempted {bypass.user_email} from print release on {printer.name}",
+        entity_type="printer_release_bypass",
+        entity_id=bypass.id,
+        entity_label=bypass.user_email,
+        request=request,
+    )
     await db.commit()
     await db.refresh(bypass)
     return bypass
@@ -1518,12 +1725,27 @@ async def create_printer_release_bypass(
     dependencies=[Depends(require_role("admin"))],
 )
 async def delete_printer_release_bypass(
-    printer_id: UUID, bypass_id: UUID, db: AsyncSession = Depends(get_db)
+    printer_id: UUID,
+    bypass_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     bypass = await db.get(PrinterReleaseBypass, bypass_id)
     if bypass is None or bypass.printer_id != printer_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bypass not found")
+    bypass_label = bypass.user_email
     await db.delete(bypass)
+    record_audit(
+        db,
+        current_user,
+        action="printer.release_bypass.delete",
+        summary=f"Removed the print-release exemption for {bypass_label}",
+        entity_type="printer_release_bypass",
+        entity_id=bypass_id,
+        entity_label=bypass_label,
+        request=request,
+    )
     await db.commit()
 
 
@@ -1545,7 +1767,11 @@ async def list_printer_allowed_ous(printer_id: UUID, db: AsyncSession = Depends(
     dependencies=[Depends(require_role("admin"))],
 )
 async def create_printer_allowed_ou(
-    printer_id: UUID, payload: PrinterAllowedOuCreate, db: AsyncSession = Depends(get_db)
+    printer_id: UUID,
+    payload: PrinterAllowedOuCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     """Restricts self-service web upload printing (app/self_service_print/)
     to this OU (and anything nested under it) — the printer's very first
@@ -1581,6 +1807,18 @@ async def create_printer_allowed_ou(
 
     allowed = PrinterAllowedOu(printer_id=printer_id, ou_path=ou_path)
     db.add(allowed)
+    await db.flush()
+    printer = await _get_printer_or_404(printer_id, db)
+    record_audit(
+        db,
+        current_user,
+        action="printer.allowed_ou.create",
+        summary=f"Restricted {printer.name} to {allowed.ou_path}",
+        entity_type="printer_allowed_ou",
+        entity_id=allowed.id,
+        entity_label=allowed.ou_path,
+        request=request,
+    )
     await db.commit()
     await db.refresh(allowed)
     return allowed
@@ -1592,10 +1830,25 @@ async def create_printer_allowed_ou(
     dependencies=[Depends(require_role("admin"))],
 )
 async def delete_printer_allowed_ou(
-    printer_id: UUID, allowed_id: UUID, db: AsyncSession = Depends(get_db)
+    printer_id: UUID,
+    allowed_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     allowed = await db.get(PrinterAllowedOu, allowed_id)
     if allowed is None or allowed.printer_id != printer_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Allowed OU not found")
+    allowed_label = allowed.ou_path
     await db.delete(allowed)
+    record_audit(
+        db,
+        current_user,
+        action="printer.allowed_ou.delete",
+        summary=f"Removed the {allowed_label} restriction",
+        entity_type="printer_allowed_ou",
+        entity_id=allowed_id,
+        entity_label=allowed_label,
+        request=request,
+    )
     await db.commit()
