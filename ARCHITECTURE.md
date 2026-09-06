@@ -10,12 +10,12 @@ This document sets direction for PrintOps as it grows from an empty scaffold int
 apps/web      Next.js frontend (admin UI, dashboards, end-user portal)
 apps/api      FastAPI backend (REST API, business logic, IPP proxy — long term)
 packages/shared  Generated OpenAPI client + shared TS types, consumed by apps/web
-infra/        docker-compose for local dev: Postgres, CUPS (also Redis, unused — §10)
+infra/        docker-compose for local dev: Postgres, CUPS
 ```
 
 `apps/web` talks to `apps/api` over HTTP/WebSockets. `apps/api` talks to Postgres (system of record) and to physical printers via IPP/IPPS, with CUPS as the spool and legacy-protocol layer (JetDirect, LPD, SMB) — see §10 for how far that role extends.
 
-This line used to name Redis as well, for "queues/caching/pub-sub". It never did any of those things: `redis` is not a dependency of `apps/api`, nothing imports it, and the running instance holds no keys. The container is still in `infra/docker-compose.yml` and `PRINTOPS_REDIS_URL` is still set, which is why the claim outlived the fact — see §10's event-stream decision.
+This line used to name Redis as well, for "queues/caching/pub-sub". It never did any of those things — `redis` was not a dependency of `apps/api`, nothing imported it, and the running instance held no keys — so 0.75.8 removed the container, the `redis_url` setting and the env var together. See §10's event-stream decision for what replaced the idea.
 
 ## 3. Core Principle: PrintOps as an IPP Proxy
 
@@ -127,9 +127,11 @@ solves a throughput problem nobody has. Revisit if a consumer ever needs
 low-latency fan-out to a separate process; the outbox is the correct first hop
 either way, so that change would be additive rather than a rewrite.
 
-Follow-up: the unused Redis container and `redis_url` setting should either be
-removed or given a purpose, rather than sitting as a dependency the
-architecture claims to have.
+Done in 0.75.8: the container, the `redis_url` setting and the env var are
+gone. It was also listening on `0.0.0.0:6379` with no password on a host with
+no firewall, so removing it closed an unauthenticated service that was reachable
+from the whole internal network — which is a second reason not to keep
+infrastructure around on the theory that something might use it later.
 
 **CUPS: a spool and a legacy-protocol bridge. Not a growing role.**
 
