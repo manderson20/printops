@@ -7,6 +7,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit.record import record_audit
 from app.core.config import Settings, get_settings
 from app.core.crypto import decrypt
 from app.core.rate_limit import RateLimiter, client_key
@@ -69,6 +70,18 @@ async def login(
     )
     if not valid:
         login_limiter.record_failure(caller)
+        # Committed before raising: the exception discards the session, so a row
+        # staged and left to the caller's commit would vanish exactly on the
+        # path most worth recording.
+        record_audit(
+            db,
+            _attempted_actor(payload.username, settings),
+            action="auth.login.failed",
+            summary=f"Failed sign-in from {caller}",
+            entity_type="auth",
+            request=request,
+        )
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -84,6 +97,15 @@ async def login(
         settings=settings,
         expires_minutes=session_settings.idle_timeout_minutes,
     )
+    record_audit(
+        db,
+        UserOut(username=payload.username, role="admin", subject=payload.username),
+        action="auth.login",
+        summary=f"Signed in from {caller}",
+        entity_type="auth",
+        request=request,
+    )
+    await db.commit()
     return TokenResponse(access_token=token)
 
 
@@ -299,3 +321,24 @@ async def google_callback(
     )
     fragment = urlencode({"token": token})
     return RedirectResponse(f"/login/callback#{fragment}")
+
+
+def _attempted_actor(username: str, settings: Settings) -> UserOut:
+    """Who to name on a failed sign-in.
+
+    The username is only recorded when it matches the one account this endpoint
+    can authenticate. Anything else is logged as unrecognised, because people
+    type their password into the username box and an audit trail that captures
+    those hands every admin a list of near-miss credentials — turning a
+    compliance feature into the thing it is supposed to protect against.
+
+    The useful signal survives: "somebody is hammering the admin account" and
+    "somebody is spraying names that do not exist here" stay distinguishable,
+    which is what a reader of this log actually needs.
+    """
+    known = username == settings.dev_username
+    return UserOut(
+        username=username if known else "(unrecognised username)",
+        role="unauthenticated",
+        subject=username if known else "unknown",
+    )

@@ -29,15 +29,32 @@ disagreement.
 import asyncio
 import os
 import sys
+from pathlib import Path
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
+
+# Check the tree this script lives in, whatever else is installed.
+#
+# Running `python scripts/check_schema_matches_models.py` puts *scripts/* on
+# sys.path[0] and does not add the working directory at all, so `import app`
+# falls through to whatever the environment happens to provide. On a box with
+# an editable install pointing somewhere else — a git worktree sharing a venv
+# with the main checkout, which is exactly the setup here — that is a different
+# copy of the models, and this script then cheerfully reports that a database
+# matches models it never looked at.
+#
+# Caught when 0080 added two tables, the checker reported "matches across 37
+# tables" against a database that had neither, and the number never moved. A
+# guard that silently validates the wrong code is worse than no guard, because
+# the green tick is believed.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # Importing the package is what registers every model on the metadata;
 # taking Base from it rather than from app.models.base means the name is
 # genuinely used, instead of an import that only looks unused to a reader
 # and to CodeQL.
-from app.models import Base
+from app.models import Base  # noqa: E402
 
 
 async def main() -> int:

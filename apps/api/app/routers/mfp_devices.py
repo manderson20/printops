@@ -1,10 +1,11 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit.record import diff, record_audit, snapshot
 from app.copiers.account_counters import poll_account_counters
 from app.copiers.connector import CapabilityNotSupported, ConnectionTestResult, refresh_device_meter
 from app.copiers.device_admin import DeviceCredentialsMissing
@@ -15,11 +16,12 @@ from app.copiers.registry import CONNECTOR_REGISTRY, get_connector
 from app.copiers.sync_jobs import start_sync_job
 from app.core.crypto import encrypt
 from app.db import get_db
-from app.deps import require_role
+from app.deps import get_current_user, require_role
 from app.models.copier_provisioning import CopierProvisionedAccount, CopierSyncJob
 from app.models.copier_usage import CopierUsageRecord
 from app.models.mfp_device import MfpDevice
 from app.models.printer import Printer
+from app.schemas.auth import UserOut
 from app.schemas.copier_usage import CopierUsageRecordOut
 from app.schemas.mfp_device import (
     ConnectorTypeOut,
@@ -179,7 +181,12 @@ async def _sync_copier_flag(db: AsyncSession, printer_id: UUID | None) -> None:
 
 
 @router.post("", response_model=MfpDeviceOut, status_code=status.HTTP_201_CREATED)
-async def create_mfp_device(payload: MfpDeviceCreate, db: AsyncSession = Depends(get_db)):
+async def create_mfp_device(
+    payload: MfpDeviceCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     if payload.connector_type not in CONNECTOR_REGISTRY:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -198,6 +205,16 @@ async def create_mfp_device(payload: MfpDeviceCreate, db: AsyncSession = Depends
     db.add(device)
     await db.flush()
     await _sync_copier_flag(db, device.printer_id)
+    record_audit(
+        db,
+        current_user,
+        action="mfp_device.create",
+        summary=f"Added {device.vendor} device {device.name}",
+        entity_type="mfp_device",
+        entity_id=device.id,
+        entity_label=device.name,
+        request=request,
+    )
     await db.commit()
     await db.refresh(device)
     return mfp_device_out(device)
@@ -217,9 +234,30 @@ async def get_mfp_device(device_id: UUID, db: AsyncSession = Depends(get_db)):
 
 @router.patch("/{device_id}", response_model=MfpDeviceOut)
 async def update_mfp_device(
-    device_id: UUID, payload: MfpDeviceUpdate, db: AsyncSession = Depends(get_db)
+    device_id: UUID,
+    payload: MfpDeviceUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     device = await _get_device_or_404(device_id, db)
+    # Named rather than derived: an MfpDevice row also carries polled meter and
+    # capability state that moves on its own.
+    audited = [
+        "name",
+        "vendor",
+        "model",
+        "serial_number",
+        "ip_address",
+        "hostname",
+        "building",
+        "room",
+        "department",
+        "printer_id",
+        "connector_type",
+        "enabled",
+    ]
+    before = snapshot(device, audited)
     updates = payload.model_dump(
         exclude_unset=True, exclude={"snmp_community", "admin_password", "capabilities"}
     )
@@ -273,18 +311,51 @@ async def update_mfp_device(
     await _sync_copier_flag(db, previous_printer_id)
     if device.printer_id != previous_printer_id:
         await _sync_copier_flag(db, device.printer_id)
+    changes = diff(before, snapshot(device, audited), audited)
+    if changes:
+        record_audit(
+            db,
+            current_user,
+            action="mfp_device.update",
+            summary=f"Updated device {device.name}",
+            entity_type="mfp_device",
+            entity_id=device.id,
+            entity_label=device.name,
+            changes=changes,
+            request=request,
+        )
     await db.commit()
     await db.refresh(device)
     return mfp_device_out(device)
 
 
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_mfp_device(device_id: UUID, db: AsyncSession = Depends(get_db)):
+async def delete_mfp_device(
+    device_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     device = await _get_device_or_404(device_id, db)
     printer_id = device.printer_id
+    # Read before the delete: after the flush the instance is gone from the
+    # session and its attributes are not safe to touch, which would turn an
+    # audit row into a crash on the one action that most needs recording.
+    label = device.name
+    device_id_recorded = device.id
     await db.delete(device)
     await db.flush()
     await _sync_copier_flag(db, printer_id)
+    record_audit(
+        db,
+        current_user,
+        action="mfp_device.delete",
+        summary=f"Deleted device {label}",
+        entity_type="mfp_device",
+        entity_id=device_id_recorded,
+        entity_label=label,
+        request=request,
+    )
     await db.commit()
 
 

@@ -4,11 +4,12 @@ import io
 import secrets
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit.record import record_audit, record_settings_update, snapshot
 from app.core.crypto import decrypt, encrypt
 from app.core.server_sync import ServerSyncError, sync_server_settings
 from app.core.tls_status import read_certificate_status
@@ -39,6 +40,7 @@ from app.models.zabbix import ZabbixSettings
 from app.printers.snmp_counters import get_or_create_snmp_defaults
 from app.quotas.service import get_or_create_quota_settings
 from app.reports.untracked_copies import get_or_create_untracked_copy_settings
+from app.schemas.auth import UserOut
 from app.schemas.classguard import (
     ClassGuardSettingsOut,
     ClassGuardSettingsUpdate,
@@ -106,8 +108,14 @@ async def get_mosyle_settings(db: AsyncSession = Depends(get_db)):
 @router.put(
     "/mosyle", response_model=MosyleSettingsOut, dependencies=[Depends(require_role("admin"))]
 )
-async def update_mosyle_settings(payload: MosyleSettingsUpdate, db: AsyncSession = Depends(get_db)):
+async def update_mosyle_settings(
+    payload: MosyleSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     settings = await _get_or_create_settings(db)
+    before = snapshot(settings)
     updates = payload.model_dump(exclude_unset=True)
     if "base_url" in updates and updates["base_url"] is not None:
         settings.base_url = updates["base_url"]
@@ -124,6 +132,15 @@ async def update_mosyle_settings(payload: MosyleSettingsUpdate, db: AsyncSession
     if updates.get("admin_password"):
         settings.admin_password_encrypted = encrypt(updates["admin_password"])
 
+    record_settings_update(
+        db,
+        current_user,
+        area="mosyle",
+        label="Mosyle",
+        obj=settings,
+        before=before,
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
     return _to_out(settings)
@@ -211,9 +228,13 @@ async def get_classguard_settings(db: AsyncSession = Depends(get_db)):
     dependencies=[Depends(require_role("admin"))],
 )
 async def update_classguard_settings(
-    payload: ClassGuardSettingsUpdate, db: AsyncSession = Depends(get_db)
+    payload: ClassGuardSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     settings = await _get_or_create_classguard_settings(db)
+    before = snapshot(settings)
     updates = payload.model_dump(exclude_unset=True)
     if updates.get("base_url") is not None:
         settings.base_url = updates["base_url"]
@@ -222,6 +243,15 @@ async def update_classguard_settings(
     if updates.get("access_token"):
         settings.access_token_encrypted = encrypt(updates["access_token"])
 
+    record_settings_update(
+        db,
+        current_user,
+        area="classguard",
+        label="ClassGuard",
+        obj=settings,
+        before=before,
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
     return _classguard_to_out(settings)
@@ -285,8 +315,14 @@ async def get_snmp_defaults(db: AsyncSession = Depends(get_db)):
 
 
 @router.put("/snmp", response_model=SnmpDefaultsOut, dependencies=[Depends(require_role("admin"))])
-async def update_snmp_defaults(payload: SnmpDefaultsUpdate, db: AsyncSession = Depends(get_db)):
+async def update_snmp_defaults(
+    payload: SnmpDefaultsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     settings = await get_or_create_snmp_defaults(db)
+    before = snapshot(settings)
     updates = payload.model_dump(exclude_unset=True)
     if updates.get("version") is not None:
         settings.version = updates["version"]
@@ -299,6 +335,15 @@ async def update_snmp_defaults(payload: SnmpDefaultsUpdate, db: AsyncSession = D
     if updates.get("community"):
         settings.community_encrypted = encrypt(updates["community"])
 
+    record_settings_update(
+        db,
+        current_user,
+        area="snmp",
+        label="SNMP",
+        obj=settings,
+        before=before,
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
     return _snmp_defaults_to_out(settings)
@@ -318,7 +363,12 @@ async def get_syslog_settings(db: AsyncSession = Depends(get_db)):
 @router.put(
     "/syslog", response_model=SyslogSettingsOut, dependencies=[Depends(require_role("admin"))]
 )
-async def update_syslog_settings(payload: SyslogSettingsUpdate, db: AsyncSession = Depends(get_db)):
+async def update_syslog_settings(
+    payload: SyslogSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     """Org-wide kill switch + noise floor for the syslog collector
     (infra/syslog-relay/) — off by default, matching SNMP defaults/LDAP
     relay. `port` here is informational only for now: the relay actually
@@ -326,6 +376,7 @@ async def update_syslog_settings(payload: SyslogSettingsUpdate, db: AsyncSession
     port at process start, so changing it here doesn't move the listener
     without also updating and restarting that service."""
     settings = await get_or_create_syslog_settings(db)
+    before = snapshot(settings)
     updates = payload.model_dump(exclude_unset=True)
     if updates.get("enabled") is not None:
         settings.enabled = updates["enabled"]
@@ -336,6 +387,15 @@ async def update_syslog_settings(payload: SyslogSettingsUpdate, db: AsyncSession
     if updates.get("retention_days") is not None:
         settings.retention_days = updates["retention_days"]
 
+    record_settings_update(
+        db,
+        current_user,
+        area="syslog",
+        label="Syslog",
+        obj=settings,
+        before=before,
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
     return SyslogSettingsOut(
@@ -387,9 +447,13 @@ async def get_google_workspace_settings(db: AsyncSession = Depends(get_db)):
     dependencies=[Depends(require_role("admin"))],
 )
 async def update_google_workspace_settings(
-    payload: GoogleWorkspaceSettingsUpdate, db: AsyncSession = Depends(get_db)
+    payload: GoogleWorkspaceSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     settings = await _get_or_create_google_workspace_settings(db)
+    before = snapshot(settings)
     updates = payload.model_dump(exclude_unset=True)
     if updates.get("admin_email") is not None:
         settings.admin_email = updates["admin_email"]
@@ -416,6 +480,15 @@ async def update_google_workspace_settings(
             cleaned = [p.strip() for p in (updates[field] or []) if p and p.strip()]
             setattr(settings, field, cleaned or None)
 
+    record_settings_update(
+        db,
+        current_user,
+        area="google_workspace",
+        label="Google Workspace",
+        obj=settings,
+        before=before,
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
     return _google_workspace_to_out(settings)
@@ -649,9 +722,13 @@ def _validate_client_secret(secret: str, client_id: str | None) -> None:
     dependencies=[Depends(require_role("admin"))],
 )
 async def update_google_sso_settings(
-    payload: GoogleSsoSettingsUpdate, db: AsyncSession = Depends(get_db)
+    payload: GoogleSsoSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     settings = await _get_or_create_google_sso_settings(db)
+    before = snapshot(settings)
     updates = payload.model_dump(exclude_unset=True)
     if updates.get("client_secret"):
         _validate_client_secret(
@@ -670,6 +747,15 @@ async def update_google_sso_settings(
     if updates.get("client_secret"):
         settings.client_secret_encrypted = encrypt(updates["client_secret"])
 
+    record_settings_update(
+        db,
+        current_user,
+        area="google_sso",
+        label="Google SSO",
+        obj=settings,
+        before=before,
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
     return _google_sso_to_out(settings)
@@ -700,8 +786,14 @@ async def get_zabbix_settings(db: AsyncSession = Depends(get_db)):
 @router.put(
     "/zabbix", response_model=ZabbixSettingsOut, dependencies=[Depends(require_role("admin"))]
 )
-async def update_zabbix_settings(payload: ZabbixSettingsUpdate, db: AsyncSession = Depends(get_db)):
+async def update_zabbix_settings(
+    payload: ZabbixSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     settings = await _get_or_create_zabbix_settings(db)
+    before = snapshot(settings)
     updates = payload.model_dump(exclude_unset=True)
     if updates.get("base_url") is not None:
         settings.base_url = _normalize_redirect_base_url(updates["base_url"])
@@ -714,6 +806,15 @@ async def update_zabbix_settings(payload: ZabbixSettingsUpdate, db: AsyncSession
             settings.api_token = secrets.token_urlsafe(32)
         settings.enabled = updates["enabled"]
 
+    record_settings_update(
+        db,
+        current_user,
+        area="zabbix",
+        label="Zabbix",
+        obj=settings,
+        before=before,
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
     return _zabbix_to_out(settings)
@@ -724,12 +825,29 @@ async def update_zabbix_settings(payload: ZabbixSettingsUpdate, db: AsyncSession
     response_model=ZabbixSettingsOut,
     dependencies=[Depends(require_role("admin"))],
 )
-async def regenerate_zabbix_token(db: AsyncSession = Depends(get_db)):
+async def regenerate_zabbix_token(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     """Immediately invalidates the old token — app.deps.verify_zabbix_token
     looks it up live on every call, same as
     regenerate_release_token (app/routers/printers.py)."""
     settings = await _get_or_create_zabbix_settings(db)
     settings.api_token = secrets.token_urlsafe(32)
+    # Recorded without either token value: rotating a credential is exactly the
+    # kind of action a log should show, and exactly the kind whose contents it
+    # must not carry. Whoever monitors Zabbix will notice it stopped working;
+    # this is how they find out why.
+    record_audit(
+        db,
+        current_user,
+        action="settings.zabbix.regenerate_token",
+        summary="Regenerated the Zabbix API token",
+        entity_type="settings.zabbix",
+        changes={"api_token": {"from": "***", "to": "***"}},
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
     return _zabbix_to_out(settings)
@@ -788,10 +906,16 @@ async def _run_server_sync(settings: ServerSettings, db: AsyncSession) -> None:
 @router.put(
     "/server", response_model=ServerSettingsOut, dependencies=[Depends(require_role("admin"))]
 )
-async def update_server_settings(payload: ServerSettingsUpdate, db: AsyncSession = Depends(get_db)):
+async def update_server_settings(
+    payload: ServerSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     """Applies the change to cupsd.conf/Avahi via sync_server_settings()
     right after saving — see _run_server_sync."""
     settings = await get_or_create_server_settings(db)
+    before = snapshot(settings)
     updates = payload.model_dump(exclude_unset=True)
     if updates.get("hostname") is not None:
         settings.hostname = updates["hostname"]
@@ -807,6 +931,15 @@ async def update_server_settings(payload: ServerSettingsUpdate, db: AsyncSession
     # see the old values if this ran inside the still-open transaction
     # above (confirmed live: an uncommitted hostname change was invisible
     # to the script's own GET /internal/server-settings).
+    record_settings_update(
+        db,
+        current_user,
+        area="server",
+        label="Server",
+        obj=settings,
+        before=before,
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
 
@@ -865,14 +998,27 @@ async def get_report_formula_settings(db: AsyncSession = Depends(get_db)):
     dependencies=[Depends(require_role("admin"))],
 )
 async def update_report_formula_settings(
-    payload: ReportFormulaSettingsUpdate, db: AsyncSession = Depends(get_db)
+    payload: ReportFormulaSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     settings = await _get_or_create_report_formula_settings(db)
+    before = snapshot(settings)
     updates = payload.model_dump(exclude_unset=True)
     for field in FORMULA_FIELDS:
         if updates.get(field) is not None:
             setattr(settings, field, updates[field])
 
+    record_settings_update(
+        db,
+        current_user,
+        area="report_formulas",
+        label="Report formula",
+        obj=settings,
+        before=before,
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
     return _report_formula_settings_out(settings)
@@ -890,17 +1036,30 @@ async def get_untracked_copy_settings(db: AsyncSession = Depends(get_db)):
     dependencies=[Depends(require_role("admin"))],
 )
 async def update_untracked_copy_settings(
-    payload: UntrackedCopySettingsUpdate, db: AsyncSession = Depends(get_db)
+    payload: UntrackedCopySettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     """A False -> True transition re-stamps enabled_at to now — see
     UntrackedCopySettings' docstring (app/models/untracked_copies.py) for
     why this must never reach back before the moment it's actually on."""
     settings = await get_or_create_untracked_copy_settings(db)
+    before = snapshot(settings)
     if payload.enabled is not None:
         if payload.enabled and not settings.enabled:
             settings.enabled_at = datetime.now(UTC)
         settings.enabled = payload.enabled
 
+    record_settings_update(
+        db,
+        current_user,
+        area="untracked_copies",
+        label="Untracked copies",
+        obj=settings,
+        before=before,
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
     return UntrackedCopySettingsOut(enabled=settings.enabled, enabled_at=settings.enabled_at)
@@ -929,11 +1088,24 @@ async def get_print_release_settings(db: AsyncSession = Depends(get_db)):
     dependencies=[Depends(require_role("admin"))],
 )
 async def update_print_release_settings(
-    payload: PrintReleaseSettingsUpdate, db: AsyncSession = Depends(get_db)
+    payload: PrintReleaseSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     settings = await _get_or_create_print_release_settings(db)
+    before = snapshot(settings)
     if payload.hold_expiry_hours is not None:
         settings.hold_expiry_hours = payload.hold_expiry_hours
+    record_settings_update(
+        db,
+        current_user,
+        area="print_release",
+        label="Print release",
+        obj=settings,
+        before=before,
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
     return PrintReleaseSettingsOut(hold_expiry_hours=settings.hold_expiry_hours)
@@ -950,14 +1122,29 @@ async def get_quota_settings(db: AsyncSession = Depends(get_db)):
     response_model=QuotaSettingsOut,
     dependencies=[Depends(require_role("admin"))],
 )
-async def update_quota_settings(payload: QuotaSettingsUpdate, db: AsyncSession = Depends(get_db)):
+async def update_quota_settings(
+    payload: QuotaSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     """Org-wide kill switch for page-quota enforcement — off by default, so
     configuring PrinterUserQuota rows on a printer never starts holding
     jobs until an admin explicitly opts in here (see
     app/quotas/service.py:resolve_hold_reason)."""
     settings = await get_or_create_quota_settings(db)
+    before = snapshot(settings)
     if payload.enabled is not None:
         settings.enabled = payload.enabled
+    record_settings_update(
+        db,
+        current_user,
+        area="quotas",
+        label="Quota",
+        obj=settings,
+        before=before,
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
     return QuotaSettingsOut(enabled=settings.enabled)
@@ -975,7 +1162,10 @@ async def get_session_settings(db: AsyncSession = Depends(get_db)):
     dependencies=[Depends(require_role("admin"))],
 )
 async def update_session_settings(
-    payload: SessionSettingsUpdate, db: AsyncSession = Depends(get_db)
+    payload: SessionSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     """How long a session can sit idle before its token is allowed to
     expire — POST /auth/refresh (app/routers/auth.py) is what actually
@@ -983,8 +1173,18 @@ async def update_session_settings(
     duration it slides by. Takes effect on each user's very next refresh,
     not just future logins, since /auth/refresh reads this live."""
     settings = await get_or_create_session_settings(db)
+    before = snapshot(settings)
     if payload.idle_timeout_minutes is not None:
         settings.idle_timeout_minutes = payload.idle_timeout_minutes
+    record_settings_update(
+        db,
+        current_user,
+        area="session",
+        label="Session",
+        obj=settings,
+        before=before,
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
     return SessionSettingsOut(idle_timeout_minutes=settings.idle_timeout_minutes)
@@ -1004,19 +1204,32 @@ async def get_ldap_relay_settings(db: AsyncSession = Depends(get_db)):
     dependencies=[Depends(require_role("admin"))],
 )
 async def update_ldap_relay_settings(
-    payload: LdapRelaySettingsUpdate, db: AsyncSession = Depends(get_db)
+    payload: LdapRelaySettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     """Org-wide kill switch + shared base DN for the LDAP address-book
     relay (infra/ldap-relay/) — off by default, so configuring per-printer
     bind credentials never actually serves anything until an admin opts in
     here (see app/routers/internal.py's ldap_bind/ldap_search)."""
     settings = await get_or_create_ldap_relay_settings(db)
+    before = snapshot(settings)
     if payload.enabled is not None:
         settings.enabled = payload.enabled
     if payload.base_dn is not None:
         settings.base_dn = payload.base_dn
     if payload.port is not None:
         settings.port = payload.port
+    record_settings_update(
+        db,
+        current_user,
+        area="ldap",
+        label="LDAP relay",
+        obj=settings,
+        before=before,
+        request=request,
+    )
     await db.commit()
     await db.refresh(settings)
     return LdapRelaySettingsOut(

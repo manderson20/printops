@@ -2861,6 +2861,82 @@ export async function listSyslogEvents(params?: {
   return response.json();
 }
 
+// --- Audit log (app/routers/audit.py) — admin-only. ---
+
+export type AuditChange = { from: unknown; to: unknown };
+
+export type AuditEvent = {
+  id: string;
+  occurred_at: string;
+  actor_email: string;
+  actor_role: string;
+  // Set when an admin was acting through "View as", so the row says who was
+  // really at the keyboard rather than whose session it looked like.
+  impersonated_by: string | null;
+  action: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  entity_label: string | null;
+  summary: string;
+  // {field: {from, to}} for a config change; null for an action with no
+  // before/after, like a sign-in. Secret-bearing fields arrive already
+  // redacted by the API — the values never leave the server.
+  changes: Record<string, AuditChange> | null;
+  source_ip: string | null;
+};
+
+export type AuditEventPage = {
+  events: AuditEvent[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export async function listAuditEvents(params?: {
+  actor?: string;
+  actionPrefix?: string;
+  entityType?: string;
+  search?: string;
+  since?: string;
+  until?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<AuditEventPage> {
+  const query = new URLSearchParams();
+  if (params?.actor) query.set("actor", params.actor);
+  if (params?.actionPrefix) query.set("action_prefix", params.actionPrefix);
+  if (params?.entityType) query.set("entity_type", params.entityType);
+  if (params?.search) query.set("search", params.search);
+  if (params?.since) query.set("since", params.since);
+  if (params?.until) query.set("until", params.until);
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.pageSize) query.set("page_size", String(params.pageSize));
+  const qs = query.toString();
+  const response = await authorizedFetch(`/api/v1/audit${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export async function listAuditActions(): Promise<{ actions: string[] }> {
+  const response = await authorizedFetch("/api/v1/audit/actions");
+  return response.json();
+}
+
+export type AuditSettings = { retention_days: number };
+
+export async function getAuditSettings(): Promise<AuditSettings> {
+  const response = await authorizedFetch("/api/v1/audit/settings");
+  return response.json();
+}
+
+export async function updateAuditSettings(retentionDays: number): Promise<AuditSettings> {
+  const response = await authorizedFetch("/api/v1/audit/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ retention_days: retentionDays }),
+  });
+  return response.json();
+}
+
 // --- Public print-release kiosk API (app/routers/release.py) — no
 // PrintOps login involved, so this deliberately does NOT use
 // authorizedFetch (no JWT to attach, and its 401->redirect-to-login

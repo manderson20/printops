@@ -4,11 +4,12 @@ import secrets
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
+from app.audit.record import diff, record_audit, snapshot
 from app.core.config import Settings, get_settings
 from app.core.crypto import decrypt, encrypt
 from app.core.security import hash_password
@@ -130,7 +131,12 @@ async def _apply_queue_sync(printer: Printer, db: AsyncSession) -> None:
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_role("admin"))],
 )
-async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_db)):
+async def create_printer(
+    payload: PrinterCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     printer = Printer(
         name=payload.name,
         ip_address=str(payload.ip_address),
@@ -163,6 +169,16 @@ async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_
     finishings = (printer.capabilities or {}).get("finishings") or []
     printer.roll_autocut = "trim" in finishings
     db.add(printer)
+    record_audit(
+        db,
+        current_user,
+        action="printer.create",
+        summary=f"Added printer {printer.name} at {printer.ip_address}",
+        entity_type="printer",
+        entity_id=printer.id,
+        entity_label=printer.name,
+        request=request,
+    )
     await db.commit()
     await db.refresh(printer)
     await _apply_queue_sync(printer, db)
@@ -175,7 +191,12 @@ async def create_printer(payload: PrinterCreate, db: AsyncSession = Depends(get_
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_role("admin"))],
 )
-async def create_virtual_queue(payload: VirtualQueueCreate, db: AsyncSession = Depends(get_db)):
+async def create_virtual_queue(
+    payload: VirtualQueueCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     """A Follow-Me queue with no real device behind it — see
     VirtualQueueCreate's docstring. follow_me_enabled/airprint_enabled are
     forced on here rather than left to the payload: a virtual queue that
@@ -197,6 +218,16 @@ async def create_virtual_queue(payload: VirtualQueueCreate, db: AsyncSession = D
         notes=payload.notes,
     )
     db.add(printer)
+    record_audit(
+        db,
+        current_user,
+        action="printer.create_virtual",
+        summary=f"Added Follow-Me queue {printer.name}",
+        entity_type="printer",
+        entity_id=printer.id,
+        entity_label=printer.name,
+        request=request,
+    )
     await db.commit()
     await db.refresh(printer)
     await _apply_queue_sync(printer, db)
@@ -365,9 +396,34 @@ async def _mirror_to_copier(db: AsyncSession, printer: Printer, changed: set[str
     "/{printer_id}", response_model=PrinterOut, dependencies=[Depends(require_role("admin"))]
 )
 async def update_printer(
-    printer_id: UUID, payload: PrinterUpdate, db: AsyncSession = Depends(get_db)
+    printer_id: UUID,
+    payload: PrinterUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     printer = await _get_printer_or_404(printer_id, db)
+    # Named explicitly rather than derived from the mapper: a Printer row also
+    # carries polled state (status, page counts, capabilities, toner) that
+    # changes constantly without anybody deciding anything, and diffing all of
+    # it would bury the admin's edit under machine churn.
+    audited = [
+        "name",
+        "ip_address",
+        "port",
+        "use_tls",
+        "ipp_path",
+        "location",
+        "building",
+        "room",
+        "department",
+        "airprint_enabled",
+        "follow_me_enabled",
+        "release_required",
+        "archived_at",
+        "roll_autocut",
+    ]
+    before = snapshot(printer, audited)
     updates = payload.model_dump(exclude_unset=True)
     # A virtual queue (app/models/printer.py:is_virtual) has no physical
     # location of its own to release at — it must always be held and only
@@ -428,6 +484,19 @@ async def update_printer(
     if (printer.release_required or printer.follow_me_enabled) and not printer.release_token:
         printer.release_token = secrets.token_urlsafe(16)
     await _mirror_to_copier(db, printer, set(updates.keys()))
+    changes = diff(before, snapshot(printer, audited), audited)
+    if changes:
+        record_audit(
+            db,
+            current_user,
+            action="printer.update",
+            summary=f"Updated printer {printer.name}",
+            entity_type="printer",
+            entity_id=printer.id,
+            entity_label=printer.name,
+            changes=changes,
+            request=request,
+        )
     await db.commit()
     await db.refresh(printer)
     if QUEUE_AFFECTING_FIELDS & updates.keys():
@@ -440,13 +509,28 @@ async def update_printer(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_role("admin"))],
 )
-async def delete_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+async def delete_printer(
+    printer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     printer = await _get_printer_or_404(printer_id, db)
     try:
         await asyncio.to_thread(remove_queue, str(printer.id))
     except QueueSyncError:
         pass  # best-effort — don't block a delete the admin explicitly asked for
     await db.delete(printer)
+    record_audit(
+        db,
+        current_user,
+        action="printer.delete",
+        summary=f"Deleted printer {printer.name} and its job history",
+        entity_type="printer",
+        entity_id=printer.id,
+        entity_label=printer.name,
+        request=request,
+    )
     await db.commit()
 
 
@@ -455,7 +539,12 @@ async def delete_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     response_model=PrinterOut,
     dependencies=[Depends(require_role("admin"))],
 )
-async def archive_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+async def archive_printer(
+    printer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     """Retires this printer without losing its history — see
     Printer.archived_at's docstring. Tears down the CUPS queue (same
     remove_queue() delete_printer uses) so it stops accepting jobs, but
@@ -467,6 +556,16 @@ async def archive_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     except QueueSyncError:
         pass  # best-effort — don't block an archive the admin explicitly asked for
     printer.archived_at = datetime.now(UTC)
+    record_audit(
+        db,
+        current_user,
+        action="printer.archive",
+        summary=f"Archived printer {printer.name}",
+        entity_type="printer",
+        entity_id=printer.id,
+        entity_label=printer.name,
+        request=request,
+    )
     await db.commit()
     await db.refresh(printer)
     return printer
@@ -477,11 +576,26 @@ async def archive_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
     response_model=PrinterOut,
     dependencies=[Depends(require_role("admin"))],
 )
-async def unarchive_printer(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+async def unarchive_printer(
+    printer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     """Reverses archive_printer — re-syncs the CUPS queue so the printer
     accepts jobs again."""
     printer = await _get_printer_or_404(printer_id, db)
     printer.archived_at = None
+    record_audit(
+        db,
+        current_user,
+        action="printer.unarchive",
+        summary=f"Restored printer {printer.name} from the archive",
+        entity_type="printer",
+        entity_id=printer.id,
+        entity_label=printer.name,
+        request=request,
+    )
     await db.commit()
     await db.refresh(printer)
     await _apply_queue_sync(printer, db)

@@ -1,11 +1,12 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit.record import diff, record_audit, snapshot
 from app.core.config import Settings, get_settings
 from app.core.security import create_access_token
 from app.db import get_db
@@ -58,7 +59,12 @@ async def list_users(
 
 
 @router.post("", response_model=UserAccountOut, status_code=status.HTTP_201_CREATED)
-async def create_user(payload: UserAccountCreate, db: AsyncSession = Depends(get_db)):
+async def create_user(
+    payload: UserAccountCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
     """Pre-provisions an account by email, google_sub left null until this
     person's first Google sign-in — see UserAccountCreate's docstring and
     app/routers/auth.py's google_callback, which matches this row by email
@@ -75,6 +81,16 @@ async def create_user(payload: UserAccountCreate, db: AsyncSession = Depends(get
         granted_ou_paths=payload.granted_ou_paths,
     )
     db.add(user)
+    record_audit(
+        db,
+        current_user,
+        action="user.create",
+        summary=f"Created {payload.role} account for {email}",
+        entity_type="user",
+        entity_label=email,
+        changes={"role": payload.role, "granted_ou_paths": payload.granted_ou_paths},
+        request=request,
+    )
     try:
         await db.commit()
     except IntegrityError as exc:
@@ -88,12 +104,18 @@ async def create_user(payload: UserAccountCreate, db: AsyncSession = Depends(get
 
 @router.patch("/{user_id}", response_model=UserAccountOut)
 async def update_user(
-    user_id: uuid.UUID, payload: UserAccountUpdate, db: AsyncSession = Depends(get_db)
+    user_id: uuid.UUID,
+    payload: UserAccountUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
 ):
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    audited = ["role", "is_active", "exempt_from_timeout", "granted_ou_paths"]
+    before = snapshot(user, audited)
     updates = payload.model_dump(exclude_unset=True)
     if "role" in updates and updates["role"] is not None:
         user.role = updates["role"]
@@ -104,6 +126,22 @@ async def update_user(
     if "granted_ou_paths" in updates:
         user.granted_ou_paths = updates["granted_ou_paths"]
 
+    # A role change is the single most security-relevant edit in this system —
+    # it is how somebody becomes an admin — so it is recorded with the old value
+    # beside the new one rather than just "user updated".
+    changes = diff(before, snapshot(user, audited), audited)
+    if changes:
+        record_audit(
+            db,
+            current_user,
+            action="user.update",
+            summary=f"Updated account {user.email}",
+            entity_type="user",
+            entity_id=user.id,
+            entity_label=user.email,
+            changes=changes,
+            request=request,
+        )
     await db.commit()
     await db.refresh(user)
     return user
@@ -181,6 +219,21 @@ async def impersonate_user(
             target_role=target.role,
             expires_at=datetime.now(UTC) + timedelta(minutes=IMPERSONATION_TOKEN_MINUTES),
         )
+    )
+    # Recorded in both places on purpose. ImpersonationSession is the detailed
+    # record of the "View as" itself (target, role, expiry); this puts it in the
+    # one timeline an admin reads alongside every other admin action, so
+    # "who was in this account on Tuesday" does not require knowing that
+    # impersonation is stored somewhere separate.
+    record_audit(
+        db,
+        current_user,
+        action="user.impersonate",
+        summary=f"Started viewing as {target.email}",
+        entity_type="user",
+        entity_id=target.id,
+        entity_label=target.email,
+        changes={"target_role": target.role},
     )
     await db.commit()
 
