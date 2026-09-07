@@ -16,7 +16,6 @@ from app.models.google_workspace import (
 )
 from app.models.impersonation import ImpersonationSession
 from app.models.job import Job
-from app.models.job_coverage import JobCoverage
 from app.models.ldap_relay import LdapRelaySettings
 from app.models.location import Location
 from app.models.mfp_device import MfpDevice
@@ -83,7 +82,6 @@ __all__ = [
     "QuotaSettings",
     "RoadTripSettings",
     "ReportFormulaSettings",
-    "JobCoverage",
     "ReportingCalendar",
     "ReportingTerm",
     "ReportingTermInstance",
