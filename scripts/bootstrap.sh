@@ -10,7 +10,20 @@
 
 set -euo pipefail
 
+# True when the node on PATH is at least $1 (dotted major.minor.patch).
+node_at_least() {
+  local want="$1" have
+  have=$(node --version 2>/dev/null | sed 's/^v//') || return 1
+  [ -n "$have" ] || return 1
+  [ "$(printf '%s\n%s\n' "$want" "$have" | sort -V | head -1)" = "$want" ]
+}
+
 NODE_VERSION="20"
+# ESLint 10's floor, matching apps/web/package.json's engines. `nvm ls 20`
+# succeeds for any 20.x already on the machine, so a developer sitting on
+# 20.9 would have kept it and hit an engines failure at install time — the
+# check below is what makes the major above actually mean "recent enough".
+NODE_MINIMUM="20.19.0"
 PNPM_VERSION="9"
 ASSUME_YES=false
 
@@ -42,6 +55,14 @@ install_node_pnpm() {
   . "$NVM_DIR/nvm.sh"
   if ! nvm ls "$NODE_VERSION" >/dev/null 2>&1; then
     nvm install "$NODE_VERSION"
+  fi
+  nvm use "$NODE_VERSION" >/dev/null 2>&1 || true
+  # `nvm install 20` always fetches the newest 20.x, so this converges rather
+  # than pinning anybody to an exact patch.
+  if ! node_at_least "$NODE_MINIMUM"; then
+    log "Node $(node --version 2>/dev/null || echo 'not found') is below ${NODE_MINIMUM} — installing the latest ${NODE_VERSION}.x"
+    nvm install "$NODE_VERSION"
+    nvm use "$NODE_VERSION" >/dev/null 2>&1 || true
   fi
   nvm alias default "$NODE_VERSION" >/dev/null
   corepack enable

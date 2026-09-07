@@ -15,6 +15,10 @@ schedules an update.
   results on ESLint 9 and 10, so it is not a one-way door. (#125)
 - Dependency updates: `eslint-config-next` 16.3.4 (matching the Next version
   already in use) and the usual type bumps.
+- The Node floor is now stated and enforced. ESLint 10 needs 20.19+, while
+  `.nvmrc` said "20" and the bootstrap script kept whatever 20.x a machine
+  already had — so a developer on 20.9 would have hit a confusing install
+  failure. Declared in `apps/web/package.json` and checked during bootstrap.
 
 ## [0.77.0] - 2026-09-06
 
