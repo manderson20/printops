@@ -19,6 +19,7 @@ const SETTINGS_NAV = [
   { href: "/settings/quotas", label: "Quotas" },
   { href: "/settings/toner-cartridges", label: "Toner Cartridges" },
   { href: "/settings/ldap", label: "LDAP Relay" },
+  { href: "/settings/notifications", label: "Notifications" },
   { href: "/settings/syslog", label: "Syslog" },
   { href: "/settings/mdm-resync", label: "MDM Printer Resync" },
 ] as const;

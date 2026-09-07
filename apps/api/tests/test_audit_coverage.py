@@ -27,7 +27,14 @@ ROUTERS = Path(__file__).resolve().parents[1] / "app" / "routers"
 # traffic (the CUPS backend posting a row per print job, Zabbix polling) and
 # ordinary user actions are deliberately outside it. A log dominated by machine
 # traffic is one nobody reads, and job history already lives on Job rows.
-AUDITED_ROUTERS = ("settings.py", "users.py", "auth.py", "printers.py", "mfp_devices.py")
+AUDITED_ROUTERS = (
+    "settings.py",
+    "users.py",
+    "auth.py",
+    "printers.py",
+    "mfp_devices.py",
+    "notifications.py",
+)
 
 MUTATING_METHODS = {"post", "put", "patch", "delete"}
 
@@ -57,6 +64,10 @@ EXEMPT = {
     # Authentication endpoints that are not a login. Covered by rate limiting
     # rather than the audit trail.
     "refresh": "reissues a token for an already-authenticated session; no state change",
+    "test_channel": (
+        "sends one message and records the outcome on the channel; an admin "
+        "pressing Test three times while sorting out a URL should not fill the trail"
+    ),
     # Probes and re-applications of config that was already recorded when it was
     # set. None of these represent a new decision by an admin.
     "discover_printer": (

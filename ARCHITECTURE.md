@@ -127,6 +127,16 @@ solves a throughput problem nobody has. Revisit if a consumer ever needs
 low-latency fan-out to a separate process; the outbox is the correct first hop
 either way, so that change would be additive rather than a rewrite.
 
+*Corrected 2026-09-07.* This decision originally said notifications would
+consume the audit log's rows. They cannot: `audit_events` is scoped to admin
+and config actions — decided the same day — and every notification trigger is a
+machine-detected condition deliberately excluded from that scope. Widening the
+audit table to carry poll results would bury the admin actions it exists to
+show. What was decided here is the *shape* — a Postgres table, written in the
+transaction that produced the state it describes, drained by a loop, no broker
+— and notifications follow it with their own tables
+(`app/notifications/conditions.py`). "One table" was imprecision.
+
 Done in 0.75.8: the container, the `redis_url` setting and the env var are
 gone. It was also listening on `0.0.0.0:6379` with no password on a host with
 no firewall, so removing it closed an unauthenticated service that was reachable

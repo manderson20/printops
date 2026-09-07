@@ -32,6 +32,9 @@ from app.models.printer import Printer
 from app.models.report import PrinterTonerReading
 from app.models.snmp import PrinterCounterReading
 from app.models.syslog import PrinterSyslogEvent
+from app.notifications import conditions as notify
+from app.notifications.delivery import deliver_pending
+from app.notifications.settings import get_or_create_notification_settings
 from app.printers import offline_holds
 from app.printers.discovery import refresh_printer_capabilities
 from app.printers.job_reconcile import reconcile_stuck_jobs
@@ -68,6 +71,7 @@ from app.routers import (
     zabbix_integration,
 )
 from app.routers import audit as audit_router
+from app.routers import notifications as notifications_router
 from app.routers import road_trip as road_trip_router
 from app.routers import settings as settings_router
 from app.routers import syslog as syslog_router
@@ -100,6 +104,50 @@ def _make_device_sync_loop(name: str, settings_model, run_sync_fn, error_cls: ty
             await asyncio.sleep(DEVICE_SYNC_INTERVAL_SECONDS)
 
     return _loop
+
+
+
+def _attention_key(printer: Printer) -> str:
+    return f"{notify.PRINTER_ATTENTION}:{printer.id}"
+
+
+def _printer_where(printer: Printer) -> str:
+    """Where to walk to. A message that does not say which room costs somebody
+    a lookup before they can act on it."""
+    where = " / ".join(part for part in (printer.building, printer.room) if part)
+    return f"{where}\n" if where else ""
+
+
+async def _notify_printer_error(db, settings, printer: Printer) -> None:
+    """Jams, covers, empty trays — anything the printer itself calls an error.
+
+    Keyed on the reason as well as the printer, so a jam cleared this morning
+    and a cover left open this afternoon are two things to be told about rather
+    than one that never re-fires. Conditions no longer reported are cleared, or
+    a stale row would silently dedupe away the recurrence.
+    """
+    reasons = printer.status_reasons or []
+    active: set[str] = set()
+    if printer.status == "error":
+        for reason in reasons or ["error"]:
+            key = f"{notify.PRINTER_ERROR}:{printer.id}:{reason}"
+            active.add(key)
+            await notify.observe(
+                db,
+                settings,
+                kind=notify.PRINTER_ERROR,
+                dedupe_key=key,
+                title=f"{printer.name}: {reason}",
+                body=(
+                    f"{_printer_where(printer)}"
+                    f"{printer.status_message or 'The printer is reporting an error.'}"
+                ),
+                subject_type="printer",
+                subject_id=printer.id,
+            )
+    await notify.clear_missing(
+        db, prefix=f"{notify.PRINTER_ERROR}:{printer.id}:", still_true=active
+    )
 
 
 PRINTER_STATUS_POLL_INTERVAL_SECONDS = 60
@@ -153,10 +201,13 @@ async def _printer_status_poll_loop() -> None:
                 # having already been recorded as online. One indexed query per
                 # online printer per cycle is worth not depending on catching
                 # an instant.
+                notification_settings = await get_or_create_notification_settings(db)
                 for printer in printers:
                     try:
+                        await _notify_printer_error(db, notification_settings, printer)
                         if printer.status == "online":
                             await offline_holds.release_jobs_waiting_for(db, printer)
+                            await notify.clear(db, _attention_key(printer))
                             continue
                         # Offline with work behind it. Most of the time that is
                         # a printer switched off for the night and nothing worth
@@ -170,6 +221,24 @@ async def _printer_status_poll_loop() -> None:
                                 offline_holds.UNREACHABLE_REASON,
                             ]
                             logger.warning("%s: %s", printer.name, alert)
+                            # waiting_alert already decided this is worth an
+                            # admin's attention, and it is deliberately quiet
+                            # about a printer switched off overnight. Reusing
+                            # its judgement rather than inventing a second
+                            # threshold is the point: the tuning is proven, and
+                            # two rules for one question drift apart.
+                            await notify.observe(
+                                db,
+                                notification_settings,
+                                kind=notify.PRINTER_ATTENTION,
+                                dedupe_key=_attention_key(printer),
+                                title=f"{printer.name} needs attention",
+                                body=f"{_printer_where(printer)}{alert}",
+                                subject_type="printer",
+                                subject_id=printer.id,
+                            )
+                        else:
+                            await notify.clear(db, _attention_key(printer))
                     except Exception:
                         logger.exception("Could not check jobs waiting for %s", printer.name)
                 await db.commit()
@@ -438,6 +507,31 @@ async def _audit_event_purge_loop() -> None:
         await asyncio.sleep(AUDIT_EVENT_PURGE_INTERVAL_SECONDS)
 
 
+NOTIFICATION_DELIVERY_INTERVAL_SECONDS = 60
+
+
+async def _notification_delivery_loop() -> None:
+    """Sends raised notifications to their channels.
+
+    A minute, not a second: these are conditions that had to persist for the
+    settle window before being raised at all, so nothing here is urgent to the
+    second, and a tight loop against somebody else's webhook endpoint is how a
+    district gets rate-limited.
+
+    deliver_pending() commits per event and carries its own backoff on the row,
+    so this loop stays a timer and nothing else — a restart mid-backlog does not
+    re-send what already arrived, and does not reset a failing channel to "try
+    now".
+    """
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                await deliver_pending(db)
+        except Exception:
+            logger.exception("Unexpected error in notification delivery loop")
+        await asyncio.sleep(NOTIFICATION_DELIVERY_INTERVAL_SECONDS)
+
+
 HELD_JOB_PURGE_INTERVAL_SECONDS = 15 * 60
 
 
@@ -667,6 +761,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_counter_reading_purge_loop()),
         asyncio.create_task(_syslog_event_purge_loop()),
         asyncio.create_task(_audit_event_purge_loop()),
+        asyncio.create_task(_notification_delivery_loop()),
         asyncio.create_task(_held_job_purge_loop()),
         asyncio.create_task(_failed_job_purge_loop()),
         asyncio.create_task(_stuck_job_reconcile_loop()),
@@ -758,6 +853,9 @@ app.include_router(internal.router, prefix="/api/v1/internal", tags=["internal"]
 app.include_router(syslog_router.router, prefix="/api/v1/syslog", tags=["syslog"])
 app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["settings"])
 app.include_router(audit_router.router, prefix="/api/v1/audit", tags=["audit"])
+app.include_router(
+    notifications_router.router, prefix="/api/v1/notifications", tags=["notifications"]
+)
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(device_overrides.router, prefix="/api/v1/devices", tags=["devices"])
 app.include_router(

@@ -18,6 +18,8 @@ from app.models.job import Job
 from app.models.printer import Printer
 from app.models.quota import PrinterUserQuota, QuotaSettings
 from app.models.release_bypass import PrinterReleaseBypass
+from app.notifications import conditions as notify
+from app.notifications.settings import get_or_create_notification_settings
 
 
 async def get_or_create_quota_settings(db: AsyncSession) -> QuotaSettings:
@@ -198,5 +200,33 @@ async def resolve_hold_reason(
     start, end = period_bounds(quota.period, datetime.now(UTC))
     used = await get_pages_used(db, printer.id, submitted_by, start, end)
     if used >= quota.page_limit:
+        # Keyed per person per printer per *period start*, so somebody at their
+        # limit on the 3rd generates one message rather than one for every job
+        # they try until the period rolls over. The period start is in the key
+        # because the next period is a genuinely new situation.
+        await notify.observe(
+            db,
+            await get_or_create_notification_settings(db),
+            kind=notify.QUOTA_EXCEEDED,
+            dedupe_key=f"{notify.QUOTA_EXCEEDED}:{printer.id}:{submitted_by}:{start.date()}",
+            title=f"{submitted_by} has reached their print quota",
+            body=(
+                f"{used} of {quota.page_limit} pages on {printer.name} "
+                f"for the {quota.period} period beginning {start.date()}. "
+                f"Further jobs are being held."
+            ),
+            subject_type="user",
+            subject_id=submitted_by,
+            severity="info",
+            # No polling path stands behind this one. A printer is looked at
+            # every minute and a cartridge every half hour, so a second sighting
+            # is guaranteed; a quota is only ever observed when somebody submits
+            # a job. Waiting for a second sighting here means the first person to
+            # hit their limit and then stop trying is never reported at all.
+            #
+            # Nor is there anything to settle: a jam might clear itself, a quota
+            # does not.
+            raise_immediately=True,
+        )
         return "quota"
     return None
