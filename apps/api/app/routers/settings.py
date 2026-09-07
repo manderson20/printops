@@ -28,6 +28,8 @@ from app.integrations.google_workspace import run_sync as run_google_workspace_s
 from app.integrations.mosyle import MosyleClient, MosyleError
 from app.integrations.mosyle import run_sync as run_mosyle_sync
 from app.ldap_relay.service import get_or_create_ldap_relay_settings
+from app.mail.send import MailError, send_mail
+from app.mail.settings import get_or_create_smtp_settings
 from app.models.classguard import ClassGuardSettings
 from app.models.google_sso import GoogleSsoSettings
 from app.models.google_workspace import GoogleWorkspaceSettings, GoogleWorkspaceUser
@@ -35,6 +37,7 @@ from app.models.mosyle import MosyleSettings
 from app.models.release import PrintReleaseSettings
 from app.models.report import ReportFormulaSettings
 from app.models.server_settings import ServerSettings
+from app.models.smtp import SmtpSettings
 from app.models.snmp import SnmpDefaultsSettings
 from app.models.zabbix import ZabbixSettings
 from app.printers.snmp_counters import get_or_create_snmp_defaults
@@ -65,6 +68,7 @@ from app.schemas.server_settings import (
     TlsCertificateStatusOut,
 )
 from app.schemas.session import SessionSettingsOut, SessionSettingsUpdate
+from app.schemas.smtp import SmtpSettingsOut, SmtpSettingsUpdate, SmtpTestRequest
 from app.schemas.snmp import SnmpDefaultsOut, SnmpDefaultsUpdate
 from app.schemas.syslog import SyslogSettingsOut, SyslogSettingsUpdate
 from app.schemas.untracked_copies import UntrackedCopySettingsOut, UntrackedCopySettingsUpdate
@@ -1235,3 +1239,91 @@ async def update_ldap_relay_settings(
     return LdapRelaySettingsOut(
         enabled=settings.enabled, base_dn=settings.base_dn, port=settings.port
     )
+
+
+# --- Email relay (app/mail/) ------------------------------------------------
+#
+# Its own settings rather than a corner of the notification config: scheduled
+# report delivery is a separate item on the roadmap and will want exactly this,
+# one relay configured once, whatever is being sent.
+
+
+def _smtp_to_out(settings: SmtpSettings) -> SmtpSettingsOut:
+    return SmtpSettingsOut(
+        enabled=settings.enabled,
+        host=settings.host,
+        port=settings.port,
+        username=settings.username,
+        from_address=settings.from_address,
+        from_name=settings.from_name,
+        use_starttls=settings.use_starttls,
+        has_password=bool(settings.password_encrypted),
+    )
+
+
+@router.get("/smtp", response_model=SmtpSettingsOut, dependencies=[Depends(require_role("admin"))])
+async def get_smtp_settings(db: AsyncSession = Depends(get_db)):
+    return _smtp_to_out(await get_or_create_smtp_settings(db))
+
+
+@router.put("/smtp", response_model=SmtpSettingsOut, dependencies=[Depends(require_role("admin"))])
+async def update_smtp_settings(
+    payload: SmtpSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
+    settings = await get_or_create_smtp_settings(db)
+    before = snapshot(settings)
+    updates = payload.model_dump(exclude_unset=True)
+
+    for field in (
+        "enabled",
+        "host",
+        "port",
+        "username",
+        "from_address",
+        "from_name",
+        "use_starttls",
+    ):
+        if updates.get(field) is not None:
+            setattr(settings, field, updates[field])
+
+    if "password" in updates:
+        # An explicit empty string clears it — some relays on a trusted VLAN
+        # take no authentication at all, and there has to be a way to say so.
+        settings.password_encrypted = encrypt(updates["password"]) if updates["password"] else None
+
+    record_settings_update(
+        db,
+        current_user,
+        area="smtp",
+        label="Email relay",
+        obj=settings,
+        before=before,
+        request=request,
+    )
+    await db.commit()
+    await db.refresh(settings)
+    return _smtp_to_out(settings)
+
+
+@router.post("/smtp/test", dependencies=[Depends(require_role("admin"))])
+async def test_smtp_settings(payload: SmtpTestRequest, db: AsyncSession = Depends(get_db)):
+    """Send one message now and report what happened.
+
+    Not audited: it changes nothing, and somebody sorting out a relay will press
+    it several times. The point is finding out here rather than at the first
+    real incident.
+    """
+    settings = await get_or_create_smtp_settings(db)
+    try:
+        await send_mail(
+            settings,
+            to=payload.to,
+            subject="PrintOps test message",
+            body="If you can read this, PrintOps can send mail through this relay.",
+        )
+    except MailError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return {"ok": True}

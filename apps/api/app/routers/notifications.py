@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.record import diff, record_audit, snapshot
 from app.db import get_db
 from app.deps import get_current_user, require_role
+from app.mail.settings import get_or_create_smtp_settings
 from app.models.notification import NotificationChannel, NotificationEvent
 from app.notifications.delivery import DeliveryError, send_to_channel
 from app.notifications.settings import get_or_create_notification_settings
@@ -21,6 +22,7 @@ from app.schemas.notification import (
     NotificationSettingsUpdate,
     channel_out,
     event_out,
+    validate_target,
 )
 
 # Admin-only: the channel list is a set of credentials, and the event feed says
@@ -135,7 +137,15 @@ async def update_channel(
         changes["enabled"] = {"from": channel.enabled, "to": updates["enabled"]}
         channel.enabled = updates["enabled"]
     if updates.get("target"):
-        channel.target = updates["target"]
+        # Revalidated against the stored kind. The schema cannot do it — an
+        # update does not carry the kind — and without this a webhook channel
+        # accepts an email address and fails at the first real incident.
+        try:
+            channel.target = validate_target(channel.kind, updates["target"])
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
         # A new URL clears the recorded failure: the thing that was failing is
         # not the thing configured now, and leaving the old error there would
         # read as though the replacement had already failed too.
@@ -207,7 +217,11 @@ async def test_channel(channel_id: UUID, db: AsyncSession = Depends(get_db)):
         created_at=datetime.now(UTC),
     )
     try:
-        await send_to_channel(channel, probe)
+        # An email channel needs the relay settings; without them send_mail
+        # refuses with "Email is not configured" and the Test button reports a
+        # failure that is really this endpoint's, not the relay's.
+        smtp = await get_or_create_smtp_settings(db) if channel.kind == "email" else None
+        await send_to_channel(channel, probe, smtp)
     except DeliveryError as exc:
         channel.last_error = str(exc)[:500]
         await db.commit()

@@ -25,11 +25,14 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.mail.send import MailError, send_mail
+from app.mail.settings import get_or_create_smtp_settings
 from app.models.notification import (
     MAX_DELIVERY_ATTEMPTS,
     NotificationChannel,
     NotificationEvent,
 )
+from app.models.smtp import SmtpSettings
 from app.notifications.settings import get_or_create_notification_settings
 
 logger = logging.getLogger(__name__)
@@ -86,8 +89,27 @@ class DeliveryError(Exception):
         self.permanent = permanent
 
 
-async def send_to_channel(channel: NotificationChannel, event: NotificationEvent) -> None:
-    """POST one event to one channel. Raises DeliveryError on failure."""
+async def send_to_channel(
+    channel: NotificationChannel,
+    event: NotificationEvent,
+    smtp: SmtpSettings | None = None,
+) -> None:
+    """Send one event to one channel. Raises DeliveryError on failure."""
+    if channel.kind == "email":
+        try:
+            await send_mail(
+                smtp,
+                to=channel.target,
+                # The title alone in the subject line: it is what shows in a
+                # notification bar, and "PrintOps" as a prefix would push the
+                # useful half off the end on a phone.
+                subject=event.title,
+                body=event.body,
+            )
+        except MailError as exc:
+            raise DeliveryError(str(exc), permanent=exc.permanent) from exc
+        return
+
     if channel.kind != "webhook":
         raise DeliveryError(f"Unsupported channel kind: {channel.kind!r}", permanent=True)
 
@@ -136,6 +158,15 @@ async def deliver_pending(db: AsyncSession, *, now: datetime | None = None) -> i
     if not channels:
         return 0
 
+    # Read once per pass rather than per message: a batch of twenty would
+    # otherwise be twenty identical queries, and the relay config cannot change
+    # underneath a single pass in any way that matters.
+    smtp = (
+        await get_or_create_smtp_settings(db)
+        if any(channel.kind == "email" for channel in channels)
+        else None
+    )
+
     due = (
         (
             await db.execute(
@@ -161,7 +192,7 @@ async def deliver_pending(db: AsyncSession, *, now: datetime | None = None) -> i
 
         for channel in channels:
             try:
-                await send_to_channel(channel, event)
+                await send_to_channel(channel, event, smtp)
             except DeliveryError as exc:
                 errors.append(f"{channel.name}: {exc}")
                 channel.last_error = str(exc)[:500]

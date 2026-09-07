@@ -1,9 +1,25 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.notification import MAX_DELIVERY_ATTEMPTS
+
+
+def validate_target(kind: str, target: str) -> str:
+    """What a channel of this kind can actually send to.
+
+    https only for a webhook: the URL is a bearer credential, and posting it in
+    cleartext to somebody else's endpoint hands it to anything on the path.
+    """
+    target = target.strip()
+    if kind == "webhook":
+        if not target.startswith("https://"):
+            raise ValueError("Webhook URLs must start with https://")
+    elif kind == "email":
+        if "@" not in target or target.startswith("@") or target.endswith("@"):
+            raise ValueError("That does not look like an email address")
+    return target
 
 
 class NotificationSettingsOut(BaseModel):
@@ -34,10 +50,11 @@ class NotificationChannelOut(BaseModel):
     id: UUID
     kind: str
     name: str
-    # Never the real URL. An incoming-webhook URL is a bearer credential
-    # wearing a URL's clothes: anybody who can read it can post into that space
-    # forever. It goes in write-only and comes back as a hint that identifies
-    # which one it is without handing it over.
+    # A webhook URL never comes back: it is a bearer credential wearing a URL's
+    # clothes, so it goes in write-only and returns only enough to tell two
+    # channels apart. An email address does come back in full — it is a
+    # destination, not a credential, and an admin needs to see who is being
+    # copied.
     target_hint: str
     enabled: bool
     last_error: str | None
@@ -50,21 +67,20 @@ class NotificationChannelCreate(BaseModel):
     kind: str = "webhook"
     enabled: bool = True
 
-    @field_validator("target")
-    @classmethod
-    def _must_be_https(cls, value: str) -> str:
-        """https only. The URL is a credential, and posting it in cleartext to
-        somebody else's endpoint hands it to anything on the path."""
-        if not value.startswith("https://"):
-            raise ValueError("Webhook URLs must start with https://")
-        return value
-
     @field_validator("kind")
     @classmethod
     def _known_kind(cls, value: str) -> str:
-        if value != "webhook":
-            raise ValueError("Only 'webhook' channels are supported yet")
+        if value not in ("webhook", "email"):
+            raise ValueError("kind must be 'webhook' or 'email'")
         return value
+
+    @model_validator(mode="after")
+    def _target_matches_kind(self):
+        """A webhook URL in the email box, or an address in the webhook box,
+        fails at the first real incident rather than here. Cheaper to say so
+        now, while somebody is looking at the form."""
+        self.target = validate_target(self.kind, self.target)
+        return self
 
 
 class NotificationChannelUpdate(BaseModel):
@@ -76,9 +92,14 @@ class NotificationChannelUpdate(BaseModel):
 
     @field_validator("target")
     @classmethod
-    def _must_be_https(cls, value: str | None) -> str | None:
-        if value is not None and not value.startswith("https://"):
-            raise ValueError("Webhook URLs must start with https://")
+    def _plausible(cls, value: str | None) -> str | None:
+        """A cheap shape check only. The real one is kind-specific and happens
+        in the router, which knows the stored kind — an update payload does
+        not carry it."""
+        if value is None:
+            return None
+        if not value.startswith("https://") and "@" not in value:
+            raise ValueError("Expected an https:// webhook URL or an email address")
         return value
 
 
@@ -111,10 +132,18 @@ def event_out(event) -> NotificationEventOut:
 
 
 def channel_out(channel) -> NotificationChannelOut:
-    """The last few characters only — enough to tell two channels apart on the
-    settings page, not enough to reconstruct one."""
+    """Enough to tell two channels apart on the settings page, not enough to
+    reconstruct one.
+
+    An email address is shown in full: it is a destination, not a credential,
+    and an admin needs to see which address a copy is going to. A webhook URL
+    is the opposite — anybody holding it can post into that space.
+    """
     target = channel.target or ""
-    hint = f"…{target[-8:]}" if len(target) > 8 else "…"
+    if channel.kind == "email":
+        hint = target
+    else:
+        hint = f"…{target[-8:]}" if len(target) > 8 else "…"
     return NotificationChannelOut(
         id=channel.id,
         kind=channel.kind,

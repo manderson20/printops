@@ -45,6 +45,10 @@ EXEMPT = {
     # Read-only probes. They reach out to a third party and report back; nothing
     # in PrintOps changes, and they are POSTs only because they take a body.
     "test_mosyle_connection": "read-only connection probe, changes nothing",
+    "test_smtp_settings": (
+        "sends one message and reports the result; somebody sorting out a relay "
+        "will press it several times and should not fill the trail"
+    ),
     "test_classguard_connection": "read-only connection probe, changes nothing",
     "test_google_workspace_connection": "read-only connection probe, changes nothing",
     # Cache refreshes from an external source of truth. These write a lot of
