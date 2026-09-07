@@ -5,6 +5,13 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.79.1] - 2026-09-07
+
+- Removed real staff email addresses from the source. Test fixtures and one
+  code comment carried four addresses of actual people, in a public
+  repository. They are now `@example.org` placeholders. No behaviour changes;
+  this is the repository not publishing colleagues' contact details.
+
 ## [0.79.0] - 2026-09-07
 
 - **Notifications can go to email as well as chat.** Add an email channel

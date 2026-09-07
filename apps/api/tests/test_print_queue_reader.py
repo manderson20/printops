@@ -81,7 +81,7 @@ def test_parses_a_job_out_of_the_plist():
         {
             "job-id": 5814,
             "job-name": "Advisory.pdf",
-            "job-originating-user-name": "hfiala@brookfieldr3.org",
+            "job-originating-user-name": "alex.teacher@example.org",
             "job-state": 3,
             "job-priority": 50,
             "job-k-octets": 847,
@@ -95,7 +95,7 @@ def test_parses_a_job_out_of_the_plist():
         [job] = queued_jobs()
     assert job.cups_job_id == 5814
     assert job.printer_id == "8142ccdb-195b-4acf-acfd-56bc52162b72"
-    assert job.owner == "hfiala@brookfieldr3.org"
+    assert job.owner == "alex.teacher@example.org"
     # job-k-octets is kilobytes; a size shown to a person should be bytes.
     assert job.size_bytes == 847 * 1024
     assert job.created_at is not None and job.created_at.year == 2026
@@ -135,11 +135,11 @@ def test_an_ipp_error_is_not_an_empty_queue():
 
 
 def test_ownership_is_case_insensitive_and_never_matches_nothing():
-    job = make(1, owner="HFiala@Brookfieldr3.org")
-    assert job.belongs_to("hfiala@brookfieldr3.org") is True
-    assert job.belongs_to(None, "hfiala@brookfieldr3.org") is True
+    job = make(1, owner="Alex.Teacher@Example.org")
+    assert job.belongs_to("alex.teacher@example.org") is True
+    assert job.belongs_to(None, "alex.teacher@example.org") is True
     assert job.belongs_to("someone@else.org") is False
     # A job cupsd gave us no owner for belongs to nobody — emphatically not to
     # whoever happens to be looking at the page.
     assert make(1, owner=None).belongs_to(None) is False
-    assert make(1, owner=None).belongs_to("hfiala@brookfieldr3.org") is False
+    assert make(1, owner=None).belongs_to("alex.teacher@example.org") is False

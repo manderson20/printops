@@ -70,7 +70,7 @@ async def device(db, printer):
         vendor="canon",
         connector_type="canon_department_id",
         printer_id=printer.id,
-        default_owner_email="manderson@brookfieldr3.org",
+        default_owner_email="admin@example.org",
     )
     db.add(device)
     await db.commit()
@@ -123,7 +123,7 @@ async def test_copies_since_the_baseline_belong_to_the_owner(db, device, printer
     assert result.attributed_pages == 45
     rows = await _usage(db)
     assert len(rows) == 1
-    assert rows[0].staff_email == "manderson@brookfieldr3.org"
+    assert rows[0].staff_email == "admin@example.org"
     assert rows[0].page_count == 45
     assert rows[0].activity_type == "copy"
     # The window is the two readings it was measured between, not "now".

@@ -27,7 +27,7 @@ from app.models.printer import Printer
 
 PRINTER_ID = uuid.UUID("66b8aef6-f874-4bfe-ab54-b9b9147ae17e")
 ME = "admin"
-SOMEONE_ELSE = "agerukink@brookfieldr3.org"
+SOMEONE_ELSE = "casey.aide@example.org"
 
 
 @pytest_asyncio.fixture

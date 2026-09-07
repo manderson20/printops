@@ -282,10 +282,10 @@ def test_naming_a_default_owner_starts_them_at_zero(client, auth_headers):
     updated = client.patch(
         f"/api/v1/mfp-devices/{device_id}",
         headers=auth_headers,
-        json={"default_owner_email": "manderson@brookfieldr3.org"},
+        json={"default_owner_email": "admin@example.org"},
     )
     assert updated.status_code == 200, updated.text
-    assert updated.json()["default_owner_email"] == "manderson@brookfieldr3.org"
+    assert updated.json()["default_owner_email"] == "admin@example.org"
     assert updated.json()["default_owner_attributed_through"] is None
 
 
@@ -329,7 +329,7 @@ def test_clearing_the_owner_empties_the_field_rather_than_storing_a_blank(client
     client.patch(
         f"/api/v1/mfp-devices/{device_id}",
         headers=auth_headers,
-        json={"default_owner_email": "manderson@brookfieldr3.org"},
+        json={"default_owner_email": "admin@example.org"},
     )
 
     cleared = client.patch(
@@ -345,7 +345,7 @@ def test_attribute_copies_on_an_unlinked_copier_explains_itself(client, auth_hea
     client.patch(
         f"/api/v1/mfp-devices/{device_id}",
         headers=auth_headers,
-        json={"default_owner_email": "manderson@brookfieldr3.org"},
+        json={"default_owner_email": "admin@example.org"},
     )
 
     response = client.post(

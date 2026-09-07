@@ -148,7 +148,7 @@ def test_rendered_page_is_a_single_letter_sized_pdf():
 
     printer = _FakePrinter(capabilities={"color_supported": True})
     info = build_page_info(printer, [_FakeCartridge("black", 5)])
-    pdf = _build_test_page(info, "manderson@brookfieldr3.org", "America/Chicago")
+    pdf = _build_test_page(info, "admin@example.org", "America/Chicago")
     assert pdf.startswith(b"%PDF")
     assert pdf.count(b"/Type /Page\n") <= 1
 
@@ -229,6 +229,6 @@ def test_a_device_that_reports_everything_still_fits_on_one_page():
         printer,
         [_FakeCartridge(c, 50) for c in ("black", "cyan", "magenta", "yellow")],
     )
-    pdf = _build_test_page(info, "manderson@brookfieldr3.org", "America/Chicago")
+    pdf = _build_test_page(info, "admin@example.org", "America/Chicago")
     assert pdf.startswith(b"%PDF")
     assert pdf.count(b"/Type /Page\n") <= 1

@@ -63,7 +63,7 @@ async def _held(session, printer, path="__auto__", created=None):
         printer_id=printer.id,
         status="held",
         hold_reason=offline_holds.HOLD_REASON,
-        submitted_by="sayers@brookfieldr3.org",
+        submitted_by="sam.office@example.org",
         document_name="4th Grade Reading Challenge",
         held_file_path=path,
         created_at=created or datetime.now(UTC),
@@ -226,7 +226,7 @@ async def test_a_job_waiting_for_a_printer_is_given_no_expiry(session):
         printer_id=printer.id,
         status="forwarding",
         hold_reason=offline_holds.HOLD_REASON,
-        submitted_by="sayers@brookfieldr3.org",
+        submitted_by="sam.office@example.org",
     )
     session.add(job)
     await session.commit()
@@ -253,7 +253,7 @@ async def test_an_ordinary_release_hold_still_expires(session):
         printer_id=printer.id,
         status="forwarding",
         hold_reason="pin_release",
-        submitted_by="someone@brookfieldr3.org",
+        submitted_by="someone@example.org",
     )
     session.add(job)
     await session.commit()
