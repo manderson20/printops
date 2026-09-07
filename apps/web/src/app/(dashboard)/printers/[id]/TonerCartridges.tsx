@@ -20,41 +20,55 @@ import { Input } from "@/components/ui/Field";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
 
-/** What a page costs in toner, from cartridge price and rated yield.
+/** What a page costs in toner — mirroring compute_printer_rate() exactly.
  *
- * The same rule the reports use, computed here from what is typed so the
- * effect of a price or yield is visible before it is saved: mono prices off
- * Black alone, colour off every configured cartridge summed, because a colour
- * page draws from all four.
+ * This panel previews a figure the server computes, so it has to agree with it
+ * in every case, not just the ordinary one. The first version reimplemented
+ * the rule from its description and diverged three ways: it required a
+ * non-zero cost, it summed however many colour cartridges were priced, and it
+ * indexed colour rows that do not exist on a mono printer. The last of those
+ * crashed the tab outright.
  *
- * This is the *rated* figure — cost divided by the yield printed on the box,
- * which manufacturers quote at ISO/IEC 19798's 5% coverage. A page of dense
- * graphics costs several times this and a mostly-blank page a fraction of it,
- * so it is an average, not a measurement of any particular page.
+ * The rule, from app/reports/formulas.py:
+ *   - configured means `yield_pages > 0`. Cost is not part of the test, so a
+ *     bundled cartridge priced at zero is configured and rates at $0.0000.
+ *   - mono prices off Black alone, or the flat rate if Black is unconfigured.
+ *   - colour prices off all four summed, and falls back to the flat rate
+ *     unless *every* slot is configured — so a half-finished setup does not
+ *     quietly report a fraction of the real colour cost.
  */
-function tonerCostPerPage(rows: Record<CartridgeColor, Row>): {
-  mono: number | null;
-  color: number | null;
-} {
-  const perColor = (color: CartridgeColor): number | null => {
-    const cost = Number(rows[color].cost);
-    const yieldPages = Number(rows[color].yield_pages);
+type Rate = { perPage: number; fromCartridges: boolean };
+
+function tonerCostPerPage(
+  rows: Partial<Record<CartridgeColor, Row>>,
+  fallbackMono: number,
+  fallbackColor: number,
+): { mono: Rate; color: Rate } {
+  const configured = (color: CartridgeColor): number | null => {
+    const row = rows[color];
+    // Absent entirely on a mono printer, where only the black row is built.
+    if (!row) return null;
+    const cost = Number(row.cost);
+    const yieldPages = Number(row.yield_pages);
     if (!Number.isFinite(cost) || !Number.isFinite(yieldPages)) return null;
-    if (cost <= 0 || yieldPages <= 0) return null;
+    if (yieldPages <= 0) return null;
     return cost / yieldPages;
   };
 
-  const black = perColor("black");
-  const configured = (["black", "cyan", "magenta", "yellow"] as CartridgeColor[])
-    .map(perColor)
-    .filter((value): value is number => value !== null);
+  const black = configured("black");
+  const all = (["black", "cyan", "magenta", "yellow"] as CartridgeColor[]).map(configured);
 
   return {
-    mono: black,
-    // Only meaningful once something beyond Black is priced; otherwise it
-    // would just repeat the mono figure and look like a colour page costs the
-    // same, which is the one thing this panel exists to disprove.
-    color: configured.length > 1 ? configured.reduce((sum, v) => sum + v, 0) : null,
+    mono:
+      black === null
+        ? { perPage: fallbackMono, fromCartridges: false }
+        : { perPage: black, fromCartridges: true },
+    color: all.every((value) => value !== null)
+      ? {
+          perPage: (all as number[]).reduce((sum, value) => sum + value, 0),
+          fromCartridges: true,
+        }
+      : { perPage: fallbackColor, fromCartridges: false },
   };
 }
 
@@ -131,11 +145,16 @@ export function TonerCartridgesCard({
   // Paper price per sheet, from Settings > Insights. Failure is silent: the
   // toner figures are the point here and still render without it.
   const [paperPerSheet, setPaperPerSheet] = useState<number | null>(null);
+  const [fallbackMono, setFallbackMono] = useState<number | null>(null);
+  const [fallbackColor, setFallbackColor] = useState<number | null>(null);
   useEffect(() => {
     let cancelled = false;
     getReportFormulaSettings()
       .then((settings) => {
-        if (!cancelled) setPaperPerSheet(settings.cost_per_sheet_paper);
+        if (cancelled) return;
+        setPaperPerSheet(settings.cost_per_sheet_paper);
+        setFallbackMono(settings.cost_per_page_mono);
+        setFallbackColor(settings.cost_per_page_color);
       })
       .catch(() => undefined);
     return () => {
@@ -265,6 +284,9 @@ export function TonerCartridgesCard({
           rows={rows}
           paperPerSheet={paperPerSheet}
           duplexSupported={duplexSupported}
+          colorSupported={colorSupported}
+          fallbackMono={fallbackMono}
+          fallbackColor={fallbackColor}
         />
       )}
 
@@ -387,32 +409,35 @@ function CostSummary({
   rows,
   paperPerSheet,
   duplexSupported,
+  colorSupported,
+  fallbackMono,
+  fallbackColor,
 }: {
-  rows: Record<CartridgeColor, Row>;
+  rows: Partial<Record<CartridgeColor, Row>>;
   paperPerSheet: number | null;
   duplexSupported: boolean;
+  colorSupported: boolean;
+  fallbackMono: number | null;
+  fallbackColor: number | null;
 }) {
-  const { mono, color } = tonerCostPerPage(rows);
+  // Until the flat rates load there is no honest figure to show: a cartridge
+  // that is not configured prices off them, and guessing zero would put a
+  // confidently wrong number on screen.
+  if (fallbackMono === null || fallbackColor === null) return null;
 
-  if (mono === null && color === null) {
-    return (
-      <p className="mb-3 rounded-lg border border-dashed border-black/[.12] p-3 text-sm text-zinc-500 dark:border-white/[.15]">
-        Enter a cartridge cost and yield below to see what a page costs on this
-        printer.
-      </p>
-    );
-  }
-
+  const { mono, color } = tonerCostPerPage(rows, fallbackMono, fallbackColor);
   const paper = paperPerSheet ?? 0;
   // A duplex sheet carries two pages of toner on one sheet of paper, which is
   // the whole economics of duplex: it halves the paper and changes the toner
   // not at all.
   const sheet = (perPage: number, sides: number) => perPage * sides + paper;
 
-  const kinds: [string, number | null][] = [
-    ["Mono", mono],
-    ["Color", color],
-  ];
+  const kinds: [string, Rate][] = colorSupported
+    ? [
+        ["Mono", mono],
+        ["Color", color],
+      ]
+    : [["Mono", mono]];
 
   return (
     <div className="mb-3 overflow-x-auto rounded-lg border border-black/[.08] p-3 dark:border-white/[.145]">
@@ -432,41 +457,40 @@ function CostSummary({
           </tr>
         </thead>
         <tbody>
-          {kinds.map(([label, perPage]) => (
+          {kinds.map(([label, rate]) => (
             <tr
               key={label}
               className="border-t border-black/[.06] dark:border-white/[.1]"
             >
               <td className="py-1.5 pr-4 text-zinc-600 dark:text-zinc-400">
                 {label}
+                {!rate.fromCartridges ? (
+                  <span
+                    className="ml-1 text-xs text-zinc-500"
+                    title={
+                      label === "Color"
+                        ? "All four cartridges must have a yield before color prices off them; until then the flat rate from Settings > Insights applies."
+                        : "The black cartridge has no yield yet, so the flat rate from Settings > Insights applies."
+                    }
+                  >
+                    flat rate
+                  </span>
+                ) : null}
               </td>
-              {perPage === null ? (
-                <td
-                  className="py-1.5 pr-4 text-zinc-500"
-                  colSpan={duplexSupported ? 3 : 2}
-                >
-                  {label === "Color"
-                    ? "Price a color cartridge to see this"
-                    : "Price the black cartridge to see this"}
+              <td className="py-1.5 pr-4 text-zinc-600 dark:text-zinc-400">
+                {money(rate.perPage)}
+              </td>
+              <td className="py-1.5 pr-4 font-semibold text-black dark:text-zinc-50">
+                {money(sheet(rate.perPage, 1))}
+              </td>
+              {duplexSupported ? (
+                <td className="py-1.5 pr-4 font-semibold text-black dark:text-zinc-50">
+                  {money(sheet(rate.perPage, 2))}
+                  <span className="ml-1 text-xs font-normal text-zinc-500">
+                    2 pages
+                  </span>
                 </td>
-              ) : (
-                <>
-                  <td className="py-1.5 pr-4 text-zinc-600 dark:text-zinc-400">
-                    {money(perPage)}
-                  </td>
-                  <td className="py-1.5 pr-4 font-semibold text-black dark:text-zinc-50">
-                    {money(sheet(perPage, 1))}
-                  </td>
-                  {duplexSupported ? (
-                    <td className="py-1.5 pr-4 font-semibold text-black dark:text-zinc-50">
-                      {money(sheet(perPage, 2))}
-                      <span className="ml-1 text-xs font-normal text-zinc-500">
-                        2 pages
-                      </span>
-                    </td>
-                  ) : null}
-                </>
-              )}
+              ) : null}
             </tr>
           ))}
         </tbody>
@@ -479,10 +503,10 @@ function CostSummary({
         {duplexSupported
           ? "Duplex halves the paper and changes the toner not at all — two pages of toner on one sheet. "
           : ""}
-        Toner is priced from cartridge cost divided by rated yield, which is
-        quoted against a standard test page of about 5% coverage per colorant
-        (ISO/IEC 19752 and 19798). It is an average: a dense page costs several
-        times this, a mostly-blank page a fraction.
+        A cartridge counts as configured once it has a yield, whatever its cost.
+        Toner is priced from cartridge cost divided by rated yield, quoted
+        against a standard test page of about 5% coverage per colorant (ISO/IEC
+        19752 and 19798) — an average, not what any particular page costs.
       </p>
     </div>
   );
