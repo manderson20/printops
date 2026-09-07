@@ -5,6 +5,22 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.83.0] - 2026-09-07
+
+- **What a sheet costs, on the printer's Toner tab.** Mono and colour, simplex
+  and duplex, toner and paper broken out — computed live from the cartridge
+  cost and yield as they are typed, so a price can be checked before it is
+  saved. It uses the same rule the reports do: mono prices off Black alone,
+  colour off every configured cartridge summed.
+- The duplex column is omitted for printers that cannot duplex, from the
+  printer's discovered capabilities. Quoting a price for something the machine
+  will not do is worse than leaving it out.
+- The panel states what the figure is: cartridge cost over rated yield, quoted
+  against a standard test page of about 5% coverage **per colorant** (ISO/IEC
+  19752 and 19798). It is an average — a dense page costs several times it, a
+  mostly-blank page a fraction — which is the gap coverage measurement is meant
+  to close.
+
 ## [0.82.0] - 2026-09-07
 
 - **A Years tab under Settings → Reporting Periods**, listing every year the
