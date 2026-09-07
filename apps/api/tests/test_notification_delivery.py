@@ -20,6 +20,7 @@ from app.models.notification import (
     MAX_DELIVERY_ATTEMPTS,
     NotificationChannel,
     NotificationEvent,
+    NotificationSettings,
 )
 from app.notifications import delivery
 from app.notifications.delivery import (
@@ -57,7 +58,8 @@ async def db():
     await engine.dispose()
 
 
-async def _setup(db, *, enabled=True):
+async def _setup(db, *, enabled=True, notifications_on=True):
+    db.add(NotificationSettings(enabled=notifications_on))
     db.add(
         NotificationChannel(
             kind="webhook", name="Helpdesk", target="https://chat.example.org/hook", enabled=enabled
@@ -152,11 +154,11 @@ async def test_an_event_in_backoff_is_left_alone(db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_delivery_gives_up_rather_than_queueing_forever(db, monkeypatch):
-    """A revoked webhook URL never succeeds. Retrying it forever turns one dead
-    channel into a permanently growing queue and a permanently failing loop."""
+async def test_a_transient_failure_is_eventually_given_up_on(db, monkeypatch):
+    """Even something that might come back does not get retried forever, or one
+    dead channel becomes a permanently growing queue."""
     await _setup(db)
-    _sender(monkeypatch, lambda n: DeliveryError("HTTP 404: no such space"))
+    _sender(monkeypatch, lambda n: DeliveryError("HTTP 503: still down"))
 
     at = NOW
     for _ in range(MAX_DELIVERY_ATTEMPTS + 3):
@@ -166,6 +168,36 @@ async def test_delivery_gives_up_rather_than_queueing_forever(db, monkeypatch):
     event = (await db.execute(select(NotificationEvent))).scalar_one()
     assert event.attempts == MAX_DELIVERY_ATTEMPTS
     assert event.delivered_at is None
+
+
+@pytest.mark.asyncio
+async def test_a_permanent_rejection_is_not_retried_at_all(db, monkeypatch):
+    """A revoked URL or a deleted space answers the same way every time.
+    Sending the identical request seven more times is noise against somebody
+    else's server and delays nothing but the giving up."""
+    await _setup(db)
+    calls = _sender(monkeypatch, lambda n: DeliveryError("HTTP 404: no such space", permanent=True))
+
+    await deliver_pending(db, now=NOW)
+    await deliver_pending(db, now=NOW + timedelta(days=1))
+
+    assert len(calls) == 1
+    event = (await db.execute(select(NotificationEvent))).scalar_one()
+    assert event.attempts == MAX_DELIVERY_ATTEMPTS
+    assert event.next_attempt_at is None
+
+
+@pytest.mark.asyncio
+async def test_turning_notifications_off_stops_what_is_already_queued(db, monkeypatch):
+    """The switch governs sending, not just raising. Otherwise unchecking it
+    produces one last burst — the opposite of what the admin asked for."""
+    await _setup(db, notifications_on=False)
+    calls = _sender(monkeypatch, lambda n: None)
+
+    assert await deliver_pending(db, now=NOW) == 0
+    assert calls == []
+    event = (await db.execute(select(NotificationEvent))).scalar_one()
+    assert event.attempts == 0
 
 
 @pytest.mark.asyncio
@@ -280,6 +312,21 @@ async def test_a_network_error_is_never_permanent(monkeypatch):
     assert caught.value.permanent is False
 
 
+def test_discord_gets_content_and_everyone_else_gets_text():
+    """Google Chat, Slack and Teams render `text`. Discord ignores it, treats
+    the message as empty and answers 400 — and the settings page advertises
+    Discord, so every real Discord notification would have failed."""
+    event = NotificationEvent(kind="k", dedupe_key="d", title="t", body="b")
+
+    assert "text" in webhook_payload(event, "https://chat.googleapis.com/v1/spaces/x")
+    assert "text" in webhook_payload(event, "https://hooks.slack.com/services/x")
+    assert "text" in webhook_payload(event, "https://example.webhook.office.com/x")
+    assert "content" in webhook_payload(event, "https://discord.com/api/webhooks/1/x")
+    assert "content" in webhook_payload(event, "https://ptb.discord.com/api/webhooks/1/x")
+    # No URL at all must not silently become the Discord shape.
+    assert "text" in webhook_payload(event)
+
+
 def test_the_message_says_what_and_where():
     """A message that does not say which printer, or which room, costs somebody
     a lookup before they can act on it."""
@@ -294,7 +341,7 @@ def test_the_message_says_what_and_where():
 
     assert "ES Library Printer" in text
     assert "ES / Library" in text
-    assert webhook_payload(event) == {"text": text}
+    assert webhook_payload(event, "https://chat.googleapis.com/x") == {"text": text}
 
 
 @pytest.mark.asyncio

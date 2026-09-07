@@ -218,6 +218,15 @@ async def resolve_hold_reason(
             subject_type="user",
             subject_id=submitted_by,
             severity="info",
+            # No polling path stands behind this one. A printer is looked at
+            # every minute and a cartridge every half hour, so a second sighting
+            # is guaranteed; a quota is only ever observed when somebody submits
+            # a job. Waiting for a second sighting here means the first person to
+            # hit their limit and then stop trying is never reported at all.
+            #
+            # Nor is there anything to settle: a jam might clear itself, a quota
+            # does not.
+            raise_immediately=True,
         )
         return "quota"
     return None

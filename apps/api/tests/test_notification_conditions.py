@@ -28,7 +28,9 @@ START = datetime(2026, 9, 7, 9, 0, tzinfo=UTC)
 
 
 @pytest_asyncio.fixture
-async def db():
+async def db_factory():
+    """A session factory, for the tests that need two sessions at once to show
+    what happens when two observers race."""
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -36,10 +38,14 @@ async def db():
     )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with factory() as session:
-        yield session
+    yield async_sessionmaker(engine, expire_on_commit=False)
     await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def db(db_factory):
+    async with db_factory() as session:
+        yield session
 
 
 def settings(**overrides) -> NotificationSettings:
@@ -254,3 +260,89 @@ async def test_every_kind_has_a_settings_flag():
     assert set(conditions.ENABLED_FLAG) == kinds
     for flag in conditions.ENABLED_FLAG.values():
         assert hasattr(NotificationSettings, flag), f"{flag} is not a column"
+
+
+@pytest.mark.asyncio
+async def test_a_condition_with_no_polling_behind_it_can_raise_at_once(db):
+    """Quota is the case. A printer is looked at every minute and a cartridge
+    every half hour, so a second sighting is guaranteed; a quota is only ever
+    observed when somebody submits a job. Waiting for a second sighting means
+    the first person to hit their limit and then stop trying is never reported.
+
+    There is also nothing to settle — a jam may clear itself, a quota does not.
+    """
+    cfg = settings(notify_quota_exceeded=True)
+    raised = await observe(
+        db,
+        cfg,
+        kind=conditions.QUOTA_EXCEEDED,
+        dedupe_key="quota.exceeded:p1:someone@example.org:2026-09-01",
+        title="Quota reached",
+        body="200 of 200 pages",
+        raise_immediately=True,
+        now=START,
+    )
+
+    assert raised is not None
+    assert await _events(db) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_immediate_condition_still_only_raises_once(db):
+    """Every subsequent job from the same person in the same period must be
+    silent, or somebody at their limit generates a message per attempt."""
+    cfg = settings(notify_quota_exceeded=True)
+    for _ in range(5):
+        await observe(
+            db,
+            cfg,
+            kind=conditions.QUOTA_EXCEEDED,
+            dedupe_key="quota.exceeded:p1:someone@example.org:2026-09-01",
+            title="Quota reached",
+            body="200 of 200 pages",
+            raise_immediately=True,
+            now=START,
+        )
+
+    assert await _events(db) == 1
+
+
+@pytest.mark.asyncio
+async def test_two_sessions_observing_the_same_condition_raise_once(db_factory):
+    """Two jobs held on quota at the same moment, or a manual toner check
+    overlapping the poll loop. The unique index stops a duplicate *state*;
+    nothing stops a duplicate *event* except the compare-and-set, and
+    duplicates are the failure people notice."""
+    cfg = settings()
+    key = "printer.error:p1:media-jam"
+
+    async with db_factory() as first, db_factory() as second:
+        for session in (first, second):
+            await observe(
+                session,
+                cfg,
+                kind=PRINTER_ERROR,
+                dedupe_key=key,
+                title="Jam",
+                body="Paper jam",
+                now=START,
+            )
+            await session.commit()
+
+        later = START + timedelta(minutes=15)
+        raised = []
+        for session in (first, second):
+            event = await observe(
+                session,
+                cfg,
+                kind=PRINTER_ERROR,
+                dedupe_key=key,
+                title="Jam",
+                body="Paper jam",
+                now=later,
+            )
+            await session.commit()
+            if event is not None:
+                raised.append(event)
+
+    assert len(raised) == 1

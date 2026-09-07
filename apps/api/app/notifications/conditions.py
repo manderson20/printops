@@ -30,7 +30,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.notification import (
@@ -75,6 +76,7 @@ async def observe(
     subject_type: str | None = None,
     subject_id: Any = None,
     severity: str = "warning",
+    raise_immediately: bool = False,
     now: datetime | None = None,
 ) -> NotificationEvent | None:
     """Report that a condition is currently true. Call on every pass.
@@ -84,15 +86,16 @@ async def observe(
     settle window. Returns None every other time, including while notifications
     are switched off, so callers do not need to check first.
 
+    `raise_immediately` skips the settle window, for a condition that is not
+    transient and has no polling path behind it. A quota is reached in an
+    instant and stays reached, and nothing observes it again unless the person
+    submits another job — so waiting for a second sighting there means never
+    telling anybody.
+
     Does not commit. The caller's transaction carries it.
     """
     now = now or datetime.now(UTC)
 
-    # The state row is kept even when the kind is switched off, deliberately.
-    # Turning a trigger back on should not immediately fire for conditions that
-    # have been quietly true for a week — those are not news, and a burst of
-    # them on the first poll after re-enabling is exactly how somebody decides
-    # the feature is broken.
     state = (
         await db.execute(
             select(NotificationState).where(NotificationState.dedupe_key == dedupe_key)
@@ -100,20 +103,39 @@ async def observe(
     ).scalar_one_or_none()
 
     if state is None:
-        db.add(
-            NotificationState(
-                dedupe_key=dedupe_key,
-                kind=kind,
-                subject_type=subject_type,
-                subject_id=str(subject_id) if subject_id is not None else None,
-                first_seen_at=now,
-                last_seen_at=now,
-                # Backdated so a condition first seen while the kind was off is
-                # treated as already-known rather than new.
-                notified_at=None if kind_enabled(settings, kind) else now,
+        # A savepoint rather than a plain add: two sessions can observe the same
+        # condition at the same moment — two jobs held on quota, a manual toner
+        # check overlapping the poll loop — and the loser of that race should
+        # quietly do nothing rather than raise an IntegrityError out of a status
+        # poll and abort the caller's whole transaction.
+        try:
+            async with db.begin_nested():
+                db.add(
+                    NotificationState(
+                        dedupe_key=dedupe_key,
+                        kind=kind,
+                        subject_type=subject_type,
+                        subject_id=str(subject_id) if subject_id is not None else None,
+                        first_seen_at=now,
+                        last_seen_at=now,
+                        # Backdated so a condition first seen while the kind was
+                        # off is treated as already-known rather than new.
+                        notified_at=None if kind_enabled(settings, kind) else now,
+                    )
+                )
+        except IntegrityError:
+            # Somebody else created it in the gap. Their row is the one that
+            # counts; this pass has nothing to add.
+            return None
+
+        if not raise_immediately:
+            # Nothing to measure a duration against yet.
+            return None
+        state = (
+            await db.execute(
+                select(NotificationState).where(NotificationState.dedupe_key == dedupe_key)
             )
-        )
-        return None
+        ).scalar_one()
 
     state.last_seen_at = now
     if state.notified_at is not None:
@@ -121,14 +143,29 @@ async def observe(
     if not kind_enabled(settings, kind):
         return None
 
-    settle = timedelta(minutes=max(0, settings.settle_minutes if settings else 0))
-    first_seen = state.first_seen_at
-    if first_seen.tzinfo is None:
-        first_seen = first_seen.replace(tzinfo=UTC)
-    if now - first_seen < settle:
+    if not raise_immediately:
+        settle = timedelta(minutes=max(0, settings.settle_minutes if settings else 0))
+        first_seen = state.first_seen_at
+        if first_seen.tzinfo is None:
+            first_seen = first_seen.replace(tzinfo=UTC)
+        if now - first_seen < settle:
+            return None
+
+    # Compare-and-set. Of two sessions arriving past the settle window at the
+    # same instant, exactly one gets rowcount 1 and raises. The unique index
+    # prevents a duplicate *state*; nothing prevents a duplicate *event*, and
+    # duplicates are the failure people actually notice.
+    claimed = await db.execute(
+        update(NotificationState)
+        .where(
+            NotificationState.dedupe_key == dedupe_key,
+            NotificationState.notified_at.is_(None),
+        )
+        .values(notified_at=now, last_seen_at=now)
+    )
+    if claimed.rowcount == 0:
         return None
 
-    state.notified_at = now
     event = NotificationEvent(
         kind=kind,
         dedupe_key=dedupe_key,
