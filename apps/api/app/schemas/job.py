@@ -52,6 +52,28 @@ class JobUpdate(BaseModel):
     held_job_options: str | None = None
 
 
+class JobCoverageOut(BaseModel):
+    """A job's measured ink coverage, per colorant.
+
+    Per colorant rather than a single total because that is what a cartridge
+    yield is quoted against — a total cannot be priced without assuming a
+    colour mix nobody measured.
+    """
+
+    pages_measured: int
+    cyan: float
+    magenta: float
+    yellow: float
+    black: float
+    # Measured coverage over the coverage a rated yield assumes. 1.0 is a page
+    # exactly like the manufacturer's test page; the interesting jobs are the
+    # ones far from it in either direction.
+    ratio: float | None = None
+    measured_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class JobOut(BaseModel):
     id: UUID
     printer_id: UUID
@@ -75,6 +97,14 @@ class JobOut(BaseModel):
     held_expires_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+    # How much ink this job actually laid down, where it was measured. Absent
+    # for a job the loop has not reached, for one whose spool file aged out,
+    # and always for a copy — walk-up copying produces no document to measure.
+    # Absent rather than zero: "not measured" and "measured, and it was blank"
+    # are different facts, and a reader who cannot tell them apart will average
+    # one into the other.
+    coverage: "JobCoverageOut | None" = None
 
     model_config = {"from_attributes": True}
 

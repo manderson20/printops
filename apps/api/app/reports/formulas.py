@@ -206,3 +206,126 @@ def copy_cost(
         paper_cost=paper_cost,
         total_cost=toner_cost + paper_cost,
     )
+
+
+# --- what a job actually cost, where its coverage was measured --------------
+
+
+class CoverageLike(Protocol):
+    cyan: float
+    magenta: float
+    yellow: float
+    black: float
+
+
+@dataclass
+class ChannelRates:
+    """What one page of each colorant costs at the rated yield.
+
+    Per channel rather than the summed colour rate, because coverage is
+    measured per channel and the channels do not cost the same. Averaging them
+    and multiplying by the total charges every colorant the same average price:
+    a black-heavy page printed in colour would be billed a quarter of the CMYK
+    rate rather than the black rate it actually consumed, and black is usually
+    the cheapest of the four.
+    """
+
+    cyan: float
+    magenta: float
+    yellow: float
+    black: float
+
+    @classmethod
+    def from_cartridges(cls, cartridges: list[CartridgeLike]) -> "ChannelRates | None":
+        """None unless all four are configured — the same condition under which
+        compute_printer_rate uses cartridge pricing at all. A partial set has no
+        honest per-channel answer."""
+        by_color = {c.color: c for c in cartridges if c.yield_pages > 0}
+        if not all(color in by_color for color in CARTRIDGE_COLORS):
+            return None
+        rate = {c: by_color[c].cost / by_color[c].yield_pages for c in CARTRIDGE_COLORS}
+        return cls(
+            cyan=rate["cyan"],
+            magenta=rate["magenta"],
+            yellow=rate["yellow"],
+            black=rate["black"],
+        )
+
+
+@dataclass
+class MeasuredTonerCost:
+    """A job's toner cost from what it actually put on the page.
+
+    `ratio` is the measured cost over the rated cost for the same pages — 1.0
+    for a job exactly like the manufacturer's test page. The jobs measured on
+    the first estate ranged from 0.07 to 8.8, which is the whole reason for
+    computing this rather than multiplying a page count.
+    """
+
+    toner_cost: float
+    ratio: float
+
+
+def measured_toner_cost(
+    pages: int,
+    color_mode: str | None,
+    coverage: "CoverageLike",
+    rate: PrinterTonerRate,
+    iso_coverage_per_channel: float,
+    channels: ChannelRates | None = None,
+) -> MeasuredTonerCost | None:
+    """Scale a printer's rated cost by how much ink the job actually used.
+
+    A cartridge's yield is quoted against a standard test page — about 5%
+    coverage **per colorant** under ISO/IEC 19752 and 19798 — so a channel
+    covered twice as heavily consumes roughly twice that cartridge's toner.
+
+    Per channel throughout, never against total ink. A CMYK page at ISO
+    conditions carries about 20% ink across four channels; comparing a measured
+    total against a 5% per-channel baseline would overstate a colour job
+    fourfold.
+
+    With `channels`, each colorant is scaled against its own rate and the four
+    are summed — the honest calculation. Without it the summed colour rate is
+    split evenly, which is the best available approximation when a printer has
+    no complete cartridge set, and is flagged by the caller rather than passed
+    off as measurement.
+
+    Returns None when the baseline is unusable rather than dividing by it: an
+    admin can set it to zero, and a cost of infinity propagates into every
+    total the job appears in.
+    """
+    if iso_coverage_per_channel <= 0 or pages <= 0:
+        return None
+
+    if color_mode != "color":
+        # A mono job puts down black alone, whatever the document contained.
+        rated = rate.mono_cost_per_page * pages
+        measured = rate.mono_cost_per_page * pages * (coverage.black / iso_coverage_per_channel)
+        return MeasuredTonerCost(toner_cost=measured, ratio=measured / rated if rated else 0.0)
+
+    rated = rate.color_cost_per_page * pages
+    if channels is not None:
+        measured = pages * sum(
+            channel_rate * (value / iso_coverage_per_channel)
+            for channel_rate, value in (
+                (channels.cyan, coverage.cyan),
+                (channels.magenta, coverage.magenta),
+                (channels.yellow, coverage.yellow),
+                (channels.black, coverage.black),
+            )
+        )
+    else:
+        # No per-channel rates available: split the summed rate evenly, which
+        # assumes the four cartridges cost the same. They rarely do.
+        per_channel = rate.color_cost_per_page / 4
+        measured = (
+            pages
+            * per_channel
+            * sum(
+                value / iso_coverage_per_channel
+                for value in (coverage.cyan, coverage.magenta, coverage.yellow, coverage.black)
+            )
+        )
+
+    return MeasuredTonerCost(toner_cost=measured, ratio=measured / rated if rated else 0.0)

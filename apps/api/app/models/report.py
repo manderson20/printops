@@ -42,6 +42,21 @@ class ReportFormulaSettings(Base, TimestampMixin):
     # PrinterTonerCartridge rows below.
     cost_per_sheet_paper: Mapped[float] = mapped_column(default=0.01, server_default="0.01")
 
+    # The page coverage a cartridge's rated yield is quoted against, **per
+    # colorant**, as a fraction. Every coverage-derived cost is a ratio against
+    # this, so it multiplies every such figure — getting it wrong by a factor
+    # of two doubles or halves the lot.
+    #
+    # 0.05 is the standard test page in ISO/IEC 19752 (mono) and 19798
+    # (colour). Per colorant, not total: a CMYK page at those conditions
+    # carries roughly 20% ink across four channels, and reading that 20% as the
+    # per-channel figure would understate every colour cost about fourfold.
+    #
+    # A setting rather than a constant because vendors do deviate and an
+    # installer may have datasheets quoting something else. It is theirs to
+    # state, not ours to assume.
+    iso_coverage_per_channel: Mapped[float] = mapped_column(default=0.05, server_default="0.05")
+
     # How many people the district prints for. Drives "enough to hand every
     # student N sheets", which appears on every screen showing that fact.
     #

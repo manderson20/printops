@@ -1020,6 +1020,10 @@ FORMULA_FIELDS = (
     # boundaries were here too until they moved to the reporting calendar
     # below, which can describe a year that is not a school's.
     "student_count",
+    # The coverage a cartridge's rated yield is quoted against, per colorant.
+    # Every coverage-derived cost is a ratio against it, so it multiplies the
+    # lot — a site whose datasheets quote 10% halves every such figure.
+    "iso_coverage_per_channel",
 )
 
 

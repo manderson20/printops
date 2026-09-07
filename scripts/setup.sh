@@ -230,6 +230,14 @@ EOF
   log "Installing the PrintOps CUPS backend"
   ./scripts/install_cups_backend.sh
 
+  # ---- CUPS job retention (for ink coverage measurement) ----
+  # CUPS discards a job's document the moment it prints unless told otherwise,
+  # and coverage is measured from that document after the fact. Without this
+  # the measurement loop finds nothing and records every job as expired — a
+  # feature that is silently absent rather than visibly broken.
+  log "Ensuring CUPS keeps job documents long enough to measure them"
+  ./scripts/ensure_job_retention.sh || warn "Could not set PreserveJobFiles; ink coverage will not be measured."
+
   # ---- CUPS held-job spool permissions ----
   # The CUPS backend (infra/cups/backends/printops) runs as root under
   # CUPS's own `lp` group and spools held documents to

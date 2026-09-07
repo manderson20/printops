@@ -12,6 +12,7 @@ from app.db import get_db
 from app.deps import get_current_user, require_role, verify_backend_token
 from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.job import Job
+from app.models.job_coverage import JobCoverage
 from app.models.printer import Printer
 from app.models.release import PrintReleaseSettings
 from app.models.report import ReportFormulaSettings
@@ -28,7 +29,15 @@ from app.reports.aggregation import (
 from app.reports.cost_rates import load_printer_rates
 from app.reports.formulas import FormulaValues, job_cost
 from app.schemas.auth import UserOut
-from app.schemas.job import JobCreate, JobListOut, JobOut, JobUpdate, UserUsageOut, UserUsagePage
+from app.schemas.job import (
+    JobCoverageOut,
+    JobCreate,
+    JobListOut,
+    JobOut,
+    JobUpdate,
+    UserUsageOut,
+    UserUsagePage,
+)
 
 router = APIRouter(dependencies=[Depends(verify_backend_token)])
 
@@ -52,9 +61,17 @@ async def list_jobs(
     Insights instead. Only frontend callers are admin-only pages (Jobs,
     the printer detail Jobs tab, Usage) — see apps/web's dashboard layout
     NAV_LINKS."""
+    # Outer join: most jobs have no coverage row — the loop has not reached
+    # them, their spool file aged out, or they are copies, which produce no
+    # document to measure. An inner join would silently drop them from the
+    # list, which is a far worse bug than a missing figure.
     stmt = (
-        select(Job, Printer.name)
+        select(Job, Printer.name, JobCoverage)
         .join(Printer, Job.printer_id == Printer.id)
+        .outerjoin(
+            JobCoverage,
+            (JobCoverage.job_id == Job.id) & (JobCoverage.state == "measured"),
+        )
         .order_by(Job.created_at.desc())
         .limit(min(limit, 200))
     )
@@ -64,22 +81,50 @@ async def list_jobs(
         stmt = stmt.where(func.lower(Job.submitted_by) == submitted_by.lower())
     rows = (await db.execute(stmt)).all()
     device_names = await resolve_device_names(
-        db, {job.mac_address for job, _ in rows if job.mac_address}
+        db, {job.mac_address for job, _, _ in rows if job.mac_address}
     )
     submitted_by_names = await resolve_display_names(
-        db, {job.submitted_by for job, _ in rows if job.submitted_by}
+        db, {job.submitted_by for job, _, _ in rows if job.submitted_by}
     )
+    iso = (await _get_or_create_usage_formula_settings(db)).iso_coverage_per_channel
     return [
         JobListOut(
-            **JobOut.model_validate(job).model_dump(),
+            **JobOut.model_validate(job).model_dump(exclude={"coverage"}),
+            coverage=_coverage_out(coverage, iso),
             printer_name=printer_name,
             device_name=device_names.get(job.mac_address) if job.mac_address else None,
             submitted_by_name=submitted_by_names.get(job.submitted_by)
             if job.submitted_by
             else None,
         )
-        for job, printer_name in rows
+        for job, printer_name, coverage in rows
     ]
+
+
+def _coverage_out(coverage, iso_coverage_per_channel: float) -> JobCoverageOut | None:
+    """A measured row as it is reported, with its ratio against the baseline.
+
+    The ratio is computed rather than stored because the baseline is a setting:
+    an admin who corrects it to match their datasheets should see every past
+    job re-expressed against the new figure, not just the ones measured
+    afterwards. The coverage itself is an observation and does not change; what
+    it means relative to a rated yield does.
+    """
+    if coverage is None:
+        return None
+    channels = (coverage.cyan, coverage.magenta, coverage.yellow, coverage.black)
+    ratio = None
+    if iso_coverage_per_channel > 0:
+        ratio = (sum(channels) / 4) / iso_coverage_per_channel
+    return JobCoverageOut(
+        pages_measured=coverage.pages_measured,
+        cyan=coverage.cyan,
+        magenta=coverage.magenta,
+        yellow=coverage.yellow,
+        black=coverage.black,
+        ratio=ratio,
+        measured_at=coverage.measured_at,
+    )
 
 
 @router.post("", response_model=JobOut, status_code=status.HTTP_201_CREATED)
