@@ -28,8 +28,10 @@ from app.db import get_db
 from app.deps import require_role
 from app.held_jobs.service import HoldNoLongerHeld, HoldNotFound, discard_hold
 from app.models.job import Job
+from app.models.job_coverage import JobCoverage
 from app.models.printer import Printer
 from app.printers.release import ReleaseError, submit_released_job
+from app.routers.jobs import _coverage_out, _get_or_create_usage_formula_settings
 from app.schemas.job import HeldJobReleaseIn, JobListOut, JobOut
 
 router = APIRouter(dependencies=[Depends(require_role("admin"))])
@@ -40,16 +42,29 @@ async def list_held_jobs(db: AsyncSession = Depends(get_db)):
     """Every job currently held, whatever is holding it. hold_reason rides
     along on JobOut so the UI can say which is which — an over-quota job and a
     job waiting at a release printer need different things from an admin."""
+    # Coverage joined here as well as in the jobs list. The measurement loop
+    # does not skip held jobs, so without this the same job shows a measured
+    # ratio on the Jobs table and a dash the moment the Status filter is set to
+    # Held — which reads as data loss rather than as two endpoints disagreeing.
     stmt = (
-        select(Job, Printer.name)
+        select(Job, Printer.name, JobCoverage)
         .join(Printer, Job.printer_id == Printer.id)
+        .outerjoin(
+            JobCoverage,
+            (JobCoverage.job_id == Job.id) & (JobCoverage.state == "measured"),
+        )
         .where(Job.status == "held")
         .order_by(Job.created_at)
     )
     rows = (await db.execute(stmt)).all()
+    iso = (await _get_or_create_usage_formula_settings(db)).iso_coverage_per_channel
     return [
-        JobListOut(**JobOut.model_validate(job).model_dump(), printer_name=printer_name)
-        for job, printer_name in rows
+        JobListOut(
+            **JobOut.model_validate(job).model_dump(exclude={"coverage"}),
+            coverage=_coverage_out(coverage, iso, job.color_mode),
+            printer_name=printer_name,
+        )
+        for job, printer_name, coverage in rows
     ]
 
 

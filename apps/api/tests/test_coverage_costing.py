@@ -184,3 +184,56 @@ def test_a_zero_cost_cartridge_is_configured():
     )
     assert rates is not None
     assert rates.black == 0.0
+
+
+# --- the displayed ratio must follow the same rule as the cost ---------------
+
+
+def test_the_displayed_ratio_uses_black_alone_for_a_mono_job():
+    """The API computes a ratio for display; costing computes one for money.
+    They have to agree.
+
+    Averaging four channels for a mono job divides by four, so an ordinary mono
+    page at exactly the test coverage reads 0.25x — it looks like a bargain
+    when by definition it is exactly 1.0x. Wrong numbers are worse than absent
+    ones here: nothing about 0.25x invites a second look.
+    """
+    from app.routers.jobs import _coverage_out
+
+    @dataclass
+    class Row:
+        cyan: float
+        magenta: float
+        yellow: float
+        black: float
+        pages_measured: int = 1
+        measured_at: object = None
+
+    mono_page = Row(cyan=0.0, magenta=0.0, yellow=0.0, black=ISO)
+
+    shown = _coverage_out(mono_page, ISO, "monochrome")
+    assert shown is not None
+    assert shown.ratio == pytest.approx(1.0), "a mono test page is exactly the rated page"
+
+    # And it matches what costing charges for the same job.
+    charged = measured_toner_cost(1, "monochrome", mono_page, RATE, ISO)
+    assert charged is not None
+    assert shown.ratio == pytest.approx(charged.ratio)
+
+
+def test_the_displayed_ratio_averages_channels_for_a_colour_job():
+    from app.routers.jobs import _coverage_out
+
+    @dataclass
+    class Row:
+        cyan: float
+        magenta: float
+        yellow: float
+        black: float
+        pages_measured: int = 1
+        measured_at: object = None
+
+    at_iso = Row(cyan=ISO, magenta=ISO, yellow=ISO, black=ISO)
+    shown = _coverage_out(at_iso, ISO, "color")
+    assert shown is not None
+    assert shown.ratio == pytest.approx(1.0)
