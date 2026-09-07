@@ -47,10 +47,8 @@ from app.reports.aggregation import (
 )
 from app.reports.cost_rates import load_printer_rates
 from app.reports.equivalency import (
-    SchoolCalendar,
     build_equivalencies,
     duplex_sheets_saved,
-    resolve_period,
     sheets_from_totals,
     sheets_if_all_duplex,
 )
@@ -74,6 +72,10 @@ from app.reports.fun_facts import (
     generate_equivalency_facts,
     generate_fun_facts,
 )
+from app.reports.period_source import load_period_context
+from app.reports.periods import clamp_to_today
+from app.reports.periods import current_term as current_reporting_term
+from app.reports.periods import resolve as resolve_reporting_period
 from app.reports.road_trip import build_route, ladder_from_destinations
 from app.reports.tracked_copies import get_tracked_copy_summary
 from app.reports.untracked_copies import get_untracked_copy_summary
@@ -946,17 +948,23 @@ async def _explained_window(db: AsyncSession, period: str) -> tuple[date, date, 
     Resolved against the district's configured zone rather than the
     caller's clock, for the reason _report_filters gives at length: a
     browser in another timezone would otherwise ask for one day's worth
-    of activity and have it bucketed as another. `resolve_period` returns
-    an inclusive end date and _apply_filters compares `< end`, so the
-    range is closed by advancing a day.
+    of activity and have it bucketed as another.
+
+    The period may be a relative name (`week`, `month`, `term`, `year`,
+    `calendar_year`, or the older `semester`) or an explicit instance
+    (`year:2025`, `term:2025:1`), which is what lets a report look at a period
+    that has already ended. `clamp_to_today` keeps a *current* period from
+    claiming days that have not happened yet; a finished one keeps its own end.
+    It returns an inclusive end date and _apply_filters compares `< end`, so
+    the range is closed by advancing a day.
     """
     try:
-        zone = await _district_zone(db)
-        start_date, end_date = resolve_period(
-            period,
-            datetime.now(zone).date(),
-            SchoolCalendar.from_settings(await _get_or_create_formula_settings(db)),
+        context = await load_period_context(db)
+        zone, today = context.zone, context.today
+        resolved = resolve_reporting_period(
+            period, today, context.calendar, context.terms, context.overrides
         )
+        start_date, end_date = clamp_to_today(resolved, today)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -1694,6 +1702,16 @@ class SchoolCalendarOut(BaseModel):
     """The four numbers that decide where a school year and its second
     semester begin.
 
+    **Superseded by /reports/periods**, which returns periods already named and
+    dated by the server rather than four raw numbers each client turns into
+    dates itself — the arrangement that had this app and its own web front end
+    disagreeing about when a school year began. Nothing in PrintOps calls this
+    any more; it remains because it is public API and an older client may.
+
+    It also cannot express the calendar an organisation can now configure: it
+    assumes exactly two terms and calls them semesters. A site with quarters
+    sees only the first and third of them here.
+
     Readable by any signed-in user, unlike the rest of ReportFormulaSettings.
     The Insights page offers "Fall semester" and "School year" presets to
     everyone including viewers, and it cannot compute them without knowing the
@@ -1721,3 +1739,97 @@ async def get_school_calendar(db: AsyncSession = Depends(get_db)):
         spring_semester_start_month=settings.spring_semester_start_month,
         spring_semester_start_day=settings.spring_semester_start_day,
     )
+
+
+class PeriodOptionOut(BaseModel):
+    """One period a user can choose, already named and dated.
+
+    The dates are here so no client has to recompute them. The Insights page
+    used to derive "School year" and the two semesters in TypeScript from the
+    raw calendar numbers — a second implementation of the same rules, which
+    drifted exactly as you would expect: it hardcoded 1 August while the API
+    used 1 July, and the same named period covered different spans depending
+    which screen you were on. One resolver, one answer.
+
+    `end` is exclusive, matching the resolver and the date filters on both
+    sides."""
+
+    key: str
+    label: str
+    kind: str
+    start: date
+    end: date
+
+
+class PeriodOptionsOut(BaseModel):
+    """What the period picker should offer, resolved server-side.
+
+    The web app used to hold this list as a hardcoded array — "This week",
+    "This semester", "School year" — which meant an installation that renamed
+    its terms, or never had semesters, still saw a school's vocabulary. The
+    labels now come from the same rows the report endpoints resolve against, so
+    the picker and the report can no longer disagree about what a period is
+    called or when it starts.
+    """
+
+    year_noun: str
+    options: list[PeriodOptionOut]
+
+
+@router.get("/periods", response_model=PeriodOptionsOut)
+async def get_period_options(db: AsyncSession = Depends(get_db)):
+    """The periods available right now, labelled.
+
+    Readable by any signed-in user, for the reason /calendar is: the picker is
+    on screens viewers can see, and it cannot offer a period it is not allowed
+    to name.
+    """
+    context = await load_period_context(db)
+    today = context.today
+
+    def option(key: str, label: str, kind: str) -> PeriodOptionOut:
+        resolved = resolve_reporting_period(
+            key, today, context.calendar, context.terms, context.overrides
+        )
+        return PeriodOptionOut(
+            key=key, label=label, kind=kind, start=resolved.start, end=resolved.end
+        )
+
+    options = [
+        option("week", "This week", "week"),
+        option("month", "This month", "month"),
+    ]
+
+    # Offered only when the organisation actually has terms. A business that
+    # does not subdivide its year would otherwise be shown a "term" that
+    # silently resolved to the whole year — the same span twice, under two
+    # names, which reads as a bug to the person looking at it.
+    term = current_reporting_term(today, context.calendar, context.terms, context.overrides)
+    if term is not None:
+        options.append(
+            PeriodOptionOut(
+                key="term", label=term.label, kind="term", start=term.start, end=term.end
+            )
+        )
+
+    year = resolve_reporting_period("year", today, context.calendar, context.terms)
+    options.append(
+        PeriodOptionOut(key="year", label=year.label, kind="year", start=year.start, end=year.end)
+    )
+
+    calendar_year = resolve_reporting_period("calendar_year", today, context.calendar)
+    # Suppressed when it would duplicate the reporting year: an organisation
+    # whose year already starts in January would be offered the same dates
+    # twice.
+    if (calendar_year.start, calendar_year.end) != (year.start, year.end):
+        options.append(
+            PeriodOptionOut(
+                key="calendar_year",
+                label=calendar_year.label,
+                kind="calendar_year",
+                start=calendar_year.start,
+                end=calendar_year.end,
+            )
+        )
+
+    return PeriodOptionsOut(year_noun=context.calendar.year_noun, options=options)

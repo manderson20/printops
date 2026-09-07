@@ -5,6 +5,43 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.81.0] - 2026-09-07
+
+- **Reporting periods are now something an organisation defines**, under
+  Settings → Insights. What a year is called, when it starts, how it is
+  labelled, and the segments it divides into — semesters, quarters,
+  trimesters, or none — are all configurable. PrintOps previously knew four
+  periods as a compiled-in list, one of them called "semester", which was one
+  district's vocabulary shown to everybody who installs this.
+- **A school year and a fiscal year are the same thing here.** A year that
+  need not begin in January, divided into named parts; the difference is the
+  noun. There is no organisation type in the schema or the code — a school sets
+  "School year" and names its terms Fall and Spring, a business sets "Fiscal
+  year" and names them Q1 to Q4, and nothing downstream can tell them apart.
+- **Terms subdivide the reporting year, not the calendar year.** Q1 of a
+  July-start year is July to September. This also decides how a term is
+  labelled: a school's terms carry their own calendar year ("Fall 2026",
+  "Spring 2027") while a business's quarters all carry the fiscal year's
+  number ("Q1" through "Q4" of FY2027) — both derived from the year's own
+  label style, so there is no second setting to get out of step.
+- **The calendar year is available everywhere as its own period**, alongside
+  the reporting year. "How did 2026 compare with 2025" and "how did FY2027
+  compare with FY2026" are different questions and both get asked.
+- Years that span two calendar years are labelled as such — "School year
+  2026–2027" — so several years can be told apart as data accumulates. An
+  organisation whose fiscal year is FY2027 by its ending year can say so.
+- **The Insights page no longer computes the calendar itself.** Its date
+  presets come from the server already resolved, which removes the last of the
+  duplicated term arithmetic that had this page and the API disagreeing about
+  when a school year began.
+- Existing period names (`week`, `month`, `semester`, `year`) keep working, so
+  bookmarks and older clients do not break; `semester` resolves to whatever
+  this organisation calls the term containing today.
+- **On upgrade nothing moves.** The calendar is seeded from the boundaries
+  already stored, and the two semesters are recreated from them — verified
+  against the retiring resolver for every day of two years. A fresh install
+  gets the neutral default instead: "Year", no terms.
+
 ## [0.80.0] - 2026-09-07
 
 - **Took one district out of the product.** PrintOps is installed by other

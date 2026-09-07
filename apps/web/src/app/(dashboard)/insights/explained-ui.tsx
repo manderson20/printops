@@ -1,7 +1,13 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
-import type { Equivalency, ExplainedPeriod, MilestoneProgress } from "@/lib/api";
+import { useEffect, useState, type ReactNode } from "react";
+import {
+  getPeriodOptions,
+  type Equivalency,
+  type ExplainedPeriod,
+  type MilestoneProgress,
+  type PeriodOption,
+} from "@/lib/api";
 import { TreesPanel } from "./TreesPanel";
 
 // Display-only conversions. The server sends each equivalency in one base
@@ -12,12 +18,50 @@ import { TreesPanel } from "./TreesPanel";
 const FEET_PER_MILE = 5280;
 const INCHES_PER_FOOT = 12;
 
-export const PERIODS: { value: ExplainedPeriod; label: string }[] = [
-  { value: "week", label: "This week" },
-  { value: "month", label: "This month" },
-  { value: "semester", label: "This semester" },
-  { value: "year", label: "School year" },
+/** What the picker needs: something to send, and something to show. The
+ *  resolved dates on a full PeriodOption are for callers that query by
+ *  range; this one sends the key and lets the server resolve it. */
+type PickablePeriod = Pick<PeriodOption, "key" | "label" | "kind">;
+
+/** Shown until the server says what this organisation calls its periods.
+ *
+ * Deliberately says "This year" and offers no term. The list it replaced was
+ * "This semester" / "School year" — one district's vocabulary compiled into a
+ * product other organisations install, and wrong on screen for any of them
+ * that is not a school. A neutral placeholder for the few hundred milliseconds
+ * before the real labels arrive is better than a confident wrong one, and the
+ * keys resolve correctly everywhere regardless of what the labels say. */
+export const FALLBACK_PERIODS: PickablePeriod[] = [
+  { key: "week", label: "This week", kind: "week" },
+  { key: "month", label: "This month", kind: "month" },
+  { key: "year", label: "This year", kind: "year" },
 ];
+
+/** The periods this organisation actually has, fetched once.
+ *
+ * Failure is silent on purpose: an Insights page that renders with the
+ * fallback labels is still a working page, and an error banner about period
+ * vocabulary would be noise over a report the reader came to see. */
+export function usePeriodOptions(): { options: PickablePeriod[]; yearNoun: string } {
+  const [options, setOptions] = useState<PickablePeriod[]>(FALLBACK_PERIODS);
+  const [yearNoun, setYearNoun] = useState("Year");
+
+  useEffect(() => {
+    let cancelled = false;
+    getPeriodOptions()
+      .then((result) => {
+        if (cancelled || result.options.length === 0) return;
+        setOptions(result.options);
+        setYearNoun(result.year_noun);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return { options, yearNoun };
+}
 
 export function formatNumber(value: number, digits = 0): string {
   return value.toLocaleString(undefined, {
@@ -136,17 +180,19 @@ export function PeriodPicker({
   onChange: (period: ExplainedPeriod) => void;
   disabled?: boolean;
 }) {
+  const { options } = usePeriodOptions();
+
   return (
     <div className="flex flex-wrap gap-2" role="group" aria-label="Period">
-      {PERIODS.map((period) => {
-        const active = period.value === value;
+      {options.map((period) => {
+        const active = period.key === value;
         return (
           <button
-            key={period.value}
+            key={period.key}
             type="button"
             disabled={disabled}
             aria-pressed={active}
-            onClick={() => onChange(period.value)}
+            onClick={() => onChange(period.key)}
             className={`rounded-lg border px-3 py-1.5 text-sm transition-colors disabled:opacity-50 ${
               active
                 ? "border-transparent bg-zinc-900 text-white dark:bg-white dark:text-zinc-900"

@@ -29,8 +29,8 @@ import {
   type TimelineBucket,
   type TrackedCopySummary,
   type UntrackedCopySummary,
-  getSchoolCalendar,
-  type SchoolCalendar,
+  getPeriodOptions,
+  type PeriodOption,
 } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
 import { useCurrentUser } from "@/lib/useCurrentUser";
@@ -44,34 +44,37 @@ import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
 import { SharePair, TimelineChart, VolumeBarChart } from "./charts";
 import { CombinedUsageSection } from "./CombinedUsageSection";
 
-type DatePreset =
-  | "today"
-  | "week"
-  | "month"
-  | "semester_fall"
-  | "semester_spring"
-  | "school_year"
-  | "all"
-  | "custom";
+/** Rolling windows, which mean the same thing to every organisation. */
+type FixedPreset = "today" | "week" | "month" | "all" | "custom";
 
-const PRESET_OPTIONS: { value: DatePreset; label: string }[] = [
+/** A fixed window, or one of the organisation's own periods.
+ *
+ * The calendar-derived presets used to be three hardcoded entries — "Fall
+ * semester", "Spring semester", "School year" — with the dates computed here
+ * in TypeScript from the raw calendar numbers. That was a second
+ * implementation of rules the API already had, and it drifted: this page
+ * assumed 1 August while the server used 1 July, so "School year" covered
+ * different spans depending which screen you were on. The periods and their
+ * dates now both come from the server, which also means an organisation with
+ * quarters, trimesters or no terms at all sees its own vocabulary here rather
+ * than a school's. */
+type DatePreset = FixedPreset | `period:${string}`;
+
+const LEADING_PRESETS: { value: FixedPreset; label: string }[] = [
   { value: "today", label: "Today" },
   { value: "week", label: "Last 7 days" },
   { value: "month", label: "Last 30 days" },
-  { value: "semester_fall", label: "Fall semester" },
-  { value: "semester_spring", label: "Spring semester" },
-  { value: "school_year", label: "School year" },
+];
+
+const TRAILING_PRESETS: { value: FixedPreset; label: string }[] = [
   { value: "all", label: "All time" },
   { value: "custom", label: "Custom range" },
 ];
 
-const PERIOD_LABELS: Record<DatePreset, string> = {
+const FIXED_PERIOD_LABELS: Record<FixedPreset, string> = {
   today: "day",
   week: "week",
   month: "month",
-  semester_fall: "semester",
-  semester_spring: "semester",
-  school_year: "school year",
   all: "period",
   custom: "period",
 };
@@ -85,6 +88,7 @@ function defaultGranularity(preset: DatePreset): ReportGranularity {
   ) {
     return "day";
   }
+  // A term or a year plotted daily is a wall of noise.
   return "week";
 }
 
@@ -100,53 +104,24 @@ function isoDate(d: Date): string {
   ).padStart(2, "0")}`;
 }
 
-/** 1 July by default — the same defaults the API carries, so a page that has
- *  not loaded the calendar yet behaves the way the server would. */
-const DEFAULT_CALENDAR: SchoolCalendar = {
-  school_year_start_month: 7,
-  school_year_start_day: 1,
-  spring_semester_start_month: 1,
-  spring_semester_start_day: 1,
-};
-
-function schoolYearStart(today: Date, calendar: SchoolCalendar): Date {
-  const thisYear = new Date(
-    today.getFullYear(),
-    calendar.school_year_start_month - 1,
-    calendar.school_year_start_day,
-  );
-  if (today >= thisYear) return thisYear;
-  return new Date(
-    today.getFullYear() - 1,
-    calendar.school_year_start_month - 1,
-    calendar.school_year_start_day,
-  );
-}
-
-/** Anchored to the school year, not the calendar year: with a July start the
- *  spring boundary falls the following January, but a March start with a
- *  September boundary puts it in the same year. Mirrors _semester_start in
- *  app/reports/equivalency.py. */
-function springStart(yearStart: Date, calendar: SchoolCalendar): Date {
-  const candidate = new Date(
-    yearStart.getFullYear(),
-    calendar.spring_semester_start_month - 1,
-    calendar.spring_semester_start_day,
-  );
-  if (candidate > yearStart) return candidate;
-  return new Date(
-    yearStart.getFullYear() + 1,
-    calendar.spring_semester_start_month - 1,
-    calendar.spring_semester_start_day,
-  );
-}
-
 function computeRange(
   preset: DatePreset,
   customStart: string,
   customEnd: string,
-  calendar: SchoolCalendar,
+  periods: PeriodOption[],
 ): { start: string; end: string } | null {
+  // The organisation's own periods arrive already resolved, with an exclusive
+  // end — the same convention used throughout this function.
+  if (preset.startsWith("period:")) {
+    const key = preset.slice("period:".length);
+    const period = periods.find((option) => option.key === key);
+    // Null rather than a guessed range: the options have not loaded, or the
+    // admin deleted a term that was still selected. An empty report is
+    // recoverable; a report over dates nobody asked for is not.
+    if (!period) return null;
+    return { start: period.start, end: period.end };
+  }
+
   const now = new Date();
   const startOfToday = new Date(
     now.getFullYear(),
@@ -170,26 +145,6 @@ function computeRange(
       start.setDate(start.getDate() - 30);
       return { start: isoDate(start), end: isoDate(tomorrow) };
     }
-    // These three used to hardcode 1 August and 1 January — while the API
-    // resolved the same named periods from the configured calendar, which
-    // defaulted to 1 July. "School year" meant two different spans depending
-    // which screen you were on. They now come from the same setting.
-    case "semester_fall": {
-      const start = schoolYearStart(now, calendar);
-      return { start: isoDate(start), end: isoDate(springStart(start, calendar)) };
-    }
-    case "semester_spring": {
-      const start = springStart(schoolYearStart(now, calendar), calendar);
-      const end = new Date(start);
-      end.setFullYear(end.getFullYear() + 1);
-      return { start: isoDate(start), end: isoDate(end) };
-    }
-    case "school_year": {
-      const start = schoolYearStart(now, calendar);
-      const end = new Date(start);
-      end.setFullYear(end.getFullYear() + 1);
-      return { start: isoDate(start), end: isoDate(end) };
-    }
     case "all":
       return { start: "2000-01-01", end: isoDate(tomorrow) };
     case "custom": {
@@ -201,6 +156,11 @@ function computeRange(
       return { start: customStart, end: isoDate(end) };
     }
   }
+
+  // The template-literal half of DatePreset is already handled above, so this
+  // is only reachable if a preset string arrives that is neither — a stale
+  // value from an older bookmark, say. No range rather than a wrong one.
+  return null;
 }
 
 function StatCard({
@@ -247,15 +207,28 @@ export default function InsightsPage() {
   const isOuViewer = currentUser?.role === "ou_viewer";
 
   const [preset, setPreset] = useState<DatePreset>("month");
-  // Term dates come from Settings > Insights. Falls back to the same defaults
-  // the API carries, so a slow or failed fetch behaves the way the server
-  // would rather than reverting to the 1 August this page used to assume.
-  const [calendar, setCalendar] = useState<SchoolCalendar>(DEFAULT_CALENDAR);
+  // The organisation's periods, named and dated by the server. Empty until
+  // they load, which only means the calendar-derived entries are missing from
+  // the picker for a moment — the rolling windows work without them.
+  const [periods, setPeriods] = useState<PeriodOption[]>([]);
+  const [yearNoun, setYearNoun] = useState("Year");
   useEffect(() => {
     let cancelled = false;
-    getSchoolCalendar()
-      .then((c) => {
-        if (!cancelled) setCalendar(c);
+    getPeriodOptions()
+      .then((result) => {
+        if (cancelled) return;
+        // Only the calendar-derived ones. The server also offers "this week"
+        // and "this month", which are near-synonyms for the rolling windows
+        // above and would read as duplicates in the same list.
+        setPeriods(
+          result.options.filter(
+            (option) =>
+              option.kind === "term" ||
+              option.kind === "year" ||
+              option.kind === "calendar_year",
+          ),
+        );
+        setYearNoun(result.year_noun);
       })
       .catch(() => undefined);
     return () => {
@@ -332,11 +305,38 @@ export default function InsightsPage() {
     [printers],
   );
 
-  const range = useMemo(
-    () => computeRange(preset, customStart, customEnd, calendar),
-    [preset, customStart, customEnd, calendar],
+  const presetOptions = useMemo<{ value: DatePreset; label: string }[]>(
+    () => [
+      ...LEADING_PRESETS,
+      ...periods.map((option) => ({
+        value: `period:${option.key}` as DatePreset,
+        label: option.label,
+      })),
+      ...TRAILING_PRESETS,
+    ],
+    [periods],
   );
-  const periodLabel = PERIOD_LABELS[preset];
+
+  const range = useMemo(
+    () => computeRange(preset, customStart, customEnd, periods),
+    [preset, customStart, customEnd, periods],
+  );
+
+  // The noun a snapshot and the fun facts are phrased with — "per week",
+  // "this school year". Taken from what the organisation calls the period
+  // rather than assumed, which is why the year's noun is fetched alongside.
+  const periodLabel = useMemo(() => {
+    if (!preset.startsWith("period:")) {
+      return FIXED_PERIOD_LABELS[preset as FixedPreset];
+    }
+    const kind = periods.find(
+      (option) => `period:${option.key}` === preset,
+    )?.kind;
+    if (kind === "year") return yearNoun.toLowerCase();
+    if (kind === "calendar_year") return "calendar year";
+    if (kind === "term") return "term";
+    return "period";
+  }, [preset, periods, yearNoun]);
 
   // Compact one-line stand-in for the filter panel when it's hidden or when
   // printing — keeps the report self-describing without eating page width.
@@ -346,7 +346,7 @@ export default function InsightsPage() {
       parts.push(`${customStart} – ${customEnd}`);
     } else {
       parts.push(
-        PRESET_OPTIONS.find((o) => o.value === preset)?.label ?? preset,
+        presetOptions.find((o) => o.value === preset)?.label ?? preset,
       );
     }
     parts.push(
@@ -371,6 +371,10 @@ export default function InsightsPage() {
     return parts.join(" · ");
   }, [
     preset,
+    // The label for a calendar-derived preset arrives with the options, so the
+    // summary has to recompute once they load — otherwise it keeps showing the
+    // raw key while the picker shows the real name.
+    presetOptions,
     customStart,
     customEnd,
     granularity,
@@ -605,7 +609,7 @@ export default function InsightsPage() {
                 }}
                 className="rounded-lg border border-black/[.15] bg-white px-2 py-1.5 text-sm dark:border-white/[.2] dark:bg-black dark:text-zinc-50"
               >
-                {PRESET_OPTIONS.map((opt) => (
+                {presetOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
