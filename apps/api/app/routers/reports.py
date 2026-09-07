@@ -8,6 +8,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1687,3 +1688,36 @@ async def delete_snapshot(snapshot_id: UUID, db: AsyncSession = Depends(get_db))
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot not found")
     await db.delete(snapshot)
     await db.commit()
+
+
+class SchoolCalendarOut(BaseModel):
+    """The four numbers that decide where a school year and its second
+    semester begin.
+
+    Readable by any signed-in user, unlike the rest of ReportFormulaSettings.
+    The Insights page offers "Fall semester" and "School year" presets to
+    everyone including viewers, and it cannot compute them without knowing the
+    calendar — so either this is readable or the page goes on guessing, which
+    is what it was doing: it hardcoded 1 August while the API used 1 July, and
+    the same named period meant two different spans depending which screen you
+    were on.
+
+    Costs and enrolment stay admin-only; term dates are on the wall in every
+    school in the district.
+    """
+
+    school_year_start_month: int
+    school_year_start_day: int
+    spring_semester_start_month: int
+    spring_semester_start_day: int
+
+
+@router.get("/calendar", response_model=SchoolCalendarOut)
+async def get_school_calendar(db: AsyncSession = Depends(get_db)):
+    settings = await _get_or_create_formula_settings(db)
+    return SchoolCalendarOut(
+        school_year_start_month=settings.school_year_start_month,
+        school_year_start_day=settings.school_year_start_day,
+        spring_semester_start_month=settings.spring_semester_start_month,
+        spring_semester_start_day=settings.spring_semester_start_day,
+    )

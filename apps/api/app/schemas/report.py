@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SummaryOut(BaseModel):
@@ -193,6 +193,28 @@ class ReportFormulaSettingsUpdate(BaseModel):
     school_year_start_day: int | None = Field(default=None, ge=1, le=31)
     spring_semester_start_month: int | None = Field(default=None, ge=1, le=12)
     spring_semester_start_day: int | None = Field(default=None, ge=1, le=31)
+
+    @model_validator(mode="after")
+    def _dates_must_exist_every_year(self):
+        """Independent 1..12 and 1..31 bounds accept 31 February.
+
+        Saved, that raises out of `date()` inside the period calculation and
+        500s every Insights screen — a settings form turning the whole report
+        section off. Checked against a non-leap year on purpose: these recur
+        annually, and a boundary that exists three years in four is a trap
+        rather than a feature.
+        """
+        for label, month, day in (
+            ("School year", self.school_year_start_month, self.school_year_start_day),
+            ("Spring semester", self.spring_semester_start_month, self.spring_semester_start_day),
+        ):
+            if month is None or day is None:
+                continue
+            try:
+                date(2001, month, day)
+            except ValueError as exc:
+                raise ValueError(f"{label} start: {day}/{month} is not a date every year") from exc
+        return self
 
 
 CartridgeColor = Literal["black", "cyan", "magenta", "yellow"]

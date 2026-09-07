@@ -19,6 +19,9 @@ schedules an update.
 - The built-in distance milestones are now generic. A district's own places
   already live in Settings → Road Trip and are what every screen actually uses;
   the built-in list is only what a brand-new installation falls back to.
+- **The Insights date presets now use the configured calendar too.** They had
+  their own copy of it, hardcoded to 1 August, while the API used 1 July — so
+  "School year" meant a different span depending which screen you were on.
 - **For this district:** the per-student fact will disappear from Insights
   until the enrolment figure is entered. The number it was showing was a
   placeholder nobody had confirmed, and its own comment said so.

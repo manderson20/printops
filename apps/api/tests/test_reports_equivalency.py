@@ -4,10 +4,12 @@ shape as test_reports_formulas.py."""
 from datetime import date
 
 import pytest
+from pydantic import ValidationError
 
 from app.reports.aggregation import SummaryTotals
 from app.reports.equivalency import (
     Equivalency,
+    SchoolCalendar,
     build_equivalencies,
     distance_feet,
     duplex_sheets_saved,
@@ -28,6 +30,7 @@ from app.reports.equivalency_config import (
     Milestone,
 )
 from app.reports.formulas import FormulaValues, compute_environmental_impact
+from app.schemas.report import ReportFormulaSettingsUpdate
 
 # --- sheet conversion --------------------------------------------------
 
@@ -382,3 +385,43 @@ def test_spring_semester_starts_in_january():
 def test_unknown_period_is_rejected_loudly():
     with pytest.raises(ValueError, match="unknown period"):
         resolve_period("fortnight", date(2026, 9, 1))
+
+
+# --- the calendar is the district's, not the product's ----------------------
+
+
+def test_spring_is_anchored_to_the_school_year_not_the_calendar_year():
+    """A March year start with a September second-semester boundary puts the
+    boundary in the *same* calendar year. Computing it from today.year would
+    place it in the future every January and silently drop a semester that had
+    already begun."""
+    calendar = SchoolCalendar(
+        year_start_month=3, year_start_day=1, spring_start_month=9, spring_start_day=1
+    )
+    # January: the year began last March, the second semester last September.
+    start, _ = resolve_period("semester", date(2027, 1, 15), calendar)
+    assert start == date(2026, 9, 1)
+
+
+def test_the_usual_july_calendar_still_puts_spring_in_january():
+    calendar = SchoolCalendar()
+    start, _ = resolve_period("semester", date(2027, 2, 10), calendar)
+    assert start == date(2027, 1, 1)
+
+    autumn, _ = resolve_period("semester", date(2026, 10, 1), calendar)
+    assert autumn == date(2026, 7, 1)
+
+
+def test_an_impossible_recurring_date_is_refused():
+    """31 February passes independent 1..12 and 1..31 bounds, and saved it
+    raises out of date() inside the period calculation — a settings form
+    turning every Insights screen off."""
+    with pytest.raises(ValidationError):
+        ReportFormulaSettingsUpdate(school_year_start_month=2, school_year_start_day=31)
+
+    # 29 February is refused too: these recur annually, and a boundary that
+    # exists three years in four is a trap rather than a feature.
+    with pytest.raises(ValidationError):
+        ReportFormulaSettingsUpdate(spring_semester_start_month=2, spring_semester_start_day=29)
+
+    ReportFormulaSettingsUpdate(school_year_start_month=2, school_year_start_day=28)

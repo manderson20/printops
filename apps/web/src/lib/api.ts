@@ -2300,6 +2300,20 @@ export async function deleteReportSnapshot(id: string): Promise<void> {
   });
 }
 
+export type SchoolCalendar = {
+  school_year_start_month: number;
+  school_year_start_day: number;
+  spring_semester_start_month: number;
+  spring_semester_start_day: number;
+};
+
+/** Term dates, readable by anyone signed in — the Insights presets need them
+ *  and that page is open to viewers. Costs and enrolment stay admin-only. */
+export async function getSchoolCalendar(): Promise<SchoolCalendar> {
+  const response = await authorizedFetch("/api/v1/reports/calendar");
+  return response.json();
+}
+
 export type ReportFormulaSettings = {
   cost_per_page_mono: number;
   cost_per_page_color: number;

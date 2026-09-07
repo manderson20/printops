@@ -314,8 +314,18 @@ def _semester_start(today: date, calendar: SchoolCalendar) -> date:
     date. The spring boundary only applies once the year has actually turned,
     so a date in the autumn term never resolves to a start ahead of itself."""
     year_start = _school_year_start(today, calendar)
-    spring_start = date(today.year, calendar.spring_start_month, calendar.spring_start_day)
-    if spring_start > year_start and today >= spring_start:
+    # Anchored to the school year rather than the calendar year, because the
+    # two need not line up. With a July start the spring boundary falls in the
+    # following January — but a March start with a September boundary puts it
+    # in the *same* calendar year, and computing it from today.year would place
+    # it in the future every January and quietly drop a semester that had
+    # already begun.
+    spring_start = date(year_start.year, calendar.spring_start_month, calendar.spring_start_day)
+    if spring_start <= year_start:
+        spring_start = date(
+            year_start.year + 1, calendar.spring_start_month, calendar.spring_start_day
+        )
+    if today >= spring_start:
         return spring_start
     return year_start
 
