@@ -5,6 +5,21 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.79.0] - 2026-09-07
+
+- **Notifications can go to email as well as chat.** Add an email channel
+  alongside (or instead of) a webhook, and configure the relay under
+  Settings → Notifications. Google Workspace's relay on port 587 is the
+  expected setup; an on-premises relay with no authentication works too.
+- The relay is configured once and stands on its own, so scheduled report
+  delivery will use the same settings when it arrives rather than a second
+  copy that drifts.
+- A wrong password, a refused sender or a refused recipient is not retried —
+  those answer the same way every time, and retrying a bad login is a good way
+  to get an account locked. A relay having a bad afternoon still is.
+- The password is stored encrypted and never shown again; the settings page
+  reports whether one is set, not what it is.
+
 ## [0.78.0] - 2026-09-07
 
 - **Notifications.** PrintOps has always noticed when a printer stops

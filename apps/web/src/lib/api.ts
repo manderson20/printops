@@ -2998,13 +2998,55 @@ export async function listNotificationChannels(): Promise<NotificationChannel[]>
 export async function createNotificationChannel(
   name: string,
   target: string,
+  kind: "webhook" | "email" = "webhook",
 ): Promise<NotificationChannel> {
   const response = await authorizedFetch("/api/v1/notifications/channels", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, target }),
+    body: JSON.stringify({ name, target, kind }),
   });
   return response.json();
+}
+
+// --- Email relay (app/routers/settings.py) ---
+//
+// Separate from notifications because scheduled report delivery will want the
+// same relay.
+
+export type SmtpSettings = {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  from_address: string;
+  from_name: string;
+  use_starttls: boolean;
+  // Whether one is stored, never which one.
+  has_password: boolean;
+};
+
+export async function getSmtpSettings(): Promise<SmtpSettings> {
+  const response = await authorizedFetch("/api/v1/settings/smtp");
+  return response.json();
+}
+
+export async function updateSmtpSettings(
+  patch: Partial<Omit<SmtpSettings, "has_password">> & { password?: string },
+): Promise<SmtpSettings> {
+  const response = await authorizedFetch("/api/v1/settings/smtp", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return response.json();
+}
+
+export async function testSmtpSettings(to: string): Promise<void> {
+  await authorizedFetch("/api/v1/settings/smtp/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ to }),
+  });
 }
 
 export async function updateNotificationChannel(

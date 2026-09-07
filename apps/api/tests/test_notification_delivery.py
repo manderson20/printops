@@ -81,7 +81,7 @@ async def _setup(db, *, enabled=True, notifications_on=True):
 def _sender(monkeypatch, behaviour):
     calls: list = []
 
-    async def fake(channel, event):
+    async def fake(channel, event, smtp=None):
         calls.append((channel.name, event.title))
         result = behaviour(len(calls))
         if isinstance(result, Exception):
