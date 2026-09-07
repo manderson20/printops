@@ -8,6 +8,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,6 +47,7 @@ from app.reports.aggregation import (
 )
 from app.reports.cost_rates import load_printer_rates
 from app.reports.equivalency import (
+    SchoolCalendar,
     build_equivalencies,
     duplex_sheets_saved,
     resolve_period,
@@ -950,7 +952,11 @@ async def _explained_window(db: AsyncSession, period: str) -> tuple[date, date, 
     """
     try:
         zone = await _district_zone(db)
-        start_date, end_date = resolve_period(period, datetime.now(zone).date())
+        start_date, end_date = resolve_period(
+            period,
+            datetime.now(zone).date(),
+            SchoolCalendar.from_settings(await _get_or_create_formula_settings(db)),
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -1178,8 +1184,12 @@ async def report_explained_me(
     # be measured against the same Jefferson City, or the two pages
     # quietly disagree about where it is.
     destinations, _ = await _road_trip(db)
+    formula_settings = await _get_or_create_formula_settings(db)
     equivalencies = build_equivalencies(
-        total_pages, sheets, distance_ladder=ladder_from_destinations(destinations)
+        total_pages,
+        sheets,
+        distance_ladder=ladder_from_destinations(destinations),
+        student_count=formula_settings.student_count,
     )
     facts = generate_equivalency_facts(equivalencies, collective=False)
     opportunity = duplex_opportunity_fact(additional, saved)
@@ -1312,7 +1322,10 @@ async def report_district_fun_facts(
 
     destinations, home = await _road_trip(db)
     equivalencies = build_equivalencies(
-        combined.total_pages, sheets, distance_ladder=ladder_from_destinations(destinations)
+        combined.total_pages,
+        sheets,
+        distance_ladder=ladder_from_destinations(destinations),
+        student_count=(await _get_or_create_formula_settings(db)).student_count,
     )
     distance = next((e for e in equivalencies if e.key == "distance"), None)
     # No distance equivalency means the total was too small to be worth a
@@ -1488,6 +1501,7 @@ async def report_district_detail(
         combined.total_pages,
         district_sheets,
         distance_ladder=ladder_from_destinations(detail_destinations),
+        student_count=(await _get_or_create_formula_settings(db)).student_count,
     )
     return DistrictDetailOut(
         period=period,
@@ -1674,3 +1688,36 @@ async def delete_snapshot(snapshot_id: UUID, db: AsyncSession = Depends(get_db))
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot not found")
     await db.delete(snapshot)
     await db.commit()
+
+
+class SchoolCalendarOut(BaseModel):
+    """The four numbers that decide where a school year and its second
+    semester begin.
+
+    Readable by any signed-in user, unlike the rest of ReportFormulaSettings.
+    The Insights page offers "Fall semester" and "School year" presets to
+    everyone including viewers, and it cannot compute them without knowing the
+    calendar — so either this is readable or the page goes on guessing, which
+    is what it was doing: it hardcoded 1 August while the API used 1 July, and
+    the same named period meant two different spans depending which screen you
+    were on.
+
+    Costs and enrolment stay admin-only; term dates are on the wall in every
+    school in the district.
+    """
+
+    school_year_start_month: int
+    school_year_start_day: int
+    spring_semester_start_month: int
+    spring_semester_start_day: int
+
+
+@router.get("/calendar", response_model=SchoolCalendarOut)
+async def get_school_calendar(db: AsyncSession = Depends(get_db)):
+    settings = await _get_or_create_formula_settings(db)
+    return SchoolCalendarOut(
+        school_year_start_month=settings.school_year_start_month,
+        school_year_start_day=settings.school_year_start_day,
+        spring_semester_start_month=settings.spring_semester_start_month,
+        spring_semester_start_day=settings.spring_semester_start_day,
+    )

@@ -29,6 +29,8 @@ import {
   type TimelineBucket,
   type TrackedCopySummary,
   type UntrackedCopySummary,
+  getSchoolCalendar,
+  type SchoolCalendar,
 } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
 import { useCurrentUser } from "@/lib/useCurrentUser";
@@ -98,10 +100,52 @@ function isoDate(d: Date): string {
   ).padStart(2, "0")}`;
 }
 
+/** 1 July by default — the same defaults the API carries, so a page that has
+ *  not loaded the calendar yet behaves the way the server would. */
+const DEFAULT_CALENDAR: SchoolCalendar = {
+  school_year_start_month: 7,
+  school_year_start_day: 1,
+  spring_semester_start_month: 1,
+  spring_semester_start_day: 1,
+};
+
+function schoolYearStart(today: Date, calendar: SchoolCalendar): Date {
+  const thisYear = new Date(
+    today.getFullYear(),
+    calendar.school_year_start_month - 1,
+    calendar.school_year_start_day,
+  );
+  if (today >= thisYear) return thisYear;
+  return new Date(
+    today.getFullYear() - 1,
+    calendar.school_year_start_month - 1,
+    calendar.school_year_start_day,
+  );
+}
+
+/** Anchored to the school year, not the calendar year: with a July start the
+ *  spring boundary falls the following January, but a March start with a
+ *  September boundary puts it in the same year. Mirrors _semester_start in
+ *  app/reports/equivalency.py. */
+function springStart(yearStart: Date, calendar: SchoolCalendar): Date {
+  const candidate = new Date(
+    yearStart.getFullYear(),
+    calendar.spring_semester_start_month - 1,
+    calendar.spring_semester_start_day,
+  );
+  if (candidate > yearStart) return candidate;
+  return new Date(
+    yearStart.getFullYear() + 1,
+    calendar.spring_semester_start_month - 1,
+    calendar.spring_semester_start_day,
+  );
+}
+
 function computeRange(
   preset: DatePreset,
   customStart: string,
   customEnd: string,
+  calendar: SchoolCalendar,
 ): { start: string; end: string } | null {
   const now = new Date();
   const startOfToday = new Date(
@@ -126,17 +170,25 @@ function computeRange(
       start.setDate(start.getDate() - 30);
       return { start: isoDate(start), end: isoDate(tomorrow) };
     }
+    // These three used to hardcode 1 August and 1 January — while the API
+    // resolved the same named periods from the configured calendar, which
+    // defaulted to 1 July. "School year" meant two different spans depending
+    // which screen you were on. They now come from the same setting.
     case "semester_fall": {
-      const y = now.getFullYear();
-      return { start: `${y}-08-01`, end: `${y + 1}-01-01` };
+      const start = schoolYearStart(now, calendar);
+      return { start: isoDate(start), end: isoDate(springStart(start, calendar)) };
     }
     case "semester_spring": {
-      const y = now.getFullYear();
-      return { start: `${y}-01-01`, end: `${y}-07-01` };
+      const start = springStart(schoolYearStart(now, calendar), calendar);
+      const end = new Date(start);
+      end.setFullYear(end.getFullYear() + 1);
+      return { start: isoDate(start), end: isoDate(end) };
     }
     case "school_year": {
-      const y = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
-      return { start: `${y}-08-01`, end: `${y + 1}-08-01` };
+      const start = schoolYearStart(now, calendar);
+      const end = new Date(start);
+      end.setFullYear(end.getFullYear() + 1);
+      return { start: isoDate(start), end: isoDate(end) };
     }
     case "all":
       return { start: "2000-01-01", end: isoDate(tomorrow) };
@@ -195,6 +247,21 @@ export default function InsightsPage() {
   const isOuViewer = currentUser?.role === "ou_viewer";
 
   const [preset, setPreset] = useState<DatePreset>("month");
+  // Term dates come from Settings > Insights. Falls back to the same defaults
+  // the API carries, so a slow or failed fetch behaves the way the server
+  // would rather than reverting to the 1 August this page used to assume.
+  const [calendar, setCalendar] = useState<SchoolCalendar>(DEFAULT_CALENDAR);
+  useEffect(() => {
+    let cancelled = false;
+    getSchoolCalendar()
+      .then((c) => {
+        if (!cancelled) setCalendar(c);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const [granularity, setGranularity] = useState<ReportGranularity>("day");
@@ -266,8 +333,8 @@ export default function InsightsPage() {
   );
 
   const range = useMemo(
-    () => computeRange(preset, customStart, customEnd),
-    [preset, customStart, customEnd],
+    () => computeRange(preset, customStart, customEnd, calendar),
+    [preset, customStart, customEnd, calendar],
   );
   const periodLabel = PERIOD_LABELS[preset];
 

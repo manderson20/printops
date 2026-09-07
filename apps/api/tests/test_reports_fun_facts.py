@@ -2,7 +2,13 @@ from datetime import date
 
 from app.reports.aggregation import LeaderboardEntry, PeakTimes, SummaryTotals, TimelineBucket
 from app.reports.equivalency import Equivalency, build_equivalencies, pick_milestone
-from app.reports.equivalency_config import DISTANCE_LADDER, STACK_LADDER
+from app.reports.equivalency_config import (
+    DISTANCE_LADDER,
+    FEET_PER_MILE,
+    STACK_LADDER,
+    Ladder,
+    Milestone,
+)
 from app.reports.formulas import EnvironmentalImpact
 from app.reports.fun_facts import (
     duplex_opportunity_fact,
@@ -114,9 +120,30 @@ DISTRICT_PAGES = 118_952
 DISTRICT_SHEETS = 116_048
 
 
+# A local ladder and an enrolment figure, passed in the way a real caller does
+# — from the destinations table and ReportFormulaSettings. Neither is compiled
+# into the product any more, so a test that wants those facts has to supply
+# them, which is the point.
+LOCAL_LADDER = Ladder(
+    key="distance",
+    unit="feet",
+    rungs=(
+        Milestone("the depot run", 12.0 * FEET_PER_MILE, short="the depot"),
+        Milestone("the drive to the capital", 120.0 * FEET_PER_MILE, short="the capital"),
+    ),
+)
+ENROLMENT = 930
+
+
 def _district_facts():
     return generate_equivalency_facts(
-        build_equivalencies(DISTRICT_PAGES, DISTRICT_SHEETS), collective=True
+        build_equivalencies(
+            DISTRICT_PAGES,
+            DISTRICT_SHEETS,
+            distance_ladder=LOCAL_LADDER,
+            student_count=ENROLMENT,
+        ),
+        collective=True,
     )
 
 
@@ -138,11 +165,11 @@ def test_personal_facts_address_the_reader():
 
 def test_distance_fact_names_the_rung_passed_and_the_next_one_short():
     fact = next(f for f in _district_facts() if "stretch" in f)
-    assert "Brookfield to Marceline" in fact
+    assert "the depot run" in fact
     # The upcoming rung uses its short form, so the sentence doesn't read
-    # "...the way to Brookfield to Jefferson City".
-    assert "to Jefferson City" in fact
-    assert "to Brookfield to Jefferson City" not in fact
+    # "...the way to the drive to the capital".
+    assert "the capital" in fact
+    assert "the drive to the capital" not in fact
 
 
 def test_stack_fact_uses_taller_than_phrasing():
@@ -153,6 +180,15 @@ def test_stack_fact_uses_taller_than_phrasing():
 def test_student_fact_is_district_only():
     assert any("every student" in f for f in _district_facts())
     assert not any("every student" in f for f in _personal_facts())
+
+
+def test_there_is_no_student_fact_without_an_enrolment_figure():
+    """A fresh installation has not told PrintOps how many students it has, and
+    inventing one would put a confident wrong number on the district page."""
+    facts = generate_equivalency_facts(
+        build_equivalencies(DISTRICT_PAGES, DISTRICT_SHEETS), collective=True
+    )
+    assert not any("every student" in f for f in facts)
 
 
 def test_topped_out_ladder_reads_as_an_achievement_not_a_bar():
