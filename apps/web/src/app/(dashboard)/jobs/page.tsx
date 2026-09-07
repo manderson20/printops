@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
+import { InkCell } from "./InkCell";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -338,6 +339,12 @@ function JobsList() {
                   Status{sortIndicator("status")}
                 </th>
                 <th className="px-4 py-3 font-medium">Pages</th>
+                <th
+                  className="px-4 py-3 font-medium"
+                  title="Measured ink against what the page count implies. 1.0x is a page like the manufacturer's test page."
+                >
+                  Ink
+                </th>
                 <th className="px-4 py-3 font-medium">Size</th>
                 <th className="cursor-pointer select-none px-4 py-3 font-medium" onClick={() => toggleSort("submitted")}>
                   Submitted{sortIndicator("submitted")}
@@ -409,6 +416,9 @@ function JobsList() {
                     </td>
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                       {job.page_count ?? "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <InkCell coverage={job.coverage} />
                     </td>
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                       {formatBytes(job.file_size_bytes)}

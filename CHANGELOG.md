@@ -5,6 +5,22 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.85.0] - 2026-09-07
+
+- **An Ink column on the Jobs list and on each person's usage page**, showing
+  what a job actually cost against what its page count implies. 1.0x is a page
+  like the manufacturer's test page, which is what every cost PrintOps reported
+  before measurement was assuming.
+- Only the extremes are coloured — above 2x and below 0.5x. A table where most
+  rows are tinted teaches people to stop seeing the colour, and most jobs sit
+  near 1.0.
+- Hovering gives the per-colorant breakdown and the pages measured. A job that
+  was not measured shows a dash rather than a zero, with the reason: not read
+  yet, its spooled document aged out, or it is a copy — walk-up copying
+  produces no document to measure.
+- On the per-user page this is the point of the feature: it turns "who prints
+  a lot" into "whose printing costs more than their page count implies".
+
 ## [0.84.0] - 2026-09-07
 
 - **PrintOps now measures how much ink a job actually put on the page.** Every

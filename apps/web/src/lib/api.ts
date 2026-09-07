@@ -1177,6 +1177,29 @@ export type Job = {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Measured ink coverage, where this job was measured.
+   *
+   *  Null for a job the measurement loop has not reached, one whose spooled
+   *  document aged out before it did, and always for a copy — walk-up copying
+   *  produces no document to measure. Null rather than zero: "not measured"
+   *  and "measured, and it was blank" are different facts. */
+  coverage: JobCoverage | null;
+};
+
+export type JobCoverage = {
+  pages_measured: number;
+  /** Mean fraction of a page covered by each colorant, 0..1. Per colorant
+   *  because that is what a cartridge yield is quoted against. */
+  cyan: number;
+  magenta: number;
+  yellow: number;
+  black: number;
+  /** Measured cost over the rated cost for the same pages. 1.0 is a job just
+   *  like the manufacturer's test page; the interesting ones are far from it
+   *  in either direction. Computed server-side against the configured
+   *  baseline, so correcting that setting re-expresses every past job. */
+  ratio: number | null;
+  measured_at: string | null;
 };
 
 export async function listJobs(params?: {

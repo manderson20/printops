@@ -10,6 +10,7 @@ import {
   type ReportFilters,
   type UserUsage,
 } from "@/lib/api";
+import { InkCell } from "../../jobs/InkCell";
 import { formatBytes, formatCurrency } from "@/lib/format";
 import { jobStatusInfo } from "@/lib/jobStatus";
 import { useCurrentUser } from "@/lib/useCurrentUser";
@@ -159,6 +160,12 @@ function UserUsageDetail() {
                     <th className="px-4 py-3 font-medium">Document</th>
                     <th className="px-4 py-3 font-medium">Status</th>
                     <th className="px-4 py-3 font-medium">Pages</th>
+                    <th
+                      className="px-4 py-3 font-medium"
+                      title="Measured ink against what the page count implies. 1.0x is a page like the manufacturer's test page."
+                    >
+                      Ink
+                    </th>
                     <th className="px-4 py-3 font-medium">Size</th>
                     <th className="px-4 py-3 font-medium">Submitted</th>
                   </tr>
@@ -190,6 +197,9 @@ function UserUsageDetail() {
                         </td>
                         <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                           {job.page_count ?? "—"}
+                        </td>
+                        <td className="px-4 py-3">
+                          <InkCell coverage={job.coverage} />
                         </td>
                         <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                           {formatBytes(job.file_size_bytes)}
