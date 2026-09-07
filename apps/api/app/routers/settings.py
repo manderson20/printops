@@ -50,7 +50,13 @@ from app.models.zabbix import ZabbixSettings
 from app.printers.snmp_counters import get_or_create_snmp_defaults
 from app.quotas.service import get_or_create_quota_settings
 from app.reports.period_source import load_period_context
-from app.reports.periods import reporting_year_of, reporting_year_period, terms_for_year
+from app.reports.periods import (
+    CalendarSpec,
+    TermSpec,
+    reporting_year_of,
+    reporting_year_period,
+    terms_for_year,
+)
 from app.reports.untracked_copies import get_or_create_untracked_copy_settings
 from app.schemas.auth import UserOut
 from app.schemas.classguard import (
@@ -1424,6 +1430,60 @@ async def get_reporting_calendar(db: AsyncSession = Depends(get_db)):
     building.
     """
     return await _reporting_calendar_out(db)
+
+
+@router.post(
+    "/reporting-calendar/preview",
+    response_model=list[ResolvedPeriodOut],
+    dependencies=[Depends(require_role("admin"))],
+)
+async def preview_reporting_calendar(
+    payload: ReportingCalendarIn, db: AsyncSession = Depends(get_db)
+):
+    """Resolve a proposed calendar without saving it.
+
+    So the editor can show what a change does *before* an admin commits to it.
+    The obvious alternative — working the labels out in the browser — would put
+    a second implementation of the year and term rules in TypeScript, which is
+    the arrangement that had this app and its own API disagreeing about when a
+    school year began. A round trip is cheaper than that divergence.
+
+    Writes nothing and is not audited: it changes nothing, and somebody laying
+    out a year will trigger it on every keystroke.
+    """
+    context = await load_period_context(db)
+    spec = CalendarSpec(
+        year_start_month=payload.year_start_month,
+        year_start_day=payload.year_start_day,
+        year_noun=payload.year_noun,
+        label_style=payload.label_style,
+    )
+    terms = [
+        TermSpec(
+            name=term.name,
+            start_month=term.start_month,
+            start_day=term.start_day,
+            position=position,
+        )
+        for position, term in enumerate(payload.terms)
+    ]
+
+    year = reporting_year_of(context.today, spec)
+    # Dated overrides are deliberately not applied. They belong to a year an
+    # admin has already stated explicitly, and showing them here would hide the
+    # effect of the pattern being edited behind dates the edit cannot change.
+    resolved = [reporting_year_period(year, spec), *terms_for_year(year, spec, terms)]
+
+    return [
+        ResolvedPeriodOut(
+            key=period.key,
+            label=period.label,
+            start=period.start,
+            end=period.end,
+            kind=period.kind,
+        )
+        for period in resolved
+    ]
 
 
 @router.put(

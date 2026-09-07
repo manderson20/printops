@@ -16,7 +16,6 @@ import { ErrorState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
-import { ReportingCalendarCard } from "./ReportingCalendarCard";
 
 const FORMULA_FIELDS: {
   key: keyof ReportFormulaSettings;
@@ -127,13 +126,11 @@ export default function InsightsSettingsPage() {
           <WikiHelpLink page="Settings-Insights-Formula" />
         </div>
         <p className="mt-1 text-sm text-zinc-500">
-          The periods reports are grouped into, and the formulas used to
-          compute the cost and environmental estimates shown on the Insights
-          report.
+          Formulas used to compute the cost and environmental estimates
+          shown on the Insights report. The periods those reports are grouped
+          by live under Reporting Periods.
         </p>
       </div>
-
-      <ReportingCalendarCard />
 
       {loadFailed && (
         <Card>

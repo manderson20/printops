@@ -4006,6 +4006,26 @@ export type ReportingCalendarUpdate = {
   terms: ReportingTerm[];
 };
 
+/** Resolve a calendar without saving it, so the editor can show what a change
+ *  does before an admin commits to it.
+ *
+ *  A round trip rather than working the labels out here: a second copy of the
+ *  year and term rules in TypeScript is what had this app and its own API
+ *  disagreeing about when a school year began. */
+export async function previewReportingCalendar(
+  payload: ReportingCalendarUpdate,
+): Promise<ResolvedPeriod[]> {
+  const response = await authorizedFetch(
+    "/api/v1/settings/reporting-calendar/preview",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  return response.json();
+}
+
 export async function getReportingCalendar(): Promise<ReportingCalendar> {
   const response = await authorizedFetch("/api/v1/settings/reporting-calendar");
   return response.json();
