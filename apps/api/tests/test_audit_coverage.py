@@ -50,6 +50,10 @@ EXEMPT = {
         "will press it several times and should not fill the trail"
     ),
     "test_classguard_connection": "read-only connection probe, changes nothing",
+    "preview_reporting_calendar": (
+        "resolves a proposed calendar and writes nothing; the editor calls it on "
+        "every keystroke, and the save that follows is audited"
+    ),
     "test_google_workspace_connection": "read-only connection probe, changes nothing",
     # Cache refreshes from an external source of truth. These write a lot of
     # rows and none of them are an admin's decision — the admin decided to press

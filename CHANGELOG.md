@@ -5,6 +5,24 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.81.2] - 2026-09-07
+
+- **Reporting periods are now their own settings page**, not a card under
+  Insights. The calendar decides what every report covers, which is a different
+  kind of thing from the formulas that price them, and burying it under
+  "Insights" made it hard to find and harder to reason about.
+- **Split into two tabs**, Year and Segments, matching the sub-navigation used
+  on printer detail. One panel mixing "what is a year called" with a list of
+  segments served neither well.
+- **The preview updates as you type** rather than only after saving, so a
+  change can be checked before it is committed. Resolved on the server through
+  a new dry-run endpoint: working the labels out in the browser would put a
+  second copy of the year and term rules in TypeScript, which is what had this
+  app and its own API disagreeing about when a school year began.
+- Segments can be reordered directly. Order decides which segment pairs with
+  which a year earlier, so it is worth setting deliberately rather than only by
+  editing dates.
+
 ## [0.81.1] - 2026-09-07
 
 - **Removed the last of a school's vocabulary from screens everyone sees.**

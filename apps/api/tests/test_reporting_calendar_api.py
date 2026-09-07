@@ -313,3 +313,74 @@ def test_the_formula_endpoint_no_longer_edits_the_calendar(client, admin_headers
     body = client.get("/api/v1/settings/report-formulas", headers=admin_headers).json()
     assert "school_year_start_month" not in body
     assert "spring_semester_start_month" not in body
+
+
+# --- previewing before saving -----------------------------------------------
+
+
+def test_a_proposed_calendar_resolves_without_being_saved(client, admin_headers):
+    """The editor shows what a change does before an admin commits to it.
+
+    Resolved on the server rather than in the browser on purpose: a second
+    implementation of the year and term rules in TypeScript is what had the
+    Insights page and this API disagreeing about when a school year began.
+    """
+    quarters = {
+        "year_start_month": 10,
+        "year_start_day": 1,
+        "year_noun": "FY",
+        "label_style": "single",
+        "terms": [
+            {"name": "Q1", "start_month": 10, "start_day": 1},
+            {"name": "Q2", "start_month": 1, "start_day": 1},
+            {"name": "Q3", "start_month": 4, "start_day": 1},
+            {"name": "Q4", "start_month": 7, "start_day": 1},
+        ],
+    }
+    response = client.post(f"{CALENDAR}/preview", headers=admin_headers, json=quarters)
+    assert response.status_code == 200
+
+    body = response.json()
+    assert [period["kind"] for period in body] == ["year", "term", "term", "term", "term"]
+    # All four quarters carry one fiscal year's number, including the two that
+    # fall in the next calendar year. Asserted as "they agree" rather than
+    # against a literal: which year is current depends on today's date, and an
+    # earlier version of this test hardcoded 2027 and failed every September.
+    numbers = {period["label"].split()[-1] for period in body[1:]}
+    assert len(numbers) == 1, f"one fiscal year split across {numbers}"
+    assert numbers == {body[0]["label"].split()[-1]}, "and it is the year's own number"
+
+    # And nothing was written.
+    saved = client.get(CALENDAR, headers=admin_headers).json()
+    assert saved["year_noun"] == "Year", "preview must not save"
+    assert saved["terms"] == []
+
+
+def test_previewing_a_calendar_that_cannot_resolve_is_refused(client, admin_headers):
+    """So the editor can say which field is wrong while it is being typed,
+    rather than at save time."""
+    response = client.post(
+        f"{CALENDAR}/preview",
+        headers=admin_headers,
+        json={
+            "year_start_month": 2,
+            "year_start_day": 31,
+            "year_noun": "Year",
+            "label_style": "auto",
+            "terms": [],
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_previewing_needs_an_admin(client):
+    assert client.post(
+        f"{CALENDAR}/preview",
+        json={
+            "year_start_month": 1,
+            "year_start_day": 1,
+            "year_noun": "Year",
+            "label_style": "auto",
+            "terms": [],
+        },
+    ).status_code in (401, 403)

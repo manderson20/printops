@@ -14,6 +14,7 @@ const SETTINGS_NAV = [
   { href: "/settings/snmp", label: "SNMP" },
   { href: "/settings/aliases", label: "Attribution Aliases" },
   { href: "/settings/insights", label: "Insights" },
+  { href: "/settings/reporting-periods", label: "Reporting Periods" },
   { href: "/settings/locations", label: "Locations" },
   { href: "/settings/road-trip", label: "Road Trip" },
   { href: "/settings/quotas", label: "Quotas" },
