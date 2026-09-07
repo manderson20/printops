@@ -17,6 +17,7 @@ from app.copiers.device_owner import attribute_device_copies
 from app.copiers.sync_jobs import create_sync_job, run_sync_job
 from app.core.config import get_settings
 from app.core.security import decode_access_token
+from app.coverage.worker import measure_job, unmeasured_jobs
 from app.db import AsyncSessionLocal
 from app.integrations.git_update import get_current_version
 from app.integrations.google_workspace import GoogleWorkspaceError
@@ -104,7 +105,6 @@ def _make_device_sync_loop(name: str, settings_model, run_sync_fn, error_cls: ty
             await asyncio.sleep(DEVICE_SYNC_INTERVAL_SECONDS)
 
     return _loop
-
 
 
 def _attention_key(printer: Printer) -> str:
@@ -456,6 +456,47 @@ async def _counter_reading_purge_loop() -> None:
         await asyncio.sleep(COUNTER_READING_PURGE_INTERVAL_SECONDS)
 
 
+# Frequent enough that a job is measured while it is still recent, and its
+# spool file certainly still there; the settle window inside the worker is what
+# keeps it away from jobs CUPS may still be writing.
+COVERAGE_MEASURE_INTERVAL_SECONDS = 5 * 60
+
+
+async def _coverage_measure_loop() -> None:
+    """Measures how much ink recently printed jobs actually laid down.
+
+    Deliberately not in the CUPS backend. That runs while somebody is waiting
+    for their document, and rendering a long report there would delay the print
+    or fail it outright. Coverage is worth having and worth having late; it is
+    never worth a job not printing.
+
+    Each cycle takes a bounded batch, so a backlog after an outage drains over
+    several cycles rather than holding the loop for minutes. Jobs whose spool
+    file has aged out are recorded as expired rather than retried forever —
+    CUPS keeps job data for PreserveJobFiles and no longer, so a long outage
+    means those jobs are simply never measurable, which is a gap worth stating
+    rather than a zero worth inventing.
+
+    Same tolerant per-cycle error handling as the other background loops: one
+    bad document must not stop the next cycle.
+    """
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                now = datetime.now(UTC)
+                for job in await unmeasured_jobs(db, now=now):
+                    try:
+                        await measure_job(db, job)
+                    except Exception:
+                        # One unreadable document should not cost the whole
+                        # batch; the row is left unwritten and retried next
+                        # cycle, and ages out on its own if it never succeeds.
+                        logger.exception("Could not measure coverage for job %s", job.id)
+        except Exception:
+            logger.exception("Unexpected error in coverage measurement loop")
+        await asyncio.sleep(COVERAGE_MEASURE_INTERVAL_SECONDS)
+
+
 SYSLOG_EVENT_PURGE_INTERVAL_SECONDS = 24 * 60 * 60
 
 
@@ -767,6 +808,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_stuck_job_reconcile_loop()),
         asyncio.create_task(_copier_user_sync_loop()),
         asyncio.create_task(_copier_counter_poll_loop()),
+        asyncio.create_task(_coverage_measure_loop()),
     ]
     yield
     for task in tasks:

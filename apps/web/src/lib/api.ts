@@ -2330,6 +2330,11 @@ export type ReportFormulaSettings = {
   // were one district's for every installation. 0 students means nobody has
   // said, and the per-student fact is left out rather than guessed at.
   student_count: number;
+  /** The page coverage a cartridge's rated yield is quoted against, per
+   *  colorant, as a fraction. 0.05 is the ISO/IEC 19752 and 19798 test page.
+   *  Every coverage-derived cost is a ratio against this, so it multiplies all
+   *  of them — a site whose datasheets quote 10% halves every such figure. */
+  iso_coverage_per_channel: number;
   // The year and term boundaries moved to the reporting calendar, which can
   // describe a year that is not a school's. See getReportingCalendar.
 };

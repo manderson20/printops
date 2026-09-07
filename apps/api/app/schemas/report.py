@@ -176,6 +176,7 @@ class ReportFormulaSettingsOut(BaseModel):
     # Zero means nobody has said, and the per-student fact is omitted rather
     # than computed against a guess.
     student_count: int
+    iso_coverage_per_channel: float
     # The year and term boundaries used to live here. They moved to
     # /settings/reporting-calendar, which can express a year with any number of
     # terms under any name — this pair of fields could only ever describe two,
@@ -191,6 +192,12 @@ class ReportFormulaSettingsUpdate(BaseModel):
     co2_grams_per_sheet: float | None = None
     cost_per_sheet_paper: float | None = None
     student_count: int | None = Field(default=None, ge=0, le=1_000_000)
+    # Bounded away from zero: it is a divisor, and 0 would make every
+    # coverage-derived cost infinite. The upper bound is generous — a page
+    # cannot be more than fully covered — but anything near it means somebody
+    # has entered a percentage where a fraction was wanted, which would divide
+    # every cost by twenty.
+    iso_coverage_per_channel: float | None = Field(default=None, gt=0.0, le=1.0)
     # The calendar fields moved to /settings/reporting-calendar. The
     # 31-February check they carried moved with them, into
     # app/schemas/reporting_period.py, for the same reason it existed here:

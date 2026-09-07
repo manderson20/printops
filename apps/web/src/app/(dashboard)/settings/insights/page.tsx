@@ -44,6 +44,11 @@ const FORMULA_FIELDS: {
     label: "Students enrolled (0 to leave the per-student fact out)",
     step: "1",
   },
+  {
+    key: "iso_coverage_per_channel",
+    label: "Rated yield assumes coverage per colorant (0.05 = 5%)",
+    step: "0.01",
+  },
 ];
 
 export default function InsightsSettingsPage() {

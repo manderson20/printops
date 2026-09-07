@@ -206,3 +206,67 @@ def copy_cost(
         paper_cost=paper_cost,
         total_cost=toner_cost + paper_cost,
     )
+
+
+# --- what a job actually cost, where its coverage was measured --------------
+
+
+@dataclass
+class MeasuredTonerCost:
+    """A job's toner cost from what it actually put on the page.
+
+    `ratio` is the measured coverage over the coverage a cartridge's rated
+    yield is quoted against. A page at the ISO test conditions is 1.0; the
+    jobs measured on the first estate ranged from 0.07 to 5.9, which is the
+    whole reason for computing this rather than multiplying a page count.
+    """
+
+    toner_cost: float
+    ratio: float
+
+
+class CoverageLike(Protocol):
+    cyan: float
+    magenta: float
+    yellow: float
+    black: float
+
+
+def measured_toner_cost(
+    pages: int,
+    color_mode: str | None,
+    coverage: "CoverageLike",
+    rate: PrinterTonerRate,
+    iso_coverage_per_channel: float,
+) -> MeasuredTonerCost | None:
+    """Scale a printer's rated per-page cost by how much ink the job used.
+
+    A cartridge's yield is quoted against a standard test page — about 5%
+    coverage **per colorant** under ISO/IEC 19752 and 19798. So a page covered
+    twice as heavily consumes roughly twice the toner and costs roughly twice
+    as much, and the rated rate multiplied by that ratio is the estimate.
+
+    Per channel throughout, never against total ink. A CMYK page at ISO
+    conditions carries about 20% ink across four channels, so comparing a
+    measured total against a 5% baseline would overstate a colour job about
+    fourfold. Mono compares black alone; colour averages the four channels,
+    because the colour rate already sums four cartridges each quoted at that
+    same per-channel coverage.
+
+    Returns None when the baseline is not usable, rather than dividing by it —
+    an admin can set this to zero, and a cost of infinity is worse than no
+    figure at all.
+    """
+    if iso_coverage_per_channel <= 0 or pages <= 0:
+        return None
+
+    if color_mode == "color":
+        measured = (coverage.cyan + coverage.magenta + coverage.yellow + coverage.black) / 4
+        rated = rate.color_cost_per_page
+    else:
+        # A mono job puts down black only, whatever the document contained.
+        measured = coverage.black
+        rated = rate.mono_cost_per_page
+
+    ratio = measured / iso_coverage_per_channel
+    return MeasuredTonerCost(toner_cost=rated * ratio * pages, ratio=ratio)
