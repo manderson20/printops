@@ -27,6 +27,7 @@ from app.integrations.mosyle import run_sync as run_mosyle_sync
 from app.models.audit import AuditEvent
 from app.models.google_workspace import GoogleWorkspaceSettings
 from app.models.job import Job
+from app.models.job_coverage import JobCoverage
 from app.models.mfp_device import MfpDevice
 from app.models.mosyle import MosyleSettings
 from app.models.printer import Printer
@@ -625,10 +626,21 @@ async def _failed_job_purge_loop() -> None:
                 result = await db.execute(
                     select(Job).where(Job.status == "failed", Job.completed_at < cutoff)
                 )
-                for job in result.scalars().all():
+                doomed = result.scalars().all()
+                for job in doomed:
                     if job.held_file_path:
                         Path(job.held_file_path).unlink(missing_ok=True)
                     await db.delete(job)
+                # Coverage rows are keyed on job_id with no foreign key, so
+                # nothing removes them when their job goes. Left alone they are
+                # orphans: unreachable, permanent, and growing with every purge
+                # cycle.
+                if doomed:
+                    await db.execute(
+                        delete(JobCoverage).where(
+                            JobCoverage.job_id.in_([job.id for job in doomed])
+                        )
+                    )
                 await db.commit()
         except Exception:
             logger.exception("Unexpected error in failed job purge loop")

@@ -52,7 +52,13 @@ async def unmeasured_jobs(db: AsyncSession, *, now: datetime, limit: int = BATCH
             Job.cups_job_id.is_not(None),
             Job.id.not_in(measured),
         )
-        .order_by(Job.created_at.desc())
+        # Oldest first. Newest-first starves the backlog: once more than a
+        # batch arrives between cycles, the loop takes the newest each time and
+        # the older ones are never reached, ageing past the horizon unmeasured.
+        # That fails hardest during the busiest periods, which are exactly the
+        # ones worth measuring, and it fails silently — the jobs simply
+        # disappear from the query.
+        .order_by(Job.created_at.asc())
         .limit(limit)
     )
     return list((await db.execute(stmt)).scalars().all())

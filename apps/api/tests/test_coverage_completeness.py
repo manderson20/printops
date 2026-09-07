@@ -7,6 +7,8 @@ such a figure as though it covered everything is the failure this guards
 against, and it is invisible: the number looks the same either way.
 """
 
+import inspect
+
 import pytest
 
 from app.reports.coverage_summary import CoverageCompleteness
@@ -46,3 +48,26 @@ def test_the_unmeasured_remainder_is_always_visible():
     assert result.unmeasured_jobs == 388
     assert result.fraction == pytest.approx(0.03)
     assert result.is_representative is False
+
+
+# --- the loop must not starve its own backlog -------------------------------
+
+
+def test_the_oldest_unmeasured_jobs_are_taken_first():
+    """Ordering decides whether a busy day gets measured at all.
+
+    The batch is bounded, so once more than a batch arrives between cycles the
+    order determines which jobs are reached. Newest-first takes the latest
+    batch every time and never returns to the older ones, which age past the
+    spool horizon unmeasured — and it fails hardest during the busiest periods,
+    which are the ones most worth measuring.
+
+    Asserted against the query itself because the failure has no symptom: the
+    jobs simply stop appearing, and nothing reports a job that was never
+    measured as a problem.
+    """
+    import app.coverage.worker as worker
+
+    source = inspect.getsource(worker.unmeasured_jobs)
+    assert "created_at.asc()" in source, "oldest first, nearest expiry first"
+    assert "created_at.desc()" not in source, "newest-first starves the backlog"

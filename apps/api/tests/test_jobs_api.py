@@ -863,3 +863,33 @@ async def test_create_job_rejects_archived_printer(
     response = client.post("/api/v1/jobs", json={"printer_id": printer_id}, headers=backend_headers)
     assert response.status_code == 409
     assert "archived" in response.json()["detail"].lower()
+
+
+# --- measured ink coverage ---------------------------------------------------
+
+
+def test_jobs_without_coverage_still_appear_in_the_list(
+    client, auth_headers, backend_headers, printer_id
+):
+    """The join must be outer.
+
+    Most jobs have no coverage row: the loop has not reached them, their spool
+    file aged out, or they are copies, which produce no document to measure. An
+    inner join would drop every one of them from the job list — a far worse
+    failure than a missing figure, and one that looks like data loss rather
+    than a reporting gap.
+    """
+    created = client.post(
+        "/api/v1/jobs",
+        headers=backend_headers,
+        json={"printer_id": printer_id, "submitted_by": "someone@example.org", "page_count": 3},
+    )
+    assert created.status_code == 201, created.text
+
+    listed = client.get("/api/v1/jobs", headers=auth_headers)
+    assert listed.status_code == 200
+    rows = listed.json()
+    assert rows, "the job must be listed even though nothing measured it"
+    assert rows[0]["coverage"] is None, (
+        "absent, not zero — 'not measured' and 'measured, and blank' are different facts"
+    )

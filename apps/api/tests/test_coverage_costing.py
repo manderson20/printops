@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from app.reports.formulas import PrinterTonerRate, measured_toner_cost
+from app.reports.formulas import ChannelRates, PrinterTonerRate, measured_toner_cost
 
 ISO = 0.05
 RATE = PrinterTonerRate(mono_cost_per_page=0.01, color_cost_per_page=0.08)
@@ -105,3 +105,82 @@ def test_the_baseline_scales_every_figure():
 
     assert at_five is not None and at_ten is not None
     assert at_five.toner_cost == pytest.approx(at_ten.toner_cost * 2)
+
+
+# --- per channel, not averaged ----------------------------------------------
+
+CHANNELS = ChannelRates(cyan=0.10, magenta=0.10, yellow=0.10, black=0.01)
+
+
+def test_a_black_heavy_colour_page_is_priced_off_black():
+    """The mistake averaging hides.
+
+    A page printed in colour that puts down only black consumes only the black
+    cartridge — usually much the cheapest of the four. Averaging the channels
+    and multiplying by the summed CMYK rate charges it a quarter of the total
+    instead, which for these rates is nearly eight times too much.
+    """
+    rate = PrinterTonerRate(mono_cost_per_page=0.01, color_cost_per_page=0.31)
+    black_only = Coverage(black=ISO)
+
+    honest = measured_toner_cost(1, "color", black_only, rate, ISO, CHANNELS)
+    averaged = measured_toner_cost(1, "color", black_only, rate, ISO, None)
+
+    assert honest is not None and averaged is not None
+    assert honest.toner_cost == pytest.approx(0.01), "the black cartridge's own rate"
+    assert averaged.toner_cost == pytest.approx(0.31 / 4)
+    assert averaged.toner_cost > honest.toner_cost * 7
+
+
+def test_per_channel_still_agrees_at_the_test_conditions():
+    """The anchor has to survive the change: a page exactly like the
+    manufacturer's test page must cost exactly the rated rate, whichever way it
+    is computed."""
+    rate = PrinterTonerRate(
+        mono_cost_per_page=CHANNELS.black,
+        color_cost_per_page=CHANNELS.cyan + CHANNELS.magenta + CHANNELS.yellow + CHANNELS.black,
+    )
+    at_iso = Coverage(cyan=ISO, magenta=ISO, yellow=ISO, black=ISO)
+
+    result = measured_toner_cost(1, "color", at_iso, rate, ISO, CHANNELS)
+    assert result is not None
+    assert result.toner_cost == pytest.approx(rate.color_cost_per_page)
+    assert result.ratio == pytest.approx(1.0)
+
+
+def test_channel_rates_need_every_cartridge():
+    """A partial set has no honest per-channel answer, and the same condition
+    governs whether cartridge pricing is used at all."""
+    from dataclasses import dataclass as _dataclass
+
+    @_dataclass
+    class Cart:
+        color: str
+        cost: float
+        yield_pages: int
+
+    three = [Cart("black", 50, 5000), Cart("cyan", 60, 3000), Cart("magenta", 60, 3000)]
+    assert ChannelRates.from_cartridges(three) is None
+
+    four = [*three, Cart("yellow", 60, 3000)]
+    rates = ChannelRates.from_cartridges(four)
+    assert rates is not None
+    assert rates.black == pytest.approx(0.01)
+
+
+def test_a_zero_cost_cartridge_is_configured():
+    """Matching compute_printer_rate: configured means a yield, whatever the
+    cost. A bundled cartridge rates at zero rather than disabling the set."""
+    from dataclasses import dataclass as _dataclass
+
+    @_dataclass
+    class Cart:
+        color: str
+        cost: float
+        yield_pages: int
+
+    rates = ChannelRates.from_cartridges(
+        [Cart(c, 0.0 if c == "black" else 60, 3000) for c in ("black", "cyan", "magenta", "yellow")]
+    )
+    assert rates is not None
+    assert rates.black == 0.0

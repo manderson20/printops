@@ -48,8 +48,11 @@ class JobCoverage(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
 
     # The job this describes. Not a foreign key with a cascade: coverage is an
-    # observation about a job and outlives edits to it, and a job purge removes
-    # these alongside rather than through a database rule.
+    # observation about a job rather than part of it. The failed-job purge in
+    # app/main.py deletes these alongside the jobs it removes — which it did
+    # not do when this comment first claimed it, leaving orphans that nothing
+    # could reach. A comment describing behaviour that does not exist is worse
+    # than no comment, because it stops the next reader looking.
     job_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, unique=True)
 
     state: Mapped[str] = mapped_column(String, default="measured", server_default="measured")
