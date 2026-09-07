@@ -2,7 +2,7 @@ import asyncio
 import csv
 import io
 import secrets
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse
@@ -37,7 +37,6 @@ from app.ldap_relay.service import get_or_create_ldap_relay_settings
 from app.mail.send import MailError, send_mail
 from app.mail.settings import get_or_create_smtp_settings
 from app.models.classguard import ClassGuardSettings
-from app.models.copier_usage import CopierUsageRecord
 from app.models.google_sso import GoogleSsoSettings
 from app.models.google_workspace import GoogleWorkspaceSettings, GoogleWorkspaceUser
 from app.models.job import Job
@@ -55,10 +54,12 @@ from app.models.snmp import SnmpDefaultsSettings
 from app.models.zabbix import ZabbixSettings
 from app.printers.snmp_counters import get_or_create_snmp_defaults
 from app.quotas.service import get_or_create_quota_settings
+from app.reports.aggregation import COPY_INSTANT
 from app.reports.period_source import load_period_context
 from app.reports.periods import (
     CalendarSpec,
     TermSpec,
+    reporting_year_bounds,
     reporting_year_of,
     reporting_year_period,
     terms_for_year,
@@ -1579,9 +1580,13 @@ async def _earliest_activity(db: AsyncSession) -> date | None:
     marked rather than silently offered as equals.
     """
     first_job = (await db.execute(select(func.min(Job.created_at)))).scalar_one_or_none()
-    first_copy = (
-        await db.execute(select(func.min(CopierUsageRecord.period_start)))
-    ).scalar_one_or_none()
+    # COPY_INSTANT, not period_start: a single-event import has occurred_at and
+    # a null period_start, so asking for period_start alone reports "no copier
+    # activity" for an installation whose history is entirely single events —
+    # and the year list would then omit every historical year those copies fall
+    # in. It is also the instant copier *reporting* filters on, so the year list
+    # and the reports it leads to cannot disagree about when activity began.
+    first_copy = (await db.execute(select(func.min(COPY_INSTANT)))).scalar_one_or_none()
 
     candidates = [value for value in (first_job, first_copy) if value is not None]
     return min(candidates).date() if candidates else None
@@ -1662,6 +1667,26 @@ async def override_reporting_year(
     Audited, because moving a segment boundary changes what every report ever
     run against that segment covers.
     """
+    # Dates outside the year they are filed under are the one mistake this
+    # endpoint cannot absorb. An override replaces the pattern for its year
+    # entirely, so a segment mistyped into the following year would be exposed
+    # under *this* year's keys — reports for it would query the wrong span, and
+    # the year itself could be left with no segment covering its actual days.
+    # Ordering and overlap are checked in the schema; this needs the calendar,
+    # which only the endpoint has.
+    context = await load_period_context(db)
+    year_start, year_end = reporting_year_bounds(year, context.calendar)
+    for segment in payload.segments:
+        if segment.start_date < year_start or segment.end_date >= year_end:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"{segment.name}: {segment.start_date} to {segment.end_date} falls "
+                    f"outside {reporting_year_period(year, context.calendar).label}, "
+                    f"which runs {year_start} to {year_end - timedelta(days=1)}"
+                ),
+            )
+
     existing = (
         (
             await db.execute(

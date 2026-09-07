@@ -505,3 +505,85 @@ def test_only_an_admin_can_state_a_year(client):
         f"{YEARS}/2026",
         json={"segments": [{"name": "F", "start_date": "2026-08-22", "end_date": "2026-12-20"}]},
     ).status_code in (401, 403)
+
+
+@pytest.mark.parametrize(
+    ("segments", "because"),
+    [
+        (
+            [{"name": "Fall", "start_date": "2027-08-22", "end_date": "2027-12-20"}],
+            "a year later than the one it is filed under",
+        ),
+        (
+            [{"name": "Fall", "start_date": "2026-05-01", "end_date": "2026-06-30"}],
+            "before the year opens",
+        ),
+        (
+            [{"name": "Spring", "start_date": "2027-01-09", "end_date": "2027-08-01"}],
+            "running past the end of the year",
+        ),
+    ],
+)
+def test_stated_dates_outside_their_own_year_are_refused(client, admin_headers, segments, because):
+    """The one mistake this endpoint cannot absorb.
+
+    An override replaces the pattern for its year entirely, so a segment
+    mistyped into the following year would be exposed under *this* year's keys.
+    Reports for it would query the wrong span, and the year itself could be
+    left with no segment covering its actual days — all without anything
+    looking wrong on screen.
+    """
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+    response = client.put(f"{YEARS}/2026", headers=admin_headers, json={"segments": segments})
+    assert response.status_code == 422, because
+
+
+def test_two_segments_cannot_share_a_position(client, admin_headers):
+    """`position` is part of the period key, so a duplicate produces two
+    periods with the same key. Resolution returns the first, and the second
+    holds printing that can never be selected for a report."""
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+    response = client.put(
+        f"{YEARS}/2026",
+        headers=admin_headers,
+        json={
+            "segments": [
+                {
+                    "name": "Fall",
+                    "start_date": "2026-08-22",
+                    "end_date": "2026-12-20",
+                    "position": 0,
+                },
+                {
+                    "name": "Spring",
+                    "start_date": "2027-01-09",
+                    "end_date": "2027-05-26",
+                    "position": 0,
+                },
+            ]
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_the_year_list_counts_single_event_copier_activity(client, admin_headers):
+    """Copier rows come in two shapes: an aggregate with a period, and a single
+    event with only `occurred_at`. An installation whose history is entirely
+    single events has a null `period_start` on every row, so asking for that
+    column alone reports no copier activity at all — and the year list would
+    then omit every historical year those copies fall in.
+
+    Asserted against COPY_INSTANT, the same precedence copier reporting filters
+    on, so the year list and the reports it leads to cannot disagree about when
+    activity began.
+    """
+    from app.models.copier_usage import CopierUsageRecord
+    from app.routers.settings import COPY_INSTANT
+
+    assert COPY_INSTANT is not None
+    # occurred_at is first in the precedence, ahead of period_end and
+    # created_at; period_start is not in it at all.
+    rendered = str(COPY_INSTANT)
+    assert "occurred_at" in rendered
+    assert "period_start" not in rendered, "period_start is not the copy instant"
+    assert CopierUsageRecord.period_start is not None

@@ -148,6 +148,19 @@ class ReportingYearOverrideIn(BaseModel):
                 raise ValueError(
                     f"{earlier.name} ends on or after {later.name} begins; segments cannot overlap"
                 )
+
+        # `position` becomes part of the period key — term:2026:0 and so on —
+        # so two segments sharing one produce two periods with the same key.
+        # Resolution returns the first match and the second segment simply
+        # cannot be selected for a report: it exists, holds printing, and is
+        # unreachable, and nothing anywhere would report that as an error.
+        supplied = [segment.position for segment in self.segments if segment.position is not None]
+        if len(set(supplied)) != len(supplied):
+            raise ValueError("two segments cannot share a position")
+
+        names = [segment.name.strip().casefold() for segment in self.segments]
+        if len(set(names)) != len(names):
+            raise ValueError("two segments cannot share a name")
         return self
 
 
