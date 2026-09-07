@@ -24,12 +24,18 @@ import pytest
 WEB = Path(__file__).resolve().parents[2] / "web" / "src"
 
 # Where a school's vocabulary legitimately appears in user-visible text.
-ALLOWED = {
-    # The starting-point templates: "Two semesters", "School year", "Fall
-    # Semester". Offering a school calendar alongside quarters and trimesters
-    # is the opposite of hardwiring one.
-    "app/(dashboard)/settings/insights/ReportingCalendarCard.tsx",
-}
+#
+# A directory rather than a list of files. The first version named one file
+# exactly, and moving that file to its own settings page turned its own
+# starting templates into a violation — a guard that breaks when code moves
+# teaches people to widen it in a hurry, which is how a guard stops guarding.
+ALLOWED_DIRS = (
+    # The reporting-period editor. Its templates say "Two semesters", "School
+    # year", "Fall Semester", and its help text explains that a school year and
+    # a fiscal year are the same object. Offering a school calendar *alongside*
+    # quarters and trimesters, and saying so, is the opposite of hardwiring one.
+    "app/(dashboard)/settings/reporting-periods/",
+)
 
 # Not part of a longer identifier: `spring_semester_start_month` is the name of
 # a field on a deprecated API type, not a word anybody reads on screen. The
@@ -54,7 +60,7 @@ def test_no_school_vocabulary_reaches_a_user():
     offenders = []
     for path in sorted(WEB.rglob("*.ts*")):
         relative = str(path.relative_to(WEB))
-        if relative in ALLOWED:
+        if any(relative.startswith(allowed) for allowed in ALLOWED_DIRS):
             continue
         for number, line in _user_visible_lines(path):
             offenders.append(f"{relative}:{number}: {line}")
