@@ -5,6 +5,21 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.77.1] - 2026-09-07
+
+- Moved the web app to ESLint 10. It had been blocked since August: ESLint 10
+  removed the old rule-context accessors, and three plugins that
+  `eslint-config-next` depends on still call them. `@eslint/compat` — ESLint's
+  own compatibility package, which added ESLint 10 support on 2026-09-03 — puts
+  those methods back for the affected rules. Verified to produce identical
+  results on ESLint 9 and 10, so it is not a one-way door. (#125)
+- Dependency updates: `eslint-config-next` 16.3.4 (matching the Next version
+  already in use) and the usual type bumps.
+- The Node floor is now stated and enforced. ESLint 10 needs 20.19+, while
+  `.nvmrc` said "20" and the bootstrap script kept whatever 20.x a machine
+  already had — so a developer on 20.9 would have hit a confusing install
+  failure. Declared in `apps/web/package.json` and checked during bootstrap.
+
 ## [0.77.0] - 2026-09-06
 
 - **Ask for double-sided, a staple or a hole punch when you upload.** The Print

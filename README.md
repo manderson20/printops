@@ -28,7 +28,10 @@ Open-source, self-hosted enterprise print management platform for K-12 schools, 
 
 ## Prerequisites
 
-- Node.js 20 (see `.nvmrc`) + pnpm (`corepack enable`)
+- Node.js **20.19+** (see `.nvmrc`, which resolves to the latest 20.x) + pnpm
+  (`corepack enable`). The 20.19 floor is ESLint 10's, declared in
+  `apps/web/package.json`'s `engines` so an older Node fails at install rather
+  than somewhere confusing later.
 - Python 3.12+ (see `.python-version`) + [uv](https://docs.astral.sh/uv/) for managing it
 - Docker + Docker Compose
 - GitHub CLI (`gh`), for repo/auth workflows
