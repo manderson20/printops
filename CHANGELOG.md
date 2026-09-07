@@ -5,6 +5,34 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.84.0] - 2026-09-07
+
+- **PrintOps now measures how much ink a job actually put on the page.** Every
+  cost before this was a page count times a rate, which prices a page of dense
+  graphics and a page with one line on it identically. A background loop reads
+  each finished job's spooled PDF and records the fraction of each page covered
+  by each colorant.
+- It runs **after** printing and never in the print path: rendering a long
+  document while somebody waits could delay their job or fail it. Coverage is
+  worth having late; it is never worth a job not printing.
+- **What it is actually for, measured on a real estate:** across 30 jobs the
+  aggregate correction was 1.12x — a flat rate already gets a district total
+  about right — while individual jobs ranged from 0.07x to 8.77x. The value is
+  attribution and outliers, not correcting totals: whose printing costs eight
+  times what their page count suggests, and which near-blank jobs are charged
+  fourteen times what they cost.
+- **The coverage a rated yield assumes is a setting** (Settings > Insights),
+  defaulting to 5% per colorant — the ISO/IEC 19752 and 19798 test page. Per
+  colorant, not total: a CMYK page at those conditions carries about 20% ink
+  across four channels, and reading that as the per-channel figure would
+  overstate every colour cost fourfold.
+- Jobs that could not be measured are recorded as such rather than left blank,
+  so a figure can state how much of itself was measured. **Copies can never be
+  measured** — walk-up copying produces no document — so a blended total has to
+  declare its own completeness rather than imply it covers everything.
+- Nothing existing changes. The rated-yield figure every report uses today is
+  untouched and remains the answer wherever a job was not measured.
+
 ## [0.83.0] - 2026-09-07
 
 - **What a sheet costs, on the printer's Toner tab.** Mono and colour, simplex
