@@ -16,6 +16,7 @@ import { ErrorState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
+import { ReportingCalendarCard } from "./ReportingCalendarCard";
 
 const FORMULA_FIELDS: {
   key: keyof ReportFormulaSettings;
@@ -44,10 +45,6 @@ const FORMULA_FIELDS: {
     label: "Students enrolled (0 to leave the per-student fact out)",
     step: "1",
   },
-  { key: "school_year_start_month", label: "School year starts — month", step: "1" },
-  { key: "school_year_start_day", label: "School year starts — day", step: "1" },
-  { key: "spring_semester_start_month", label: "Spring semester starts — month", step: "1" },
-  { key: "spring_semester_start_day", label: "Spring semester starts — day", step: "1" },
 ];
 
 export default function InsightsSettingsPage() {
@@ -130,10 +127,13 @@ export default function InsightsSettingsPage() {
           <WikiHelpLink page="Settings-Insights-Formula" />
         </div>
         <p className="mt-1 text-sm text-zinc-500">
-          Formulas used to compute the cost/environmental estimates shown on the
-          Insights report.
+          The periods reports are grouped into, and the formulas used to
+          compute the cost and environmental estimates shown on the Insights
+          report.
         </p>
       </div>
+
+      <ReportingCalendarCard />
 
       {loadFailed && (
         <Card>

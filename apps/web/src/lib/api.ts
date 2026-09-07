@@ -2300,6 +2300,10 @@ export async function deleteReportSnapshot(id: string): Promise<void> {
   });
 }
 
+/** @deprecated The two-term shape this describes cannot express a calendar
+ *  with quarters, or one with no terms at all. Derived from the reporting
+ *  calendar on the server rather than stored, so it stays truthful, but it is
+ *  lossy — use {@link PeriodOption}. */
 export type SchoolCalendar = {
   school_year_start_month: number;
   school_year_start_day: number;
@@ -2307,8 +2311,10 @@ export type SchoolCalendar = {
   spring_semester_start_day: number;
 };
 
-/** Term dates, readable by anyone signed in — the Insights presets need them
- *  and that page is open to viewers. Costs and enrolment stay admin-only. */
+/** @deprecated Superseded by {@link getPeriodOptions}, which returns periods
+ *  already named and dated by the server rather than four raw numbers each
+ *  client has to turn into dates itself. Kept because the endpoint is public
+ *  API and an older client may still call it; nothing in this app does. */
 export async function getSchoolCalendar(): Promise<SchoolCalendar> {
   const response = await authorizedFetch("/api/v1/reports/calendar");
   return response.json();
@@ -2324,10 +2330,8 @@ export type ReportFormulaSettings = {
   // were one district's for every installation. 0 students means nobody has
   // said, and the per-student fact is left out rather than guessed at.
   student_count: number;
-  school_year_start_month: number;
-  school_year_start_day: number;
-  spring_semester_start_month: number;
-  spring_semester_start_day: number;
+  // The year and term boundaries moved to the reporting calendar, which can
+  // describe a year that is not a school's. See getReportingCalendar.
 };
 
 export type ReportFormulaSettingsInput = Partial<ReportFormulaSettings>;
@@ -3401,7 +3405,50 @@ export async function disablePrinterCopier(id: string): Promise<Printer> {
 
 // --- "Your Printing, Explained" (app/routers/reports.py) ---------------
 
-export type ExplainedPeriod = "week" | "month" | "semester" | "year";
+/** A period the reports can resolve.
+ *
+ * The four relative names, plus `calendar_year`, plus an explicit instance key
+ * like `year:2025` or `term:2025:1` — which is what lets a report look at a
+ * period that has already finished. The string form is deliberate: the set of
+ * valid periods is a property of the organisation's configured calendar, so it
+ * lives on the server and cannot be enumerated in a union here.
+ *
+ * `semester` is kept because bookmarks and the older clients send it. The
+ * server maps it to whatever this organisation calls the term containing
+ * today. */
+export type ExplainedPeriod = string;
+
+export type PeriodOption = {
+  key: string;
+  label: string;
+  kind: "week" | "month" | "term" | "year" | "calendar_year";
+  /** YYYY-MM-DD. `end` is exclusive — the day after the last day covered —
+   *  which is the same convention the report filters use on both sides. Sent
+   *  by the server so no client recomputes the calendar; doing that in
+   *  TypeScript is what let the Insights page and the API disagree about when
+   *  a school year began. */
+  start: string;
+  end: string;
+};
+
+export type PeriodOptions = {
+  /** "School year", "Fiscal year", "Year" — whatever this organisation calls
+   *  a year of its own. */
+  year_noun: string;
+  options: PeriodOption[];
+};
+
+/** The periods to offer, already labelled for this organisation.
+ *
+ * This replaced a hardcoded array reading "This semester" / "School year",
+ * which was one district's vocabulary shown to everybody who installed
+ * PrintOps — including organisations that are not schools and have no
+ * semesters. Readable by anyone signed in, because the picker is on screens
+ * viewers can see. */
+export async function getPeriodOptions(): Promise<PeriodOptions> {
+  const response = await authorizedFetch("/api/v1/reports/periods");
+  return response.json();
+}
 
 export type Milestone = {
   name: string;
@@ -3912,6 +3959,71 @@ export async function updateRoadTripSettings(
   const response = await authorizedFetch("/api/v1/road-trip/settings", {
     method: "PUT",
     body: JSON.stringify(input),
+  });
+  return response.json();
+}
+
+
+// --- the organisation's reporting calendar (app/routers/settings.py) -------
+
+export type ReportingTerm = {
+  name: string;
+  start_month: number;
+  start_day: number;
+};
+
+export type ResolvedPeriod = {
+  key: string;
+  label: string;
+  start: string;
+  /** Exclusive. */
+  end: string;
+  kind: string;
+};
+
+export type ReportingCalendar = {
+  year_start_month: number;
+  year_start_day: number;
+  /** "School year", "Fiscal year", "Year" — what this organisation calls a
+   *  year of its own. */
+  year_noun: string;
+  /** "auto" derives from the start month; "spanning" is 2026–2027; "single"
+   *  is the year it ends in, which is what FY2027 means for an October
+   *  start. */
+  label_style: "auto" | "spanning" | "single";
+  terms: (ReportingTerm & { position: number })[];
+  /** The current year and its terms as these settings actually resolve —
+   *  so an admin reads back the year they described instead of imagining
+   *  it. */
+  preview: ResolvedPeriod[];
+};
+
+export type ReportingCalendarUpdate = {
+  year_start_month: number;
+  year_start_day: number;
+  year_noun: string;
+  label_style: string;
+  terms: ReportingTerm[];
+};
+
+export async function getReportingCalendar(): Promise<ReportingCalendar> {
+  const response = await authorizedFetch("/api/v1/settings/reporting-calendar");
+  return response.json();
+}
+
+/** Replaces the calendar and its terms together.
+ *
+ * Whole-list rather than per-term, because a year is what an admin is editing
+ * — and patching terms one at a time invites two terms starting on the same
+ * day, or a gap where one was deleted, which the resolver cannot report on
+ * sensibly. */
+export async function updateReportingCalendar(
+  payload: ReportingCalendarUpdate,
+): Promise<ReportingCalendar> {
+  const response = await authorizedFetch("/api/v1/settings/reporting-calendar", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
   return response.json();
 }

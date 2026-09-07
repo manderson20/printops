@@ -9,7 +9,13 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.audit.record import record_audit, record_settings_update, snapshot
+from app.audit.record import (
+    auditable_fields,
+    diff,
+    record_audit,
+    record_settings_update,
+    snapshot,
+)
 from app.core.crypto import decrypt, encrypt
 from app.core.server_sync import ServerSyncError, sync_server_settings
 from app.core.tls_status import read_certificate_status
@@ -36,12 +42,15 @@ from app.models.google_workspace import GoogleWorkspaceSettings, GoogleWorkspace
 from app.models.mosyle import MosyleSettings
 from app.models.release import PrintReleaseSettings
 from app.models.report import ReportFormulaSettings
+from app.models.reporting_period import ReportingCalendar, ReportingTerm
 from app.models.server_settings import ServerSettings
 from app.models.smtp import SmtpSettings
 from app.models.snmp import SnmpDefaultsSettings
 from app.models.zabbix import ZabbixSettings
 from app.printers.snmp_counters import get_or_create_snmp_defaults
 from app.quotas.service import get_or_create_quota_settings
+from app.reports.period_source import load_period_context
+from app.reports.periods import reporting_year_of, reporting_year_period, terms_for_year
 from app.reports.untracked_copies import get_or_create_untracked_copy_settings
 from app.schemas.auth import UserOut
 from app.schemas.classguard import (
@@ -62,6 +71,12 @@ from app.schemas.mosyle import MosyleSettingsOut, MosyleSettingsUpdate, MosyleTe
 from app.schemas.quota import QuotaSettingsOut, QuotaSettingsUpdate
 from app.schemas.release import PrintReleaseSettingsOut, PrintReleaseSettingsUpdate
 from app.schemas.report import ReportFormulaSettingsOut, ReportFormulaSettingsUpdate
+from app.schemas.reporting_period import (
+    ReportingCalendarIn,
+    ReportingCalendarOut,
+    ReportingTermOut,
+    ResolvedPeriodOut,
+)
 from app.schemas.server_settings import (
     ServerSettingsOut,
     ServerSettingsUpdate,
@@ -985,13 +1000,11 @@ FORMULA_FIELDS = (
     "sheets_per_tree",
     "co2_grams_per_sheet",
     "cost_per_sheet_paper",
-    # The district's own facts, which used to be constants in the source and so
-    # were one district's for everybody who installed this.
+    # The district's own fact, which used to be a constant in the source and so
+    # was one district's for everybody who installed this. The year and term
+    # boundaries were here too until they moved to the reporting calendar
+    # below, which can describe a year that is not a school's.
     "student_count",
-    "school_year_start_month",
-    "school_year_start_day",
-    "spring_semester_start_month",
-    "spring_semester_start_day",
 )
 
 
@@ -1336,3 +1349,154 @@ async def test_smtp_settings(payload: SmtpTestRequest, db: AsyncSession = Depend
     except MailError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     return {"ok": True}
+
+
+# --- the organisation's reporting calendar ----------------------------------
+
+
+def _describe_terms(terms) -> str:
+    """The term list as one readable line, for the audit log.
+
+    A string rather than structured data because this is read by a person
+    scanning for what changed, and "Fall Semester 15/8; Spring Semester 5/1"
+    answers that at a glance where a nested diff would not.
+    """
+    return "; ".join(f"{term.name} {term.start_day}/{term.start_month}" for term in terms)
+
+
+async def _get_or_create_reporting_calendar(db: AsyncSession) -> ReportingCalendar:
+    result = await db.execute(select(ReportingCalendar).limit(1))
+    calendar = result.scalar_one_or_none()
+    if calendar is None:
+        calendar = ReportingCalendar()
+        db.add(calendar)
+        await db.commit()
+        await db.refresh(calendar)
+    return calendar
+
+
+async def _reporting_calendar_out(db: AsyncSession) -> ReportingCalendarOut:
+    calendar = await _get_or_create_reporting_calendar(db)
+    context = await load_period_context(db)
+    year = reporting_year_of(context.today, context.calendar)
+
+    # The current year and its terms, as the settings would actually resolve
+    # them. Shown so an admin can read back the year they just described
+    # instead of imagining it — a calendar that reads plausibly and resolves
+    # wrongly is the failure worth a round trip to catch.
+    preview = [reporting_year_period(year, context.calendar)]
+    preview.extend(terms_for_year(year, context.calendar, context.terms, context.overrides))
+
+    return ReportingCalendarOut(
+        year_start_month=calendar.year_start_month,
+        year_start_day=calendar.year_start_day,
+        year_noun=calendar.year_noun,
+        label_style=calendar.label_style,
+        terms=[
+            ReportingTermOut(
+                name=term.name,
+                start_month=term.start_month,
+                start_day=term.start_day,
+                position=term.position,
+            )
+            for term in context.terms
+        ],
+        preview=[
+            ResolvedPeriodOut(
+                key=period.key,
+                label=period.label,
+                start=period.start,
+                end=period.end,
+                kind=period.kind,
+            )
+            for period in preview
+        ],
+    )
+
+
+@router.get("/reporting-calendar", response_model=ReportingCalendarOut)
+async def get_reporting_calendar(db: AsyncSession = Depends(get_db)):
+    """Readable by any signed-in user.
+
+    The same reasoning as /reports/calendar: the period picker is on screens
+    viewers can see, and it cannot offer a period it is not allowed to name.
+    Costs and enrolment stay admin-only; term dates are on the wall in every
+    building.
+    """
+    return await _reporting_calendar_out(db)
+
+
+@router.put(
+    "/reporting-calendar",
+    response_model=ReportingCalendarOut,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def update_reporting_calendar(
+    payload: ReportingCalendarIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
+    """Replace the calendar and its terms.
+
+    Terms are replaced wholesale rather than patched one at a time, because a
+    year is what an admin is actually editing. Patching invites the state the
+    resolver cannot report on sensibly — two terms starting on the same day, or
+    a gap where one was deleted — and those are far easier to prevent here than
+    to detect later in a report that merely looks a bit low.
+
+    `position` is assigned from the submitted order rather than accepted from
+    the client. It is what ties a term to its counterpart a year earlier, so
+    "the same term last year" depends on it being consistent; letting a caller
+    set it directly would let two terms claim position 1 and make that
+    comparison silently pick one of them.
+    """
+    calendar = await _get_or_create_reporting_calendar(db)
+
+    # Terms live in their own table, so the usual model diff cannot see them —
+    # and record_settings_update writes nothing when the diff is empty. Without
+    # this, an admin could redefine every term and leave no trace at all, which
+    # is the change most worth having a trace of: moving a term boundary
+    # changes what every report ever run against that term covers.
+    fields = auditable_fields(ReportingCalendar)
+    before = snapshot(calendar, fields)
+    before["terms"] = _describe_terms(
+        (await db.execute(select(ReportingTerm).order_by(ReportingTerm.position))).scalars().all()
+    )
+
+    calendar.year_start_month = payload.year_start_month
+    calendar.year_start_day = payload.year_start_day
+    calendar.year_noun = payload.year_noun
+    calendar.label_style = payload.label_style
+
+    existing = (await db.execute(select(ReportingTerm))).scalars().all()
+    for term in existing:
+        await db.delete(term)
+    await db.flush()
+
+    for position, term in enumerate(payload.terms):
+        db.add(
+            ReportingTerm(
+                name=term.name,
+                start_month=term.start_month,
+                start_day=term.start_day,
+                position=position,
+            )
+        )
+
+    after = snapshot(calendar, fields)
+    after["terms"] = _describe_terms(payload.terms)
+    changes = diff(before, after, [*fields, "terms"])
+    if changes:
+        record_audit(
+            db,
+            current_user,
+            action="settings.reporting_calendar.update",
+            summary="Updated Reporting calendar settings",
+            entity_type="settings.reporting_calendar",
+            changes=changes,
+            request=request,
+        )
+
+    await db.commit()
+    return await _reporting_calendar_out(db)
