@@ -96,10 +96,10 @@ G_PER_MILE_DRIVEN = 400.0
 
 # --- local facts -------------------------------------------------------
 
-# PLACEHOLDER — awaiting the real enrolment figure from the district.
-# Drives "enough to hand every student N sheets", so a wrong value here
-# is visible on every screen showing that fact.
-STUDENT_COUNT = 930
+# Moved to ReportFormulaSettings.student_count. It was 930 — one district's
+# roll — compiled in, so every other installation measured its printing against
+# a school it has never heard of. Unset now means the fact is omitted rather
+# than computed against a stranger's enrolment.
 
 # Gutenberg's press is conventionally described as producing around 250
 # impressions a day. Used only for the "his press would have needed N
@@ -155,9 +155,14 @@ class Ladder:
 # Sorting by the listed order instead would have made the progress bar
 # run backwards between those two rungs.
 #
-# City distances are road miles from Brookfield and are the figures most
-# worth localizing — they are the ones a reader can check against their
-# own drive.
+# Universal rungs only. Local ones — "X to the next town over", the drive to
+# the state capital — are a district's own and live in the `destinations` table
+# (migration 0072), which every caller of build_equivalencies already passes in
+# preference to this. This list is what a fresh install falls back to before
+# anybody has configured a road trip, so it must not measure somebody else's
+# printing against Brookfield's neighbours, which is exactly what it used to
+# do: Marceline, Jefferson City, across Missouri and Chicago were compiled in
+# here and shown to whoever installed the software.
 DISTANCE_LADDER = Ladder(
     key="distance",
     unit="feet",
@@ -172,10 +177,6 @@ DISTANCE_LADDER = Ladder(
             0.25 * FEET_PER_MILE,
             short="a quarter mile",
         ),
-        Milestone("Brookfield to Marceline", 12.0 * FEET_PER_MILE, short="Marceline"),
-        Milestone("Brookfield to Jefferson City", 120.0 * FEET_PER_MILE, short="Jefferson City"),
-        Milestone("all the way across Missouri", 300.0 * FEET_PER_MILE, short="across Missouri"),
-        Milestone("Brookfield to Chicago", 410.0 * FEET_PER_MILE, short="Chicago"),
         Milestone("coast to coast", 2_800.0 * FEET_PER_MILE),
         Milestone(
             "all the way around the Earth", 24_901.0 * FEET_PER_MILE, short="around the Earth"
@@ -228,16 +229,17 @@ MIN_MEANINGFUL_PROGRESS = 0.01
 
 # --- period definitions ------------------------------------------------
 
-# The district's school year starts 1 July. PLACEHOLDER pending
-# confirmation — "school year to date" is the default period on every
-# view, so this decides the headline number everyone sees.
-SCHOOL_YEAR_START_MONTH = 7
-SCHOOL_YEAR_START_DAY = 1
+# Defaults only. The live values are ReportFormulaSettings.school_year_start_*
+# — a school calendar is a district's, not a fact about paper, and "school year
+# to date" is the default period on every view, so this decides the headline
+# number everyone sees.
+DEFAULT_SCHOOL_YEAR_START_MONTH = 7
+DEFAULT_SCHOOL_YEAR_START_DAY = 1
 
-# Fall semester runs from the school year start; spring begins 1 January.
-# A two-semester year, so these two boundaries define both.
-SPRING_SEMESTER_START_MONTH = 1
-SPRING_SEMESTER_START_DAY = 1
+# Fall semester runs from the school year start; spring begins 1 January by
+# default. A two-semester year, so these two boundaries define both.
+DEFAULT_SPRING_SEMESTER_START_MONTH = 1
+DEFAULT_SPRING_SEMESTER_START_DAY = 1
 
 # Weeks start Monday — a school week, not an ISO-arbitrary choice.
 WEEK_STARTS_ON = 0  # date.weekday(): Monday == 0

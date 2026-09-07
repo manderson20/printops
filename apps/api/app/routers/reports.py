@@ -46,6 +46,7 @@ from app.reports.aggregation import (
 )
 from app.reports.cost_rates import load_printer_rates
 from app.reports.equivalency import (
+    SchoolCalendar,
     build_equivalencies,
     duplex_sheets_saved,
     resolve_period,
@@ -950,7 +951,11 @@ async def _explained_window(db: AsyncSession, period: str) -> tuple[date, date, 
     """
     try:
         zone = await _district_zone(db)
-        start_date, end_date = resolve_period(period, datetime.now(zone).date())
+        start_date, end_date = resolve_period(
+            period,
+            datetime.now(zone).date(),
+            SchoolCalendar.from_settings(await _get_or_create_formula_settings(db)),
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -1178,8 +1183,12 @@ async def report_explained_me(
     # be measured against the same Jefferson City, or the two pages
     # quietly disagree about where it is.
     destinations, _ = await _road_trip(db)
+    formula_settings = await _get_or_create_formula_settings(db)
     equivalencies = build_equivalencies(
-        total_pages, sheets, distance_ladder=ladder_from_destinations(destinations)
+        total_pages,
+        sheets,
+        distance_ladder=ladder_from_destinations(destinations),
+        student_count=formula_settings.student_count,
     )
     facts = generate_equivalency_facts(equivalencies, collective=False)
     opportunity = duplex_opportunity_fact(additional, saved)
@@ -1312,7 +1321,10 @@ async def report_district_fun_facts(
 
     destinations, home = await _road_trip(db)
     equivalencies = build_equivalencies(
-        combined.total_pages, sheets, distance_ladder=ladder_from_destinations(destinations)
+        combined.total_pages,
+        sheets,
+        distance_ladder=ladder_from_destinations(destinations),
+        student_count=(await _get_or_create_formula_settings(db)).student_count,
     )
     distance = next((e for e in equivalencies if e.key == "distance"), None)
     # No distance equivalency means the total was too small to be worth a
@@ -1488,6 +1500,7 @@ async def report_district_detail(
         combined.total_pages,
         district_sheets,
         distance_ladder=ladder_from_destinations(detail_destinations),
+        student_count=(await _get_or_create_formula_settings(db)).student_count,
     )
     return DistrictDetailOut(
         period=period,

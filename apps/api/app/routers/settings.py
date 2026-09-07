@@ -977,12 +977,21 @@ async def _get_or_create_report_formula_settings(db: AsyncSession) -> ReportForm
     return settings
 
 
+# One list drives both directions, so a field added to the model and forgotten
+# here is simply not editable rather than half-wired.
 FORMULA_FIELDS = (
     "cost_per_page_mono",
     "cost_per_page_color",
     "sheets_per_tree",
     "co2_grams_per_sheet",
     "cost_per_sheet_paper",
+    # The district's own facts, which used to be constants in the source and so
+    # were one district's for everybody who installed this.
+    "student_count",
+    "school_year_start_month",
+    "school_year_start_day",
+    "spring_semester_start_month",
+    "spring_semester_start_day",
 )
 
 

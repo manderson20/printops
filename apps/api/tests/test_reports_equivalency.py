@@ -212,13 +212,33 @@ def test_a_track_lap_is_exactly_a_quarter_mile():
     assert lap.value == pytest.approx(1_320.0)
 
 
-def test_district_scale_distance_lands_between_marceline_and_jefferson_city():
+def test_a_local_ladder_places_a_district_scale_distance():
+    """Local rungs are a district's own and live in the `destinations` table,
+    so this passes one in rather than asserting against whichever town happened
+    to be compiled into the source — which is what it used to do."""
+    local = Ladder(
+        key="distance",
+        unit="feet",
+        rungs=(
+            Milestone("to the next town", 12.0 * FEET_PER_MILE, short="next town"),
+            Milestone("to the state capital", 120.0 * FEET_PER_MILE, short="the capital"),
+        ),
+    )
     # ~118,952 pages laid end to end is a little over 20 miles.
     feet = distance_feet(118_952)
     assert feet / FEET_PER_MILE == pytest.approx(20.65, abs=0.05)
-    result = pick_milestone(feet, DISTANCE_LADDER)
-    assert result.passed.name == "Brookfield to Marceline"
-    assert result.upcoming.name == "Brookfield to Jefferson City"
+
+    result = pick_milestone(feet, local)
+    assert result.passed.name == "to the next town"
+    assert result.upcoming.name == "to the state capital"
+
+
+def test_the_built_in_ladder_names_no_particular_place():
+    """The fallback a fresh install gets. Somebody in another state should not
+    have their printing measured against Brookfield's neighbours."""
+    names = " ".join(rung.name for rung in DISTANCE_LADDER.rungs).lower()
+    for local in ("brookfield", "marceline", "jefferson city", "missouri", "chicago"):
+        assert local not in names
 
 
 def test_personal_scale_picks_a_small_stack_rung():
@@ -266,10 +286,24 @@ def test_district_scale_produces_the_full_set():
         "water",
         "co2",
         "miles_driven",
-        "sheets_per_student",
         "gutenberg_days",
     ):
         assert key in facts, f"expected {key} at district scale"
+
+    # Not in the list above: the per-student fact needs an enrolment figure,
+    # and there is deliberately no default for it.
+    assert "sheets_per_student" not in facts
+
+
+def test_the_per_student_fact_needs_an_enrolment_figure():
+    """It used to divide by 930 — one district's roll, compiled in — so every
+    other installation was told how its printing compared to a school it had
+    never heard of. Unset now means no fact, which is the honest answer."""
+    without = _by_key(build_equivalencies(pages=118_952, sheets=116_048))
+    assert "sheets_per_student" not in without
+
+    with_roll = _by_key(build_equivalencies(pages=118_952, sheets=116_048, student_count=930))
+    assert with_roll["sheets_per_student"].value == pytest.approx(116_048 / 930, abs=0.1)
 
 
 def test_district_scale_values_match_hand_calculation():

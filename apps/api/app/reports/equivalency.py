@@ -27,6 +27,10 @@ from datetime import date, timedelta
 
 from app.reports.equivalency_config import (
     CO2_G_PER_SHEET,
+    DEFAULT_SCHOOL_YEAR_START_DAY,
+    DEFAULT_SCHOOL_YEAR_START_MONTH,
+    DEFAULT_SPRING_SEMESTER_START_DAY,
+    DEFAULT_SPRING_SEMESTER_START_MONTH,
     G_PER_MILE_DRIVEN,
     GUTENBERG_PAGES_PER_DAY,
     INCHES_PER_FOOT,
@@ -38,14 +42,9 @@ from app.reports.equivalency_config import (
     MM_PER_FOOT,
     PAGE_LENGTH_IN,
     REAMS_PER_CASE,
-    SCHOOL_YEAR_START_DAY,
-    SCHOOL_YEAR_START_MONTH,
     SHEET_THICKNESS_MM,
     SHEETS_PER_REAM,
     SHEETS_PER_TREE,
-    SPRING_SEMESTER_START_DAY,
-    SPRING_SEMESTER_START_MONTH,
-    STUDENT_COUNT,
     Ladder,
     Milestone,
 )
@@ -208,7 +207,11 @@ def weight_pounds(sheets: int) -> float:
 
 
 def build_equivalencies(
-    pages: int, sheets: int, *, distance_ladder: Ladder | None = None
+    pages: int,
+    sheets: int,
+    *,
+    distance_ladder: Ladder | None = None,
+    student_count: int = 0,
 ) -> list[Equivalency]:
     """Every equivalency the totals support, in display order.
 
@@ -252,7 +255,11 @@ def build_equivalencies(
         # in the next breath, changed the CO2 fact not at all.
         Equivalency("co2", sheets * CO2_G_PER_SHEET, "grams"),
         Equivalency("miles_driven", _divide(sheets * CO2_G_PER_SHEET, G_PER_MILE_DRIVEN), "miles"),
-        Equivalency("sheets_per_student", _divide(sheets, STUDENT_COUNT), "sheets per student"),
+        # Omitted entirely when nobody has told PrintOps how many students
+        # there are. _divide returns 0 for a zero denominator and a headline
+        # rounding to zero is dropped below — so an unset roll produces no fact
+        # rather than one measured against a guess.
+        Equivalency("sheets_per_student", _divide(sheets, student_count), "sheets per student"),
         Equivalency("gutenberg_days", _divide(pages, GUTENBERG_PAGES_PER_DAY), "days"),
     ]
     return [e for e in candidates if e.value >= MIN_MEANINGFUL_VALUE]
@@ -263,29 +270,59 @@ def build_equivalencies(
 PERIODS = ("week", "month", "semester", "year")
 
 
-def _school_year_start(today: date) -> date:
+@dataclass(frozen=True)
+class SchoolCalendar:
+    """When a district's year and spring term begin.
+
+    A district's calendar rather than a fact about paper, so it comes from
+    ReportFormulaSettings instead of being compiled in — this used to be four
+    module constants, which meant every installation shared one district's term
+    dates. `from_settings` keeps the defaults in one place for callers that
+    have no settings row yet.
+    """
+
+    year_start_month: int = DEFAULT_SCHOOL_YEAR_START_MONTH
+    year_start_day: int = DEFAULT_SCHOOL_YEAR_START_DAY
+    spring_start_month: int = DEFAULT_SPRING_SEMESTER_START_MONTH
+    spring_start_day: int = DEFAULT_SPRING_SEMESTER_START_DAY
+
+    @classmethod
+    def from_settings(cls, settings) -> "SchoolCalendar":
+        if settings is None:
+            return cls()
+        return cls(
+            year_start_month=settings.school_year_start_month,
+            year_start_day=settings.school_year_start_day,
+            spring_start_month=settings.spring_semester_start_month,
+            spring_start_day=settings.spring_semester_start_day,
+        )
+
+
+def _school_year_start(today: date, calendar: SchoolCalendar) -> date:
     """The start of the school year `today` falls in. Before the start
     date the current school year began in the previous calendar year —
     the case that makes "school year to date" wrong for half the year if
     you assume January."""
-    start_this_year = date(today.year, SCHOOL_YEAR_START_MONTH, SCHOOL_YEAR_START_DAY)
+    start_this_year = date(today.year, calendar.year_start_month, calendar.year_start_day)
     if today >= start_this_year:
         return start_this_year
-    return date(today.year - 1, SCHOOL_YEAR_START_MONTH, SCHOOL_YEAR_START_DAY)
+    return date(today.year - 1, calendar.year_start_month, calendar.year_start_day)
 
 
-def _semester_start(today: date) -> date:
-    """Fall runs from the school year start; spring from 1 January. The
-    spring boundary only applies once the year has actually turned, so a
-    date in the autumn term never resolves to a start ahead of itself."""
-    year_start = _school_year_start(today)
-    spring_start = date(today.year, SPRING_SEMESTER_START_MONTH, SPRING_SEMESTER_START_DAY)
+def _semester_start(today: date, calendar: SchoolCalendar) -> date:
+    """Fall runs from the school year start; spring from the configured spring
+    date. The spring boundary only applies once the year has actually turned,
+    so a date in the autumn term never resolves to a start ahead of itself."""
+    year_start = _school_year_start(today, calendar)
+    spring_start = date(today.year, calendar.spring_start_month, calendar.spring_start_day)
     if spring_start > year_start and today >= spring_start:
         return spring_start
     return year_start
 
 
-def resolve_period(period: str, today: date) -> tuple[date, date]:
+def resolve_period(
+    period: str, today: date, calendar: SchoolCalendar | None = None
+) -> tuple[date, date]:
     """(start, end) for a named period, both inclusive, ending today.
 
     `today` is a parameter rather than read from the clock so this stays
@@ -298,7 +335,7 @@ def resolve_period(period: str, today: date) -> tuple[date, date]:
     if period == "month":
         return date(today.year, today.month, 1), today
     if period == "semester":
-        return _semester_start(today), today
+        return _semester_start(today, calendar or SchoolCalendar()), today
     if period == "year":
-        return _school_year_start(today), today
+        return _school_year_start(today, calendar or SchoolCalendar()), today
     raise ValueError(f"unknown period {period!r} — expected one of {', '.join(PERIODS)}")

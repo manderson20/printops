@@ -39,6 +39,15 @@ const FORMULA_FIELDS: {
   },
   { key: "sheets_per_tree", label: "Sheets per tree", step: "1" },
   { key: "co2_grams_per_sheet", label: "CO₂ grams per sheet", step: "0.1" },
+  {
+    key: "student_count",
+    label: "Students enrolled (0 to leave the per-student fact out)",
+    step: "1",
+  },
+  { key: "school_year_start_month", label: "School year starts — month", step: "1" },
+  { key: "school_year_start_day", label: "School year starts — day", step: "1" },
+  { key: "spring_semester_start_month", label: "Spring semester starts — month", step: "1" },
+  { key: "spring_semester_start_day", label: "Spring semester starts — day", step: "1" },
 ];
 
 export default function InsightsSettingsPage() {

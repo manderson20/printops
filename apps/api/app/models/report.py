@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, UniqueConstraint, Uuid
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, Integer, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -41,6 +41,25 @@ class ReportFormulaSettings(Base, TimestampMixin):
     # not per-printer), unlike toner which comes from each printer's own
     # PrinterTonerCartridge rows below.
     cost_per_sheet_paper: Mapped[float] = mapped_column(default=0.01, server_default="0.01")
+
+    # How many people the district prints for. Drives "enough to hand every
+    # student N sheets", which appears on every screen showing that fact.
+    #
+    # Zero, not a number, until somebody sets it. This used to be a constant of
+    # 930 — Brookfield's roll — compiled into the source, so a fresh install
+    # anywhere else measured its printing against a school it has never heard
+    # of. The fact is omitted entirely at zero rather than divided by a guess:
+    # no fact is better than a confident wrong one.
+    student_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+    # When the school year turns over, which decides the default period every
+    # Insights screen opens on. 1 July is the common US default and a sensible
+    # starting point, but it is a district's calendar rather than a fact about
+    # paper, so it is editable.
+    school_year_start_month: Mapped[int] = mapped_column(Integer, default=7, server_default="7")
+    school_year_start_day: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    spring_semester_start_month: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    spring_semester_start_day: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
 
 class PrinterTonerCartridge(Base, TimestampMixin):

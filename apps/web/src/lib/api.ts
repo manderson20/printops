@@ -2306,6 +2306,14 @@ export type ReportFormulaSettings = {
   sheets_per_tree: number;
   co2_grams_per_sheet: number;
   cost_per_sheet_paper: number;
+  // The district's own facts, which used to be constants in the source and so
+  // were one district's for every installation. 0 students means nobody has
+  // said, and the per-student fact is left out rather than guessed at.
+  student_count: number;
+  school_year_start_month: number;
+  school_year_start_day: number;
+  spring_semester_start_month: number;
+  spring_semester_start_day: number;
 };
 
 export type ReportFormulaSettingsInput = Partial<ReportFormulaSettings>;
