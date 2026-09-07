@@ -4026,6 +4026,68 @@ export async function previewReportingCalendar(
   return response.json();
 }
 
+export type ReportingYear = {
+  year: number;
+  key: string;
+  label: string;
+  start: string;
+  /** Exclusive. */
+  end: string;
+  segments: ResolvedPeriod[];
+  /** This year's dates were stated explicitly rather than generated. */
+  overridden: boolean;
+  /** False for a year that ended before this installation recorded anything.
+   *  Shown anyway but marked — an empty report reads as "nobody printed"
+   *  rather than "we were not watching yet". */
+  has_data: boolean;
+};
+
+export type ReportingSegmentOverride = {
+  name: string;
+  start_date: string;
+  /** Inclusive: the last day the segment covers. */
+  end_date: string;
+  position?: number | null;
+};
+
+/** Every year the calendar produces, newest first.
+ *
+ * Generated from the repeating pattern rather than stored, so a year from
+ * before this installation existed still has segments, and next year needs
+ * nothing entered for it. */
+export async function getReportingYears(): Promise<ReportingYear[]> {
+  const response = await authorizedFetch("/api/v1/settings/reporting-calendar/years");
+  return response.json();
+}
+
+/** State one year's segment dates, for the year that genuinely differed.
+ *  Replaces that year entirely and leaves every other on the pattern. */
+export async function overrideReportingYear(
+  year: number,
+  segments: ReportingSegmentOverride[],
+): Promise<ReportingYear[]> {
+  const response = await authorizedFetch(
+    `/api/v1/settings/reporting-calendar/years/${year}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ segments }),
+    },
+  );
+  return response.json();
+}
+
+/** Drop a year's stated dates and let the pattern generate it again. */
+export async function clearReportingYearOverride(
+  year: number,
+): Promise<ReportingYear[]> {
+  const response = await authorizedFetch(
+    `/api/v1/settings/reporting-calendar/years/${year}`,
+    { method: "DELETE" },
+  );
+  return response.json();
+}
+
 export async function getReportingCalendar(): Promise<ReportingCalendar> {
   const response = await authorizedFetch("/api/v1/settings/reporting-calendar");
   return response.json();

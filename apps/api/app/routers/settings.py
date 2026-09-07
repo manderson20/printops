@@ -2,11 +2,11 @@ import asyncio
 import csv
 import io
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.record import (
@@ -39,20 +39,27 @@ from app.mail.settings import get_or_create_smtp_settings
 from app.models.classguard import ClassGuardSettings
 from app.models.google_sso import GoogleSsoSettings
 from app.models.google_workspace import GoogleWorkspaceSettings, GoogleWorkspaceUser
+from app.models.job import Job
 from app.models.mosyle import MosyleSettings
 from app.models.release import PrintReleaseSettings
 from app.models.report import ReportFormulaSettings
-from app.models.reporting_period import ReportingCalendar, ReportingTerm
+from app.models.reporting_period import (
+    ReportingCalendar,
+    ReportingTerm,
+    ReportingTermInstance,
+)
 from app.models.server_settings import ServerSettings
 from app.models.smtp import SmtpSettings
 from app.models.snmp import SnmpDefaultsSettings
 from app.models.zabbix import ZabbixSettings
 from app.printers.snmp_counters import get_or_create_snmp_defaults
 from app.quotas.service import get_or_create_quota_settings
+from app.reports.aggregation import COPY_INSTANT
 from app.reports.period_source import load_period_context
 from app.reports.periods import (
     CalendarSpec,
     TermSpec,
+    reporting_year_bounds,
     reporting_year_of,
     reporting_year_period,
     terms_for_year,
@@ -81,6 +88,8 @@ from app.schemas.reporting_period import (
     ReportingCalendarIn,
     ReportingCalendarOut,
     ReportingTermOut,
+    ReportingYearOut,
+    ReportingYearOverrideIn,
     ResolvedPeriodOut,
 )
 from app.schemas.server_settings import (
@@ -1560,3 +1569,207 @@ async def update_reporting_calendar(
 
     await db.commit()
     return await _reporting_calendar_out(db)
+
+
+async def _earliest_activity(db: AsyncSession) -> date | None:
+    """The first day this installation recorded anything.
+
+    Bounds the year list. A year that ended before PrintOps was watching
+    resolves perfectly well and returns nothing, and an empty report reads as
+    "nobody printed" rather than "we were not here yet" — so those years are
+    marked rather than silently offered as equals.
+    """
+    first_job = (await db.execute(select(func.min(Job.created_at)))).scalar_one_or_none()
+    # COPY_INSTANT, not period_start: a single-event import has occurred_at and
+    # a null period_start, so asking for period_start alone reports "no copier
+    # activity" for an installation whose history is entirely single events —
+    # and the year list would then omit every historical year those copies fall
+    # in. It is also the instant copier *reporting* filters on, so the year list
+    # and the reports it leads to cannot disagree about when activity began.
+    first_copy = (await db.execute(select(func.min(COPY_INSTANT)))).scalar_one_or_none()
+
+    candidates = [value for value in (first_job, first_copy) if value is not None]
+    return min(candidates).date() if candidates else None
+
+
+@router.get("/reporting-calendar/years", response_model=list[ReportingYearOut])
+async def list_reporting_years(db: AsyncSession = Depends(get_db)):
+    """Every year the calendar produces, newest first.
+
+    Generated from the repeating pattern, not stored — so a year from before
+    this installation existed still has segments, and next year needs nothing
+    entered for it. The list runs from the year of the earliest recorded
+    activity to the one after the current year, because an admin laying out
+    next year's dates needs to see next year.
+    """
+    context = await load_period_context(db)
+    current = reporting_year_of(context.today, context.calendar)
+
+    earliest_activity = await _earliest_activity(db)
+    first_year = (
+        reporting_year_of(earliest_activity, context.calendar)
+        if earliest_activity is not None
+        else current
+    )
+
+    stated_years = {override.reporting_year for override in context.overrides}
+    # A year somebody has stated dates for is always listed even if it falls
+    # outside the data range: they took the trouble to record it.
+    years = sorted({*range(first_year, current + 2), *stated_years}, reverse=True)
+
+    out: list[ReportingYearOut] = []
+    for year in years:
+        period = reporting_year_period(year, context.calendar)
+        segments = terms_for_year(year, context.calendar, context.terms, context.overrides)
+        out.append(
+            ReportingYearOut(
+                year=year,
+                key=period.key,
+                label=period.label,
+                start=period.start,
+                end=period.end,
+                overridden=year in stated_years,
+                has_data=(earliest_activity is not None and period.end > earliest_activity),
+                segments=[
+                    ResolvedPeriodOut(
+                        key=segment.key,
+                        label=segment.label,
+                        start=segment.start,
+                        end=segment.end,
+                        kind=segment.kind,
+                    )
+                    for segment in segments
+                ],
+            )
+        )
+    return out
+
+
+@router.put(
+    "/reporting-calendar/years/{year}",
+    response_model=list[ReportingYearOut],
+    dependencies=[Depends(require_role("admin"))],
+)
+async def override_reporting_year(
+    year: int,
+    payload: ReportingYearOverrideIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
+    """State one year's segment dates explicitly, for the year that differed.
+
+    Replaces that year entirely — stated dates win over the pattern for that
+    year and no other. Mixing the two would leave a year that is half generated
+    and half stated, whose gaps and overlaps depend on which rows happen to
+    exist.
+
+    Audited, because moving a segment boundary changes what every report ever
+    run against that segment covers.
+    """
+    # Dates outside the year they are filed under are the one mistake this
+    # endpoint cannot absorb. An override replaces the pattern for its year
+    # entirely, so a segment mistyped into the following year would be exposed
+    # under *this* year's keys — reports for it would query the wrong span, and
+    # the year itself could be left with no segment covering its actual days.
+    # Ordering and overlap are checked in the schema; this needs the calendar,
+    # which only the endpoint has.
+    context = await load_period_context(db)
+    year_start, year_end = reporting_year_bounds(year, context.calendar)
+    for segment in payload.segments:
+        if segment.start_date < year_start or segment.end_date >= year_end:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"{segment.name}: {segment.start_date} to {segment.end_date} falls "
+                    f"outside {reporting_year_period(year, context.calendar).label}, "
+                    f"which runs {year_start} to {year_end - timedelta(days=1)}"
+                ),
+            )
+
+    existing = (
+        (
+            await db.execute(
+                select(ReportingTermInstance).where(ReportingTermInstance.reporting_year == year)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    before = _describe_instances(existing)
+    for instance in existing:
+        await db.delete(instance)
+    await db.flush()
+
+    for position, segment in enumerate(sorted(payload.segments, key=lambda item: item.start_date)):
+        db.add(
+            ReportingTermInstance(
+                reporting_year=year,
+                name=segment.name,
+                start_date=segment.start_date,
+                end_date=segment.end_date,
+                # Falls back to the submitted order, so the tie to last year's
+                # counterpart is never left unset.
+                position=segment.position if segment.position is not None else position,
+            )
+        )
+
+    after = _describe_instances(payload.segments)
+    if before != after:
+        record_audit(
+            db,
+            current_user,
+            action="settings.reporting_calendar.year.update",
+            summary=f"Set explicit dates for reporting year {year}",
+            entity_type="settings.reporting_calendar",
+            changes={"reporting_year": year, "segments": {"before": before, "after": after}},
+            request=request,
+        )
+    await db.commit()
+    return await list_reporting_years(db)
+
+
+@router.delete(
+    "/reporting-calendar/years/{year}",
+    response_model=list[ReportingYearOut],
+    dependencies=[Depends(require_role("admin"))],
+)
+async def clear_reporting_year_override(
+    year: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
+    """Drop one year's stated dates and let the pattern generate it again."""
+    existing = (
+        (
+            await db.execute(
+                select(ReportingTermInstance).where(ReportingTermInstance.reporting_year == year)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if existing:
+        before = _describe_instances(existing)
+        for instance in existing:
+            await db.delete(instance)
+        record_audit(
+            db,
+            current_user,
+            action="settings.reporting_calendar.year.update",
+            summary=f"Reverted reporting year {year} to the repeating pattern",
+            entity_type="settings.reporting_calendar",
+            changes={"reporting_year": year, "segments": {"before": before, "after": ""}},
+            request=request,
+        )
+        await db.commit()
+    return await list_reporting_years(db)
+
+
+def _describe_instances(segments) -> str:
+    """A year's stated segments as one readable line, for the audit log."""
+    return "; ".join(
+        f"{segment.name} {segment.start_date}..{segment.end_date}"
+        for segment in sorted(segments, key=lambda item: item.start_date)
+    )

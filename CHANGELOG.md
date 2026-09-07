@@ -5,6 +5,23 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.82.0] - 2026-09-07
+
+- **A Years tab under Settings → Reporting Periods**, listing every year the
+  calendar produces with its segments and dates. They are generated from the
+  repeating pattern rather than stored, so next year appears without anyone
+  setting it up and a year from before PrintOps was installed still resolves —
+  but until now there was no way to see that, which made it look as though only
+  the current year existed.
+- **A year whose real dates differed can be corrected.** "Set exact dates"
+  replaces that year entirely and leaves every other year on the pattern, so one
+  correction does not become an annual chore. Overlapping segments are refused,
+  and the change is audited, because moving a segment boundary changes what
+  every report ever run against that segment covers.
+- Years that ended before this installation recorded anything are marked "no
+  data collected". They resolve correctly and return nothing, and an empty
+  report reads as "nobody printed" rather than "we were not watching yet".
+
 ## [0.81.2] - 2026-09-07
 
 - **Reporting periods are now their own settings page**, not a card under

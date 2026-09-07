@@ -384,3 +384,206 @@ def test_previewing_needs_an_admin(client):
             "terms": [],
         },
     ).status_code in (401, 403)
+
+
+# --- the years the calendar produces ----------------------------------------
+
+YEARS = f"{CALENDAR}/years"
+
+
+def test_years_are_generated_not_stored(client, admin_headers):
+    """The point of a repeating pattern: no year needs data entered for it.
+
+    Next August nobody should have to add anything, and a year from before this
+    installation existed still has segments to report against.
+    """
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+    body = client.get(YEARS, headers=admin_headers).json()
+
+    assert body, "at least the current year"
+    assert all(len(year["segments"]) == 2 for year in body), "every year has its segments"
+    assert all(year["overridden"] is False for year in body)
+    # Newest first, and the year after the current one is included so an admin
+    # can lay out next year before it starts.
+    years = [year["year"] for year in body]
+    assert years == sorted(years, reverse=True)
+
+
+def test_a_year_with_no_activity_is_offered_but_marked(client, admin_headers):
+    """It resolves perfectly well and returns nothing. An empty report reads as
+    "nobody printed" rather than "we were not watching yet", so the difference
+    has to be visible rather than inferred."""
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+    body = client.get(YEARS, headers=admin_headers).json()
+
+    # No jobs in this fixture at all, so nothing can claim to have data.
+    assert all(year["has_data"] is False for year in body)
+
+
+def test_one_year_can_be_given_explicit_dates(client, admin_headers):
+    """For the year a term really did start late."""
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+
+    response = client.put(
+        f"{YEARS}/2026",
+        headers=admin_headers,
+        json={
+            "segments": [
+                {"name": "Fall Semester", "start_date": "2026-08-22", "end_date": "2026-12-20"},
+                {"name": "Spring Semester", "start_date": "2027-01-09", "end_date": "2027-05-26"},
+            ]
+        },
+    )
+    assert response.status_code == 200
+
+    years = {year["year"]: year for year in response.json()}
+    assert years[2026]["overridden"] is True
+    assert years[2026]["segments"][0]["start"] == "2026-08-22"
+    # Inclusive in, exclusive out: the day after the last day covered.
+    assert years[2026]["segments"][0]["end"] == "2026-12-21"
+
+    # And only that year. Every other still comes from the pattern, so one
+    # correction does not become an annual chore.
+    assert years[2027]["overridden"] is False
+    assert years[2027]["segments"][0]["start"] == "2027-08-15"
+
+
+def test_an_overridden_year_can_be_reverted(client, admin_headers):
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+    client.put(
+        f"{YEARS}/2026",
+        headers=admin_headers,
+        json={
+            "segments": [
+                {"name": "Fall", "start_date": "2026-08-22", "end_date": "2026-12-20"},
+            ]
+        },
+    )
+    body = client.delete(f"{YEARS}/2026", headers=admin_headers).json()
+
+    years = {year["year"]: year for year in body}
+    assert years[2026]["overridden"] is False
+    assert len(years[2026]["segments"]) == 2, "back to the pattern"
+
+
+def test_overlapping_stated_segments_are_refused(client, admin_headers):
+    """Two segments claiming the same day means one of them silently loses
+    printing to the other, and nothing complains."""
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+    response = client.put(
+        f"{YEARS}/2026",
+        headers=admin_headers,
+        json={
+            "segments": [
+                {"name": "Fall", "start_date": "2026-08-22", "end_date": "2027-01-10"},
+                {"name": "Spring", "start_date": "2027-01-05", "end_date": "2027-05-26"},
+            ]
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_stating_a_year_is_audited(client, admin_headers):
+    """Moving a segment boundary changes what every report ever run against
+    that segment covers."""
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+    client.put(
+        f"{YEARS}/2026",
+        headers=admin_headers,
+        json={
+            "segments": [
+                {"name": "Fall", "start_date": "2026-08-22", "end_date": "2026-12-20"},
+            ]
+        },
+    )
+    rows = _calendar_events(client, admin_headers)
+    assert any("year" in row["action"] for row in rows), [row["action"] for row in rows]
+
+
+def test_only_an_admin_can_state_a_year(client):
+    assert client.put(
+        f"{YEARS}/2026",
+        json={"segments": [{"name": "F", "start_date": "2026-08-22", "end_date": "2026-12-20"}]},
+    ).status_code in (401, 403)
+
+
+@pytest.mark.parametrize(
+    ("segments", "because"),
+    [
+        (
+            [{"name": "Fall", "start_date": "2027-08-22", "end_date": "2027-12-20"}],
+            "a year later than the one it is filed under",
+        ),
+        (
+            [{"name": "Fall", "start_date": "2026-05-01", "end_date": "2026-06-30"}],
+            "before the year opens",
+        ),
+        (
+            [{"name": "Spring", "start_date": "2027-01-09", "end_date": "2027-08-01"}],
+            "running past the end of the year",
+        ),
+    ],
+)
+def test_stated_dates_outside_their_own_year_are_refused(client, admin_headers, segments, because):
+    """The one mistake this endpoint cannot absorb.
+
+    An override replaces the pattern for its year entirely, so a segment
+    mistyped into the following year would be exposed under *this* year's keys.
+    Reports for it would query the wrong span, and the year itself could be
+    left with no segment covering its actual days — all without anything
+    looking wrong on screen.
+    """
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+    response = client.put(f"{YEARS}/2026", headers=admin_headers, json={"segments": segments})
+    assert response.status_code == 422, because
+
+
+def test_two_segments_cannot_share_a_position(client, admin_headers):
+    """`position` is part of the period key, so a duplicate produces two
+    periods with the same key. Resolution returns the first, and the second
+    holds printing that can never be selected for a report."""
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+    response = client.put(
+        f"{YEARS}/2026",
+        headers=admin_headers,
+        json={
+            "segments": [
+                {
+                    "name": "Fall",
+                    "start_date": "2026-08-22",
+                    "end_date": "2026-12-20",
+                    "position": 0,
+                },
+                {
+                    "name": "Spring",
+                    "start_date": "2027-01-09",
+                    "end_date": "2027-05-26",
+                    "position": 0,
+                },
+            ]
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_the_year_list_counts_single_event_copier_activity(client, admin_headers):
+    """Copier rows come in two shapes: an aggregate with a period, and a single
+    event with only `occurred_at`. An installation whose history is entirely
+    single events has a null `period_start` on every row, so asking for that
+    column alone reports no copier activity at all — and the year list would
+    then omit every historical year those copies fall in.
+
+    Asserted against COPY_INSTANT, the same precedence copier reporting filters
+    on, so the year list and the reports it leads to cannot disagree about when
+    activity began.
+    """
+    from app.models.copier_usage import CopierUsageRecord
+    from app.routers.settings import COPY_INSTANT
+
+    assert COPY_INSTANT is not None
+    # occurred_at is first in the precedence, ahead of period_end and
+    # created_at; period_start is not in it at all.
+    rendered = str(COPY_INSTANT)
+    assert "occurred_at" in rendered
+    assert "period_start" not in rendered, "period_start is not the copy instant"
+    assert CopierUsageRecord.period_start is not None

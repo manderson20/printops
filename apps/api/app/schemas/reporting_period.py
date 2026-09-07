@@ -105,3 +105,77 @@ class ReportingCalendarOut(BaseModel):
     # imagine it. A calendar that reads correctly and resolves wrongly is the
     # failure mode worth spending a round trip to prevent.
     preview: list[ResolvedPeriodOut]
+
+
+class ReportingYearOut(BaseModel):
+    """One reporting year the calendar produces, with its segments.
+
+    Generated from the pattern rather than stored, which is the point: no year
+    needs data entered for it, and a year from before PrintOps was installed
+    still has segments to report against.
+    """
+
+    year: int
+    key: str
+    label: str
+    start: date
+    end: date
+    segments: list[ResolvedPeriodOut]
+    # True when this year's dates were stated explicitly rather than generated
+    # — the year a term really did start late.
+    overridden: bool
+    # False for a year that ended before this installation collected anything.
+    # Offered anyway, but marked, because an empty report reads as "nobody
+    # printed" rather than "we were not watching yet".
+    has_data: bool
+
+
+class ReportingYearOverrideIn(BaseModel):
+    """Explicit dates for one year's segments.
+
+    A whole year at a time, never one segment: a year that is half generated
+    and half stated has gaps and overlaps that depend on which rows happen to
+    exist, and nobody can reason about it afterwards.
+    """
+
+    segments: list[ReportingSegmentOverrideIn] = Field(min_length=1, max_length=24)
+
+    @model_validator(mode="after")
+    def _ordered_and_disjoint(self) -> ReportingYearOverrideIn:
+        ordered = sorted(self.segments, key=lambda segment: segment.start_date)
+        for earlier, later in zip(ordered, ordered[1:]):
+            if earlier.end_date >= later.start_date:
+                raise ValueError(
+                    f"{earlier.name} ends on or after {later.name} begins; segments cannot overlap"
+                )
+
+        # `position` becomes part of the period key — term:2026:0 and so on —
+        # so two segments sharing one produce two periods with the same key.
+        # Resolution returns the first match and the second segment simply
+        # cannot be selected for a report: it exists, holds printing, and is
+        # unreachable, and nothing anywhere would report that as an error.
+        supplied = [segment.position for segment in self.segments if segment.position is not None]
+        if len(set(supplied)) != len(supplied):
+            raise ValueError("two segments cannot share a position")
+
+        names = [segment.name.strip().casefold() for segment in self.segments]
+        if len(set(names)) != len(names):
+            raise ValueError("two segments cannot share a name")
+        return self
+
+
+class ReportingSegmentOverrideIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    start_date: date
+    # Inclusive: the last day the segment covers, which is how a calendar is
+    # published. Converted to an exclusive bound once, at resolution.
+    end_date: date
+    # Ties this segment to its counterpart a year earlier, which is what makes
+    # "the same segment last year" answerable.
+    position: int | None = None
+
+    @model_validator(mode="after")
+    def _ends_after_it_starts(self) -> ReportingSegmentOverrideIn:
+        if self.end_date < self.start_date:
+            raise ValueError(f"{self.name}: ends before it starts")
+        return self

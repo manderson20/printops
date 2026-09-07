@@ -15,6 +15,7 @@ import { Card, CardTitle } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { YearsTab } from "./YearsTab";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -89,7 +90,7 @@ function lastDay(iso: string): string {
   return `${date.getDate()} ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
 }
 
-type Tab = "year" | "segments";
+type Tab = "year" | "segments" | "years";
 
 export function ReportingCalendarCard() {
   const [loaded, setLoaded] = useState(false);
@@ -107,6 +108,8 @@ export function ReportingCalendarCard() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // Bumped when a year override changes, so the preview below reflects it.
+  const [reloadYears, setReloadYears] = useState(0);
 
   const apply = useCallback((next: ReportingCalendar) => {
     setYearNoun(next.year_noun);
@@ -166,7 +169,7 @@ export function ReportingCalendarCard() {
         });
     }, 350);
     return () => clearTimeout(timer);
-  }, [loaded, startMonth, startDay, yearNoun, labelStyle, terms]);
+  }, [loaded, startMonth, startDay, yearNoun, labelStyle, terms, reloadYears]);
 
   function updateTerm(index: number, patch: Partial<ReportingTerm>) {
     setTerms((current) =>
@@ -224,6 +227,11 @@ export function ReportingCalendarCard() {
       id: "segments",
       label: terms.length ? `Segments · ${terms.length}` : "Segments",
       hint: "The periods within a year",
+    },
+    {
+      id: "years",
+      label: "Years",
+      hint: "Every year this calendar produces, and exact dates where one differed",
     },
   ];
 
@@ -283,7 +291,9 @@ export function ReportingCalendarCard() {
         ))}
       </nav>
 
-      {tab === "year" ? (
+      {tab === "years" ? (
+        <YearsTab onChanged={() => setReloadYears((n) => n + 1)} />
+      ) : tab === "year" ? (
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <label className="flex flex-col gap-1 text-sm text-zinc-700 dark:text-zinc-300">
@@ -458,9 +468,10 @@ export function ReportingCalendarCard() {
         </div>
       )}
 
-      {/* Outside the tabs: it reflects both, and it is the answer to "did I
-          just describe the year I meant". */}
-      <div className="mt-6 rounded-lg border border-black/[.08] p-3 dark:border-white/[.145]">
+      {/* Outside the Year and Segments tabs: it reflects both, and it is the
+          answer to "did I just describe the year I meant". The Years tab shows
+          resolved years already, so repeating one here would be noise. */}
+      {tab === "years" ? null : <div className="mt-6 rounded-lg border border-black/[.08] p-3 dark:border-white/[.145]">
         <div className="flex items-baseline justify-between gap-3">
           <h4 className="text-sm font-medium text-black dark:text-zinc-50">
             This year, as configured
@@ -495,15 +506,19 @@ export function ReportingCalendarCard() {
         ) : (
           <p className="mt-2 text-sm text-zinc-500">No segments.</p>
         )}
-      </div>
+      </div>}
 
-      <div className="mt-5 flex items-center gap-3">
-        <Button onClick={handleSave} disabled={saving}>
-          {saving ? "Saving…" : "Save calendar"}
-        </Button>
-        {saved && <span className="text-sm text-green-600">Saved.</span>}
-        {error && <span className="text-sm text-red-600">{error}</span>}
-      </div>
+      {/* Saving the pattern is meaningless on the Years tab, which edits one
+          year's stated dates and saves them itself. */}
+      {tab === "years" ? null : (
+        <div className="mt-5 flex items-center gap-3">
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? "Saving…" : "Save calendar"}
+          </Button>
+          {saved && <span className="text-sm text-green-600">Saved.</span>}
+          {error && <span className="text-sm text-red-600">{error}</span>}
+        </div>
+      )}
     </Card>
   );
 }
