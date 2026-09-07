@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SummaryOut(BaseModel):
@@ -173,6 +173,13 @@ class ReportFormulaSettingsOut(BaseModel):
     sheets_per_tree: float
     co2_grams_per_sheet: float
     cost_per_sheet_paper: float
+    # Zero means nobody has said, and the per-student fact is omitted rather
+    # than computed against a guess.
+    student_count: int
+    school_year_start_month: int
+    school_year_start_day: int
+    spring_semester_start_month: int
+    spring_semester_start_day: int
 
 
 class ReportFormulaSettingsUpdate(BaseModel):
@@ -181,6 +188,11 @@ class ReportFormulaSettingsUpdate(BaseModel):
     sheets_per_tree: float | None = None
     co2_grams_per_sheet: float | None = None
     cost_per_sheet_paper: float | None = None
+    student_count: int | None = Field(default=None, ge=0, le=1_000_000)
+    school_year_start_month: int | None = Field(default=None, ge=1, le=12)
+    school_year_start_day: int | None = Field(default=None, ge=1, le=31)
+    spring_semester_start_month: int | None = Field(default=None, ge=1, le=12)
+    spring_semester_start_day: int | None = Field(default=None, ge=1, le=31)
 
 
 CartridgeColor = Literal["black", "cyan", "magenta", "yellow"]

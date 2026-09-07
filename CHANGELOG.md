@@ -5,6 +5,24 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.80.0] - 2026-09-07
+
+- **Took one district out of the product.** PrintOps is installed by other
+  organisations, and three facts about the first district were compiled into
+  the source where every installation inherited them: an enrolment of 930, the
+  school-year and semester dates, and a distance ladder that measured printing
+  against Marceline, Jefferson City, Missouri and Chicago.
+- Enrolment, the school year start and the spring semester start are now
+  editable under Settings → Insights. **The per-student fact is left out
+  entirely until an enrolment figure is set** rather than divided by a default —
+  a missing fact is better than a confidently wrong one.
+- The built-in distance milestones are now generic. A district's own places
+  already live in Settings → Road Trip and are what every screen actually uses;
+  the built-in list is only what a brand-new installation falls back to.
+- **For this district:** the per-student fact will disappear from Insights
+  until the enrolment figure is entered. The number it was showing was a
+  placeholder nobody had confirmed, and its own comment said so.
+
 ## [0.79.1] - 2026-09-07
 
 - Removed real staff email addresses from the source. Test fixtures and one
