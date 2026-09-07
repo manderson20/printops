@@ -29,12 +29,22 @@ const TEMPLATES: {
   name: string;
   noun: string;
   startMonth: number;
+  /** Set explicitly per template, never left at whatever was loaded before.
+   *  The label style decides how terms are numbered, so a fiscal template that
+   *  inherited a school's spanning style would label its four quarters
+   *  "Q1 2026, Q2 2026, Q3 2027, Q4 2027" — one financial year split across
+   *  two suffixes, which is the exact thing the labelling rules exist to
+   *  prevent. */
+  labelStyle: "auto" | "spanning" | "single";
   terms: ReportingTerm[];
 }[] = [
   {
     name: "Two semesters",
     noun: "School year",
     startMonth: 7,
+    // A school year spans two calendar years and is named for both, and its
+    // terms carry their own year: "Fall 2026", "Spring 2027".
+    labelStyle: "spanning",
     terms: [
       { name: "Fall Semester", start_month: 8, start_day: 15 },
       { name: "Spring Semester", start_month: 1, start_day: 5 },
@@ -44,6 +54,7 @@ const TEMPLATES: {
     name: "Three trimesters",
     noun: "School year",
     startMonth: 7,
+    labelStyle: "spanning",
     terms: [
       { name: "Trimester 1", start_month: 8, start_day: 15 },
       { name: "Trimester 2", start_month: 11, start_day: 15 },
@@ -54,6 +65,9 @@ const TEMPLATES: {
     name: "Four quarters",
     noun: "Fiscal year",
     startMonth: 7,
+    // One number, the year it ends in — so all four quarters read as the same
+    // fiscal year rather than splitting across two.
+    labelStyle: "single",
     terms: [
       { name: "Q1", start_month: 7, start_day: 1 },
       { name: "Q2", start_month: 10, start_day: 1 },
@@ -61,7 +75,7 @@ const TEMPLATES: {
       { name: "Q4", start_month: 4, start_day: 1 },
     ],
   },
-  { name: "No terms", noun: "Year", startMonth: 1, terms: [] },
+  { name: "No terms", noun: "Year", startMonth: 1, labelStyle: "auto", terms: [] },
 ];
 
 function formatDate(iso: string): string {
@@ -175,6 +189,7 @@ export function ReportingCalendarCard() {
               setYearNoun(template.noun);
               setStartMonth(template.startMonth);
               setStartDay(1);
+              setLabelStyle(template.labelStyle);
               setTerms(template.terms.map((term) => ({ ...term })));
             }}
             className="rounded-lg border border-black/[.08] px-2.5 py-1 text-xs text-zinc-600 hover:bg-black/[.03] dark:border-white/[.145] dark:text-zinc-400 dark:hover:bg-white/[.06]"

@@ -263,3 +263,49 @@ def test_saving_an_unchanged_calendar_records_nothing(client, admin_headers):
     client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
 
     assert len(_calendar_events(client, admin_headers)) == before
+
+
+# --- the compatibility endpoint ---------------------------------------------
+
+
+def test_the_old_calendar_endpoint_follows_the_new_one(client, admin_headers):
+    """/reports/calendar predates the configurable calendar and reads the
+    columns it replaced. Left alone it would freeze at whatever the boundaries
+    were before an admin first touched the new settings page, and an older
+    client would go on computing last year's dates with nothing to show it was
+    wrong. A lossy answer beats a stale one.
+    """
+    moved = dict(SCHOOL)
+    moved["year_start_month"] = 8
+    moved["year_start_day"] = 12
+    moved["terms"] = [
+        {"name": "Fall Semester", "start_month": 8, "start_day": 12},
+        {"name": "Spring Semester", "start_month": 1, "start_day": 9},
+    ]
+    client.put(CALENDAR, headers=admin_headers, json=moved)
+
+    body = client.get("/api/v1/reports/calendar", headers=admin_headers).json()
+    assert (body["school_year_start_month"], body["school_year_start_day"]) == (8, 12)
+    assert (body["spring_semester_start_month"], body["spring_semester_start_day"]) == (1, 9)
+
+
+def test_the_old_calendar_endpoint_survives_a_year_with_no_terms(client, admin_headers):
+    """Its shape assumes two terms and calls the second a semester. An
+    organisation that has none still has a year start, and this must answer
+    with it rather than fail."""
+    none = dict(SCHOOL)
+    none["terms"] = []
+    client.put(CALENDAR, headers=admin_headers, json=none)
+
+    response = client.get("/api/v1/reports/calendar", headers=admin_headers)
+    assert response.status_code == 200
+    assert response.json()["school_year_start_month"] == 7
+
+
+def test_the_formula_endpoint_no_longer_edits_the_calendar(client, admin_headers):
+    """Two endpoints writing one calendar is how this app and its own API came
+    to disagree about when a school year began. The fields are gone from the
+    formula endpoint rather than left writable and inert."""
+    body = client.get("/api/v1/settings/report-formulas", headers=admin_headers).json()
+    assert "school_year_start_month" not in body
+    assert "spring_semester_start_month" not in body

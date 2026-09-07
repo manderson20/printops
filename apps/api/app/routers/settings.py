@@ -1000,13 +1000,11 @@ FORMULA_FIELDS = (
     "sheets_per_tree",
     "co2_grams_per_sheet",
     "cost_per_sheet_paper",
-    # The district's own facts, which used to be constants in the source and so
-    # were one district's for everybody who installed this.
+    # The district's own fact, which used to be a constant in the source and so
+    # was one district's for everybody who installed this. The year and term
+    # boundaries were here too until they moved to the reporting calendar
+    # below, which can describe a year that is not a school's.
     "student_count",
-    "school_year_start_month",
-    "school_year_start_day",
-    "spring_semester_start_month",
-    "spring_semester_start_day",
 )
 
 

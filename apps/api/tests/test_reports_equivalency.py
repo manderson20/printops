@@ -30,7 +30,7 @@ from app.reports.equivalency_config import (
     Milestone,
 )
 from app.reports.formulas import FormulaValues, compute_environmental_impact
-from app.schemas.report import ReportFormulaSettingsUpdate
+from app.schemas.reporting_period import ReportingCalendarIn
 
 # --- sheet conversion --------------------------------------------------
 
@@ -415,13 +415,25 @@ def test_the_usual_july_calendar_still_puts_spring_in_january():
 def test_an_impossible_recurring_date_is_refused():
     """31 February passes independent 1..12 and 1..31 bounds, and saved it
     raises out of date() inside the period calculation — a settings form
-    turning every Insights screen off."""
+    turning every Insights screen off.
+
+    The calendar moved from ReportFormulaSettings to the reporting calendar,
+    and this check moved with it. Kept pointed at the new schema rather than
+    deleted: the guarantee is about the calendar, not about which endpoint
+    happened to own it, and dropping the test with the fields is how a fix
+    quietly stops being covered.
+    """
     with pytest.raises(ValidationError):
-        ReportFormulaSettingsUpdate(school_year_start_month=2, school_year_start_day=31)
+        ReportingCalendarIn(year_start_month=2, year_start_day=31, year_noun="School year")
 
     # 29 February is refused too: these recur annually, and a boundary that
     # exists three years in four is a trap rather than a feature.
     with pytest.raises(ValidationError):
-        ReportFormulaSettingsUpdate(spring_semester_start_month=2, spring_semester_start_day=29)
+        ReportingCalendarIn(
+            year_start_month=7,
+            year_start_day=1,
+            year_noun="School year",
+            terms=[{"name": "Spring", "start_month": 2, "start_day": 29}],
+        )
 
-    ReportFormulaSettingsUpdate(school_year_start_month=2, school_year_start_day=28)
+    ReportingCalendarIn(year_start_month=2, year_start_day=28, year_noun="School year")

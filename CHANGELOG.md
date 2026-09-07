@@ -37,6 +37,15 @@ schedules an update.
 - Existing period names (`week`, `month`, `semester`, `year`) keep working, so
   bookmarks and older clients do not break; `semester` resolves to whatever
   this organisation calls the term containing today.
+- **Breaking, `/api/v1/settings/report-formulas`:** the four school-year and
+  spring-semester fields have left that endpoint for
+  `/api/v1/settings/reporting-calendar`. They could only ever describe two
+  terms, and only if you called them semesters. Leaving them writable would
+  have meant two endpoints editing one calendar — which is exactly how this app
+  and its own API came to disagree about when a school year began.
+  `/api/v1/reports/calendar` still answers, but now *derives* from the
+  reporting calendar rather than reading the columns it replaced, so it stays
+  truthful for older clients instead of freezing at the pre-upgrade dates.
 - **On upgrade nothing moves.** The calendar is seeded from the boundaries
   already stored, and the two semesters are recreated from them — verified
   against the retiring resolver for every day of two years. A fresh install

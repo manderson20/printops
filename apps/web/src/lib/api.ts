@@ -2300,6 +2300,10 @@ export async function deleteReportSnapshot(id: string): Promise<void> {
   });
 }
 
+/** @deprecated The two-term shape this describes cannot express a calendar
+ *  with quarters, or one with no terms at all. Derived from the reporting
+ *  calendar on the server rather than stored, so it stays truthful, but it is
+ *  lossy — use {@link PeriodOption}. */
 export type SchoolCalendar = {
   school_year_start_month: number;
   school_year_start_day: number;
@@ -2326,10 +2330,8 @@ export type ReportFormulaSettings = {
   // were one district's for every installation. 0 students means nobody has
   // said, and the per-student fact is left out rather than guessed at.
   student_count: number;
-  school_year_start_month: number;
-  school_year_start_day: number;
-  spring_semester_start_month: number;
-  spring_semester_start_day: number;
+  // The year and term boundaries moved to the reporting calendar, which can
+  // describe a year that is not a school's. See getReportingCalendar.
 };
 
 export type ReportFormulaSettingsInput = Partial<ReportFormulaSettings>;

@@ -1732,12 +1732,31 @@ class SchoolCalendarOut(BaseModel):
 
 @router.get("/calendar", response_model=SchoolCalendarOut)
 async def get_school_calendar(db: AsyncSession = Depends(get_db)):
-    settings = await _get_or_create_formula_settings(db)
+    """Derived from the reporting calendar, not from the columns it replaced.
+
+    Reading the old `report_formula_settings` columns would freeze this
+    endpoint at whatever the calendar was before it became configurable: an
+    admin changes the year start on Settings > Insights, and an older client
+    goes on computing last year's boundaries with nothing to indicate it. The
+    stale answer is worse than the lossy one.
+
+    Lossy it is, though — this shape holds exactly two terms and calls the
+    second one a semester. An organisation with quarters gets its year start
+    and its second quarter here, which is the closest true statement this
+    schema can make. /reports/periods is where the whole calendar lives.
+    """
+    context = await load_period_context(db)
+    spring = next((term for term in context.terms if term.position == 1), None)
+
     return SchoolCalendarOut(
-        school_year_start_month=settings.school_year_start_month,
-        school_year_start_day=settings.school_year_start_day,
-        spring_semester_start_month=settings.spring_semester_start_month,
-        spring_semester_start_day=settings.spring_semester_start_day,
+        school_year_start_month=context.calendar.year_start_month,
+        school_year_start_day=context.calendar.year_start_day,
+        # A calendar with no second term has no spring boundary to report. The
+        # old default is the honest stand-in: it is what this endpoint returned
+        # for an unconfigured installation before, and what its callers already
+        # handle.
+        spring_semester_start_month=spring.start_month if spring else 1,
+        spring_semester_start_day=spring.start_day if spring else 1,
     )
 
 
