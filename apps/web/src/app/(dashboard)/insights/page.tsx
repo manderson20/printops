@@ -41,6 +41,7 @@ import { Input } from "@/components/ui/Field";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
 import { WikiHelpLink } from "@/components/ui/WikiHelpLink";
+import { periodNoun } from "./explained-ui";
 import { SharePair, TimelineChart, VolumeBarChart } from "./charts";
 import { CombinedUsageSection } from "./CombinedUsageSection";
 
@@ -329,13 +330,18 @@ export default function InsightsPage() {
     if (!preset.startsWith("period:")) {
       return FIXED_PERIOD_LABELS[preset as FixedPreset];
     }
-    const kind = periods.find(
-      (option) => `period:${option.key}` === preset,
-    )?.kind;
-    if (kind === "year") return yearNoun.toLowerCase();
-    if (kind === "calendar_year") return "calendar year";
-    if (kind === "term") return "term";
-    return "period";
+    // Shared with the district page rather than reimplemented — a second copy
+    // of "what do we call this period" is how the last one ended up saying
+    // "school year" to everybody who installed this.
+    //
+    // `nameTerms: false` because this value reaches the fun facts, one of which
+    // compares against the preceding window of the same length. Q1's
+    // predecessor is Q4, so "than last Q1" would describe a comparison that
+    // did not happen. Comparing like with like across years is Stage 3, and
+    // this label can name the term once it does.
+    return periodNoun(preset.slice("period:".length), periods, yearNoun, {
+      nameTerms: false,
+    });
   }, [preset, periods, yearNoun]);
 
   // Compact one-line stand-in for the filter panel when it's hidden or when
@@ -1275,8 +1281,8 @@ function SnapshotsSection({
     <Card className="print:hidden">
       <CardTitle className="mb-3">Saved Snapshots</CardTitle>
       <p className="mb-3 text-xs text-zinc-500">
-        Freezes today&rsquo;s totals and fun facts under a name (e.g. a month or
-        semester) — the saved numbers stay fixed even if formulas or job data
+        Freezes today&rsquo;s totals and fun facts under a name of your
+        choosing — the saved numbers stay fixed even if formulas or job data
         change later.
       </p>
       <div className="mb-4 flex flex-wrap items-end gap-2">

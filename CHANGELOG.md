@@ -5,6 +5,28 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.81.1] - 2026-09-07
+
+- **Removed the last of a school's vocabulary from screens everyone sees.**
+  0.81.0 made period *names* configurable but left three places still saying
+  them outright: Our Printing read "Together this school year" to every reader
+  whatever their organisation calls a year, the Saved Snapshots hint suggested
+  naming a snapshot after "a month or semester", and four API endpoints
+  documented `week | month | semester | year` as the accepted set. All three
+  now come from the configured calendar.
+- **A fresh install starts on the calendar year**, not 1 July. A July start is
+  a school's — and a fiscal year's — and neither is a safe guess for an
+  organisation that has not said. Existing installations are untouched: their
+  calendar was seeded from what they already had.
+- One shared helper now answers "what do we call this period", replacing two
+  near-copies. The duplicate is how the phrase on Our Printing survived the
+  change that was meant to remove it.
+- `tests/test_no_hardwired_vocabulary.py` fails the build if "semester" or
+  "school year" reaches a user-visible line in the web app. Comments keep their
+  provenance, and the settings-page templates are exempt — offering a school
+  calendar *alongside* quarters and trimesters is the opposite of hardwiring
+  one.
+
 ## [0.81.0] - 2026-09-07
 
 - **Reporting periods are now something an organisation defines**, under

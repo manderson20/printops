@@ -154,8 +154,6 @@ def test_the_bulk_regenerate_script_calls_a_route_that_exists():
     paths are invisible to every other check in this repo, so the path is
     matched against the routes the app actually serves.
     """
-    import re
-
     from app.main import app
 
     script = (REPO / "scripts" / "regenerate_avahi_services.sh").read_text()

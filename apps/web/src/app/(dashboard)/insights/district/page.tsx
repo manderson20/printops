@@ -14,6 +14,8 @@ import {
   EquivalencyCards,
   MilestoneBar,
   PeriodPicker,
+  periodNoun,
+  usePeriodOptions,
   StatCard,
   formatNumber,
 } from "../explained-ui";
@@ -40,6 +42,8 @@ export default function DistrictFunFactsPage() {
   const [period, setPeriod] = useState<ExplainedPeriod>("year");
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [loadedPeriod, setLoadedPeriod] = useState(period);
+  const { options, yearNoun } = usePeriodOptions();
+  const noun = periodNoun(period, options, yearNoun);
 
   // Reset to "loading" the instant the period changes, computed during
   // render rather than via an effect + setState — the same idiom
@@ -113,7 +117,7 @@ export default function DistrictFunFactsPage() {
         <div className="flex flex-col gap-8">
           <section className="rounded-2xl bg-zinc-900 p-7 sm:p-10 dark:bg-zinc-950">
             <span className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-              Together this {period === "year" ? "school year" : period}
+              Together this {noun}
             </span>
             <p className="mt-3 text-balance text-2xl font-semibold leading-tight tracking-tight text-white sm:text-4xl">
               {hero}

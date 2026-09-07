@@ -78,6 +78,10 @@ def test_an_installation_that_has_configured_nothing_gets_a_neutral_calendar(cli
 
     assert body["year_noun"] == "Year"
     assert body["terms"] == [], "no terms until somebody says there are terms"
+    # January, not July. A July start is a school's — and a fiscal year's — and
+    # neither is a safe guess. The calendar year is the one year every
+    # organisation certainly has.
+    assert (body["year_start_month"], body["year_start_day"]) == (1, 1)
 
 
 def test_the_period_picker_offers_no_term_when_there_are_none(client, admin_headers):
