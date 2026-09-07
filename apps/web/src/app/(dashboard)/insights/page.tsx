@@ -333,7 +333,15 @@ export default function InsightsPage() {
     // Shared with the district page rather than reimplemented — a second copy
     // of "what do we call this period" is how the last one ended up saying
     // "school year" to everybody who installed this.
-    return periodNoun(preset.slice("period:".length), periods, yearNoun);
+    //
+    // `nameTerms: false` because this value reaches the fun facts, one of which
+    // compares against the preceding window of the same length. Q1's
+    // predecessor is Q4, so "than last Q1" would describe a comparison that
+    // did not happen. Comparing like with like across years is Stage 3, and
+    // this label can name the term once it does.
+    return periodNoun(preset.slice("period:".length), periods, yearNoun, {
+      nameTerms: false,
+    });
   }, [preset, periods, yearNoun]);
 
   // Compact one-line stand-in for the filter panel when it's hidden or when

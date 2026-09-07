@@ -253,3 +253,34 @@ def test_duplex_with_nothing_left_to_save_credits_the_saving_only():
 
 def test_duplex_says_nothing_when_there_is_nothing_to_say():
     assert duplex_opportunity_fact(additional_sheets=0, saved_sheets=0) is None
+
+
+def test_the_previous_period_is_the_window_before_this_one_not_a_year_ago():
+    """What the "than last <period>" fact actually compares.
+
+    It is the immediately preceding window of the same length — so the period
+    before Q1 is Q4, not last year's Q1. That is why the web app deliberately
+    passes a *generic* noun for a term ("than last term") rather than the
+    term's own name: "than last Q1" would be a specific claim about a
+    comparison that never happened.
+
+    If this ever changes to compare like with like across years, that label
+    should become specific in the same commit — see periodNoun's `nameTerms`
+    option in apps/web/src/app/(dashboard)/insights/explained-ui.tsx.
+    """
+    from datetime import UTC, datetime
+
+    from app.reports.aggregation import ReportFilters
+    from app.routers.reports import _previous_period_filters
+
+    # A quarter: 1 October to 1 January.
+    current = ReportFilters(
+        start=datetime(2026, 10, 1, tzinfo=UTC), end=datetime(2027, 1, 1, tzinfo=UTC)
+    )
+    previous = _previous_period_filters(current)
+
+    assert previous is not None
+    assert previous.end == current.start
+    assert previous.start == datetime(2026, 7, 1, tzinfo=UTC), (
+        "the preceding quarter, not the same quarter a year earlier"
+    )
