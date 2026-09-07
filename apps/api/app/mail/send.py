@@ -50,6 +50,23 @@ def build_message(settings: SmtpSettings, to: str, subject: str, body: str) -> E
     return message
 
 
+def _is_permanent(code: int | None) -> bool:
+    """SMTP says so itself, in the first digit.
+
+    5xx is a permanent failure and 4xx is "try later" — RFC 5321 §4.2.1. Reading
+    the class rather than the exception type matters because smtplib raises the
+    same exception for both: a relay under load answers 454 to AUTH, and a
+    greylisting one answers 451 to RCPT. Treating those as permanent would
+    discard a notification during exactly the temporary conditions retrying
+    exists for.
+    """
+    return code is None or 500 <= code < 600
+
+
+def _refusal_codes(exc: smtplib.SMTPRecipientsRefused) -> list[int]:
+    return [code for code, _ in exc.recipients.values()]
+
+
 def _send_blocking(settings: SmtpSettings, message: EmailMessage) -> None:
     password = decrypt(settings.password_encrypted) if settings.password_encrypted else None
     try:
@@ -60,13 +77,23 @@ def _send_blocking(settings: SmtpSettings, message: EmailMessage) -> None:
                 smtp.login(settings.username, password)
             smtp.send_message(message)
     except smtplib.SMTPAuthenticationError as exc:
-        # Wrong credentials will be wrong next time too. Retrying a bad login
-        # eight times is also a good way to get an account locked.
-        raise MailError(f"Authentication rejected: {exc}", permanent=True) from exc
+        # A 5xx here means the credentials are wrong and will be wrong next
+        # time, so the message is retired rather than retried — retrying a bad
+        # login eight times is a good way to get the account locked. A 4xx is
+        # the relay saying "not now".
+        raise MailError(
+            f"Authentication rejected: {exc}", permanent=_is_permanent(exc.smtp_code)
+        ) from exc
     except smtplib.SMTPRecipientsRefused as exc:
-        raise MailError(f"Recipient refused: {exc}", permanent=True) from exc
+        # Greylisting lives here: a 451 on RCPT is a request to come back, and
+        # coming back is the entire point of it.
+        codes = _refusal_codes(exc)
+        raise MailError(
+            f"Recipient refused: {exc}",
+            permanent=all(_is_permanent(code) for code in codes) if codes else True,
+        ) from exc
     except smtplib.SMTPSenderRefused as exc:
-        raise MailError(f"Sender refused: {exc}", permanent=True) from exc
+        raise MailError(f"Sender refused: {exc}", permanent=_is_permanent(exc.smtp_code)) from exc
     except (smtplib.SMTPException, OSError) as exc:
         # Connection refused, DNS failure, a relay having a bad afternoon — all
         # worth trying again.

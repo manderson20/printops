@@ -93,8 +93,9 @@ class NotificationChannelUpdate(BaseModel):
     @field_validator("target")
     @classmethod
     def _plausible(cls, value: str | None) -> str | None:
-        """Kind-agnostic here: an update does not carry the kind, and the
-        router re-checks against the stored one before saving."""
+        """A cheap shape check only. The real one is kind-specific and happens
+        in the router, which knows the stored kind — an update payload does
+        not carry it."""
         if value is None:
             return None
         if not value.startswith("https://") and "@" not in value:

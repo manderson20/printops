@@ -201,3 +201,56 @@ def _prime(smtp, *, raise_on_login=None, raise_on_send=None):
     """Makes the next constructed FakeSMTP fail in the given way."""
     smtp.next_login_error = raise_on_login
     smtp.next_send_error = raise_on_send
+
+
+# --- transient vs permanent, by response code -------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "permanent", "because"),
+    [
+        (535, True, "credentials are wrong and will stay wrong"),
+        # A relay under load answers 454 to AUTH. smtplib raises the same
+        # exception for both, so reading the type rather than the code would
+        # discard the message during exactly the condition retrying is for.
+        (454, False, "the relay is asking us to come back"),
+        (421, False, "service not available right now"),
+    ],
+)
+async def test_auth_failures_are_classified_by_response_code(code, permanent, because, smtp):
+    _prime(smtp, raise_on_login=smtplib.SMTPAuthenticationError(code, b"auth response"))
+
+    with pytest.raises(MailError) as caught:
+        await send_mail(configured(), to="a@b.org", subject="s", body="b")
+    assert caught.value.permanent is permanent, because
+
+
+@pytest.mark.asyncio
+async def test_greylisting_is_retried(smtp):
+    """A 451 on RCPT is a greylisting relay asking us to come back, and coming
+    back is the entire point of it. Treating it as permanent would lose the
+    first message from every new sender."""
+    _prime(smtp, raise_on_send=smtplib.SMTPRecipientsRefused({"a@b.org": (451, b"greylisted")}))
+
+    with pytest.raises(MailError) as caught:
+        await send_mail(configured(), to="a@b.org", subject="s", body="b")
+    assert caught.value.permanent is False
+
+
+@pytest.mark.asyncio
+async def test_a_permanently_refused_recipient_is_not_retried(smtp):
+    _prime(smtp, raise_on_send=smtplib.SMTPRecipientsRefused({"a@b.org": (550, b"no such user")}))
+
+    with pytest.raises(MailError) as caught:
+        await send_mail(configured(), to="a@b.org", subject="s", body="b")
+    assert caught.value.permanent is True
+
+
+@pytest.mark.asyncio
+async def test_a_temporarily_refused_sender_is_retried(smtp):
+    _prime(smtp, raise_on_send=smtplib.SMTPSenderRefused(452, b"over quota", "a@b.org"))
+
+    with pytest.raises(MailError) as caught:
+        await send_mail(configured(), to="a@b.org", subject="s", body="b")
+    assert caught.value.permanent is False
