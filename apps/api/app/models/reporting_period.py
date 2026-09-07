@@ -32,7 +32,14 @@ class ReportingCalendar(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
 
-    year_start_month: Mapped[int] = mapped_column(Integer, default=7, server_default="7")
+    # January, not July. A July start is a school's — and a fiscal year's, and
+    # neither is a safe guess for an organisation that has not said. The
+    # calendar year is the only year every installation certainly has, so it is
+    # what a fresh install reports against until somebody configures otherwise.
+    # This defaulted to 7 briefly in 0.81.0: one district's calendar handed to
+    # every installation, which is the exact class of thing this table exists
+    # to remove.
+    year_start_month: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     year_start_day: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
     # What to call a year of this organisation's, shown wherever a period is

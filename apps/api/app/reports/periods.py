@@ -46,7 +46,9 @@ LEGACY_ALIASES = {"semester": CURRENT_TERM, "year": REPORTING_YEAR}
 class CalendarSpec:
     """The organisation's year, as plain values rather than an ORM row."""
 
-    year_start_month: int = 7
+    # The calendar year, which is the one year every organisation has. See
+    # ReportingCalendar for why this is not July.
+    year_start_month: int = 1
     year_start_day: int = 1
     year_noun: str = "Year"
     label_style: str = "auto"

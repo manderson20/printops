@@ -1111,7 +1111,17 @@ def _sheets_for(summary, copy_pages: int) -> int:
 
 @router.get("/explained/me", response_model=PersonalExplainedOut)
 async def report_explained_me(
-    period: str = Query("year", description="week | month | semester | year"),
+    period: str = Query(
+        "year",
+        description=(
+            "A relative name — week, month, term, year, calendar_year — or an "
+            "explicit instance such as year:2025 or term:2025:1. The terms an "
+            "organisation has, and what they are called, come from "
+            "/api/v1/settings/reporting-calendar; GET /api/v1/reports/periods "
+            "lists what is currently resolvable, already labelled. 'semester' "
+            "is accepted as an alias for the term containing today."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserOut = Depends(get_current_user),
 ):
@@ -1242,7 +1252,17 @@ async def report_explained_me(
 
 @router.get("/explained/me/activity", response_model=MyActivityOut)
 async def report_my_activity(
-    period: str = Query("year", description="week | month | semester | year"),
+    period: str = Query(
+        "year",
+        description=(
+            "A relative name — week, month, term, year, calendar_year — or an "
+            "explicit instance such as year:2025 or term:2025:1. The terms an "
+            "organisation has, and what they are called, come from "
+            "/api/v1/settings/reporting-calendar; GET /api/v1/reports/periods "
+            "lists what is currently resolvable, already labelled. 'semester' "
+            "is accepted as an alias for the term containing today."
+        ),
+    ),
     limit: int = Query(200, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
     current_user: UserOut = Depends(get_current_user),
@@ -1280,7 +1300,17 @@ async def report_my_activity(
 
 @router.get("/explained/district", response_model=DistrictFunFactsOut)
 async def report_district_fun_facts(
-    period: str = Query("year", description="week | month | semester | year"),
+    period: str = Query(
+        "year",
+        description=(
+            "A relative name — week, month, term, year, calendar_year — or an "
+            "explicit instance such as year:2025 or term:2025:1. The terms an "
+            "organisation has, and what they are called, come from "
+            "/api/v1/settings/reporting-calendar; GET /api/v1/reports/periods "
+            "lists what is currently resolvable, already labelled. 'semester' "
+            "is accepted as an alias for the term containing today."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """District fun facts, visible to every signed-in user, fully
@@ -1391,7 +1421,17 @@ async def _segment_totals(
     dependencies=[Depends(require_role("admin"))],
 )
 async def report_district_detail(
-    period: str = Query("year", description="week | month | semester | year"),
+    period: str = Query(
+        "year",
+        description=(
+            "A relative name — week, month, term, year, calendar_year — or an "
+            "explicit instance such as year:2025 or term:2025:1. The terms an "
+            "organisation has, and what they are called, come from "
+            "/api/v1/settings/reporting-calendar; GET /api/v1/reports/periods "
+            "lists what is currently resolvable, already labelled. 'semester' "
+            "is accepted as an alias for the term containing today."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """The admin breakdown — the same district totals, segmented.

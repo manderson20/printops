@@ -48,7 +48,7 @@ def upgrade() -> None:
     op.create_table(
         "reporting_calendars",
         sa.Column("id", sa.Uuid(), primary_key=True),
-        sa.Column("year_start_month", sa.Integer(), server_default="7", nullable=False),
+        sa.Column("year_start_month", sa.Integer(), server_default="1", nullable=False),
         sa.Column("year_start_day", sa.Integer(), server_default="1", nullable=False),
         sa.Column("year_noun", sa.String(), server_default="Year", nullable=False),
         sa.Column("label_style", sa.String(), server_default="auto", nullable=False),
@@ -145,7 +145,7 @@ def _seed() -> None:
                 "INSERT INTO reporting_calendars "
                 "(id, year_start_month, year_start_day, year_noun, label_style, "
                 "created_at, updated_at) "
-                "VALUES (:id, 7, 1, 'Year', 'auto', :now, :now)"
+                "VALUES (:id, 1, 1, 'Year', 'auto', :now, :now)"
             ).bindparams(id=uuid.uuid4(), now=now),
         )
         return

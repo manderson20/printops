@@ -42,6 +42,30 @@ export const FALLBACK_PERIODS: PickablePeriod[] = [
  * Failure is silent on purpose: an Insights page that renders with the
  * fallback labels is still a working page, and an error banner about period
  * vocabulary would be noise over a report the reader came to see. */
+/** The bare noun for a period — "week", "school year", "Fall Semester".
+ *
+ * For phrasing a period into a sentence ("Together this ___"), where the full
+ * label would read wrongly: "Together this School year 2026–2027". Everything
+ * here comes from what the organisation calls its own periods, because the
+ * alternative is a hardcoded word that is right for schools and wrong for
+ * everybody else — which is what "Together this school year" was doing on the
+ * district page regardless of who was reading it.
+ */
+export function periodNoun(
+  period: ExplainedPeriod,
+  options: PickablePeriod[],
+  yearNoun: string,
+): string {
+  const option = options.find((candidate) => candidate.key === period);
+  if (!option) return "period";
+  // A term is named, not typed: "Fall Semester", "Q1". Its own name is the
+  // noun, minus any year the label carries.
+  if (option.kind === "term") return option.label.replace(/\s+\S*\d{4}\S*$/, "");
+  if (option.kind === "year") return yearNoun.toLowerCase();
+  if (option.kind === "calendar_year") return "calendar year";
+  return option.kind;
+}
+
 export function usePeriodOptions(): { options: PickablePeriod[]; yearNoun: string } {
   const [options, setOptions] = useState<PickablePeriod[]>(FALLBACK_PERIODS);
   const [yearNoun, setYearNoun] = useState("Year");
