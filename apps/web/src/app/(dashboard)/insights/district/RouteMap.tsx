@@ -87,7 +87,8 @@ function travelledPortion(points: Point[], fraction: number): Point[] {
       continue;
     }
     if (remaining <= length) {
-      const share = length > 0 ? remaining / length : 0;
+      // `length > 0` here: the zero-length case returned above.
+      const share = remaining / length;
       const from = points[index];
       const to = points[index + 1];
       walked.push([
