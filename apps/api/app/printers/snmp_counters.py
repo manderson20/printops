@@ -48,6 +48,8 @@ from app.core.crypto import decrypt, encrypt
 from app.models.printer import Printer
 from app.models.report import PrinterTonerCartridge, PrinterTonerReading
 from app.models.snmp import PrinterCounterReading, SnmpDefaultsSettings
+from app.notifications import conditions as notify
+from app.notifications.settings import get_or_create_notification_settings
 
 logger = logging.getLogger(__name__)
 
@@ -535,7 +537,37 @@ async def sync_toner_levels(
                     recorded_at=now,
                 )
             )
+            await _notify_toner(db, printer, supply.color, supply.level_percent)
     return unmatched
+
+
+async def _notify_toner(db: AsyncSession, printer, color: str, level_percent: int) -> None:
+    """Raise or clear the low-toner condition for one cartridge.
+
+    Keyed per cartridge, so a cartridge sitting at 14% for a fortnight is one
+    message rather than one every thirty minutes for two weeks. Cleared as soon
+    as the level comes back up, so the *next* cartridge to run down in that slot
+    is reported instead of being deduped away against a row from the last one.
+    """
+    settings = await get_or_create_notification_settings(db)
+    key = f"{notify.TONER_LOW}:{printer.id}:{color}"
+    if level_percent > settings.toner_low_percent:
+        await notify.clear(db, key)
+        return
+    where = " / ".join(part for part in (printer.building, printer.room) if part)
+    await notify.observe(
+        db,
+        settings,
+        kind=notify.TONER_LOW,
+        dedupe_key=key,
+        title=f"{printer.name}: {color} toner at {level_percent}%",
+        body=(
+            (f"{where}\n" if where else "") + f"The {color} cartridge is at {level_percent}%, "
+            f"below the {settings.toner_low_percent}% threshold."
+        ),
+        subject_type="printer",
+        subject_id=printer.id,
+    )
 
 
 def _canon_breakdown(ip: str, config: SnmpConfig) -> VendorBreakdown:

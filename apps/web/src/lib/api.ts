@@ -2937,6 +2937,104 @@ export async function updateAuditSettings(retentionDays: number): Promise<AuditS
   return response.json();
 }
 
+// --- Notifications (app/routers/notifications.py) — admin-only. ---
+
+export type NotificationSettings = {
+  enabled: boolean;
+  settle_minutes: number;
+  toner_low_percent: number;
+  notify_printer_attention: boolean;
+  notify_printer_error: boolean;
+  notify_toner_low: boolean;
+  notify_quota_exceeded: boolean;
+};
+
+export type NotificationChannel = {
+  id: string;
+  kind: string;
+  name: string;
+  // Never the real URL. An incoming-webhook URL is a bearer credential wearing
+  // a URL's clothes, so the API returns only enough to tell two channels apart.
+  target_hint: string;
+  enabled: boolean;
+  last_error: string | null;
+  last_success_at: string | null;
+};
+
+export type NotificationEvent = {
+  id: string;
+  created_at: string;
+  kind: string;
+  title: string;
+  body: string;
+  severity: string;
+  delivered_at: string | null;
+  attempts: number;
+  last_error: string | null;
+  gave_up: boolean;
+};
+
+export async function getNotificationSettings(): Promise<NotificationSettings> {
+  const response = await authorizedFetch("/api/v1/notifications/settings");
+  return response.json();
+}
+
+export async function updateNotificationSettings(
+  patch: Partial<NotificationSettings>,
+): Promise<NotificationSettings> {
+  const response = await authorizedFetch("/api/v1/notifications/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return response.json();
+}
+
+export async function listNotificationChannels(): Promise<NotificationChannel[]> {
+  const response = await authorizedFetch("/api/v1/notifications/channels");
+  return response.json();
+}
+
+export async function createNotificationChannel(
+  name: string,
+  target: string,
+): Promise<NotificationChannel> {
+  const response = await authorizedFetch("/api/v1/notifications/channels", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, target }),
+  });
+  return response.json();
+}
+
+export async function updateNotificationChannel(
+  id: string,
+  patch: { name?: string; enabled?: boolean; target?: string },
+): Promise<NotificationChannel> {
+  const response = await authorizedFetch(`/api/v1/notifications/channels/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return response.json();
+}
+
+export async function deleteNotificationChannel(id: string): Promise<void> {
+  await authorizedFetch(`/api/v1/notifications/channels/${id}`, { method: "DELETE" });
+}
+
+export async function testNotificationChannel(id: string): Promise<void> {
+  await authorizedFetch(`/api/v1/notifications/channels/${id}/test`, { method: "POST" });
+}
+
+export async function listNotificationEvents(): Promise<{
+  events: NotificationEvent[];
+  total: number;
+}> {
+  const response = await authorizedFetch("/api/v1/notifications/events");
+  return response.json();
+}
+
 // --- Public print-release kiosk API (app/routers/release.py) — no
 // PrintOps login involved, so this deliberately does NOT use
 // authorizedFetch (no JWT to attach, and its 401->redirect-to-login

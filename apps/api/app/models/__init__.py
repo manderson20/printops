@@ -20,6 +20,12 @@ from app.models.ldap_relay import LdapRelaySettings
 from app.models.location import Location
 from app.models.mfp_device import MfpDevice
 from app.models.mosyle import MosyleDevice, MosyleSettings
+from app.models.notification import (
+    NotificationChannel,
+    NotificationEvent,
+    NotificationSettings,
+    NotificationState,
+)
 from app.models.printer import Printer
 from app.models.quota import PrinterUserQuota, QuotaSettings
 from app.models.release import PrintReleaseSettings
@@ -57,6 +63,10 @@ __all__ = [
     "MfpDevice",
     "MosyleDevice",
     "MosyleSettings",
+    "NotificationChannel",
+    "NotificationEvent",
+    "NotificationSettings",
+    "NotificationState",
     "Printer",
     "PrinterCounterReading",
     "PrinterReleaseBypass",

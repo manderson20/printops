@@ -5,6 +5,27 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.78.0] - 2026-09-07
+
+- **Notifications.** PrintOps has always noticed when a printer stops
+  answering, jams, or runs low on toner — and told nobody. It can now send that
+  to a Google Chat, Slack, Teams or Discord webhook. Set it up under
+  Settings → Notifications; nothing is sent until you add somewhere to send it.
+- **It is built not to cry wolf**, because a notifier people mute takes the
+  message that mattered with it. A problem has to last ten minutes (adjustable)
+  before anyone is told, so a jam somebody clears on the way past stays quiet.
+  And a printer offline for three days sends one message, not one a minute for
+  three days.
+- Four triggers, each switchable on its own: a printer needing attention, a
+  printer reporting an error, low toner, and someone reaching their quota. The
+  first reuses the judgement that already decides whether an offline printer is
+  worth mentioning — it stays quiet for a printer switched off overnight.
+  The quota one is off by default.
+- Delivery failures are visible in Settings rather than only in a log, retried
+  with backoff, and eventually given up on: a webhook URL that has been revoked
+  will never work, and retrying it forever would build a queue that never
+  drains.
+
 ## [0.77.1] - 2026-09-07
 
 - Moved the web app to ESLint 10. It had been blocked since August: ESLint 10
