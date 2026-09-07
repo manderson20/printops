@@ -384,3 +384,124 @@ def test_previewing_needs_an_admin(client):
             "terms": [],
         },
     ).status_code in (401, 403)
+
+
+# --- the years the calendar produces ----------------------------------------
+
+YEARS = f"{CALENDAR}/years"
+
+
+def test_years_are_generated_not_stored(client, admin_headers):
+    """The point of a repeating pattern: no year needs data entered for it.
+
+    Next August nobody should have to add anything, and a year from before this
+    installation existed still has segments to report against.
+    """
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+    body = client.get(YEARS, headers=admin_headers).json()
+
+    assert body, "at least the current year"
+    assert all(len(year["segments"]) == 2 for year in body), "every year has its segments"
+    assert all(year["overridden"] is False for year in body)
+    # Newest first, and the year after the current one is included so an admin
+    # can lay out next year before it starts.
+    years = [year["year"] for year in body]
+    assert years == sorted(years, reverse=True)
+
+
+def test_a_year_with_no_activity_is_offered_but_marked(client, admin_headers):
+    """It resolves perfectly well and returns nothing. An empty report reads as
+    "nobody printed" rather than "we were not watching yet", so the difference
+    has to be visible rather than inferred."""
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+    body = client.get(YEARS, headers=admin_headers).json()
+
+    # No jobs in this fixture at all, so nothing can claim to have data.
+    assert all(year["has_data"] is False for year in body)
+
+
+def test_one_year_can_be_given_explicit_dates(client, admin_headers):
+    """For the year a term really did start late."""
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+
+    response = client.put(
+        f"{YEARS}/2026",
+        headers=admin_headers,
+        json={
+            "segments": [
+                {"name": "Fall Semester", "start_date": "2026-08-22", "end_date": "2026-12-20"},
+                {"name": "Spring Semester", "start_date": "2027-01-09", "end_date": "2027-05-26"},
+            ]
+        },
+    )
+    assert response.status_code == 200
+
+    years = {year["year"]: year for year in response.json()}
+    assert years[2026]["overridden"] is True
+    assert years[2026]["segments"][0]["start"] == "2026-08-22"
+    # Inclusive in, exclusive out: the day after the last day covered.
+    assert years[2026]["segments"][0]["end"] == "2026-12-21"
+
+    # And only that year. Every other still comes from the pattern, so one
+    # correction does not become an annual chore.
+    assert years[2027]["overridden"] is False
+    assert years[2027]["segments"][0]["start"] == "2027-08-15"
+
+
+def test_an_overridden_year_can_be_reverted(client, admin_headers):
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+    client.put(
+        f"{YEARS}/2026",
+        headers=admin_headers,
+        json={
+            "segments": [
+                {"name": "Fall", "start_date": "2026-08-22", "end_date": "2026-12-20"},
+            ]
+        },
+    )
+    body = client.delete(f"{YEARS}/2026", headers=admin_headers).json()
+
+    years = {year["year"]: year for year in body}
+    assert years[2026]["overridden"] is False
+    assert len(years[2026]["segments"]) == 2, "back to the pattern"
+
+
+def test_overlapping_stated_segments_are_refused(client, admin_headers):
+    """Two segments claiming the same day means one of them silently loses
+    printing to the other, and nothing complains."""
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+    response = client.put(
+        f"{YEARS}/2026",
+        headers=admin_headers,
+        json={
+            "segments": [
+                {"name": "Fall", "start_date": "2026-08-22", "end_date": "2027-01-10"},
+                {"name": "Spring", "start_date": "2027-01-05", "end_date": "2027-05-26"},
+            ]
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_stating_a_year_is_audited(client, admin_headers):
+    """Moving a segment boundary changes what every report ever run against
+    that segment covers."""
+    client.put(CALENDAR, headers=admin_headers, json=SCHOOL)
+    client.put(
+        f"{YEARS}/2026",
+        headers=admin_headers,
+        json={
+            "segments": [
+                {"name": "Fall", "start_date": "2026-08-22", "end_date": "2026-12-20"},
+            ]
+        },
+    )
+    rows = _calendar_events(client, admin_headers)
+    assert any("year" in row["action"] for row in rows), [row["action"] for row in rows]
+
+
+def test_only_an_admin_can_state_a_year(client):
+    assert client.put(
+        f"{YEARS}/2026",
+        json={"segments": [{"name": "F", "start_date": "2026-08-22", "end_date": "2026-12-20"}]},
+    ).status_code in (401, 403)
