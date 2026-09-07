@@ -139,7 +139,7 @@ class QueuedJob:
         """Whether this job was submitted by any of the given identities.
 
         Case-insensitively, because what CUPS records is whatever the client
-        sent: the same person reaches this server as `hfiala@brookfieldr3.org`
+        sent: the same person reaches this server as `alex.teacher@example.org`
         from a Mac and could reach it in another case from elsewhere. An
         ownership check that misses is not a cosmetic bug here — it is the
         difference between someone seeing their own document name and not."""

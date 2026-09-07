@@ -148,7 +148,7 @@ async def test_a_reused_job_id_is_not_cancelled_out_from_under_someone(
     name an id that now belongs to a stranger's document. Closing our row must
     not cancel theirs."""
     job_id = await job_factory("failed")
-    cups_says(CupsJobIdentity(uuid=None, owner="someone.else@brookfieldr3.org"))
+    cups_says(CupsJobIdentity(uuid=None, owner="someone.else@example.org"))
     response = client.post(f"/api/v1/jobs/{job_id}/cancel", headers=auth_headers)
     assert response.status_code == 200
     assert response.json()["status"] == "cancelled"

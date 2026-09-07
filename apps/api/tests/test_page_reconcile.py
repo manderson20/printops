@@ -217,7 +217,7 @@ async def _forwarded(db, printer, minutes_before, pages, **kwargs):
         id=uuid.uuid4(),
         printer_id=printer.id,
         status="forwarded",
-        submitted_by="jdobrzenski@brookfieldr3.org",
+        submitted_by="jordan.staff@example.org",
         document_name="FFA Scavenger Hunt - Group Cards",
         page_count=pages,
         duplex=False,

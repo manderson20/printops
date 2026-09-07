@@ -43,7 +43,7 @@ OTHER_PRINTER_ID = uuid.UUID("629d2c72-31eb-426d-8d91-1ab629a84ff7")
 
 # The dev break-glass account the other API tests log in with.
 ME = "admin"
-SOMEONE_ELSE = "agerukink@brookfieldr3.org"
+SOMEONE_ELSE = "casey.aide@example.org"
 
 
 def job(
