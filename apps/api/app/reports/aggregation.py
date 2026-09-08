@@ -25,6 +25,7 @@ from app.integrations.google_workspace import org_unit_matches
 from app.models.copier_usage import CopierUsageRecord
 from app.models.google_workspace import GoogleWorkspaceDevice, GoogleWorkspaceUser
 from app.models.job import Job
+from app.models.job_coverage import JobCoverage
 from app.models.mfp_device import MfpDevice
 from app.models.mosyle import MosyleDevice
 from app.models.printer import Printer
@@ -458,6 +459,21 @@ def physical_sheets_used(page_count: int, duplex: bool | None) -> int:
     return page_count
 
 
+@dataclass(frozen=True)
+class MeasuredCoverage:
+    """One job's measured per-colorant coverage, 0..1.
+
+    A plain value rather than the JobCoverage row it came from, so the pure
+    calculation in app/reports/formulas.py keeps taking anything shaped like
+    coverage (its CoverageLike protocol) and never an ORM object.
+    """
+
+    cyan: float
+    magenta: float
+    yellow: float
+    black: float
+
+
 @dataclass
 class CostRawRow:
     """One job's worth of the fields needed to price it (plus
@@ -476,6 +492,11 @@ class CostRawRow:
     color_mode: str | None
     duplex: bool | None
     file_size_bytes: int | None
+    # None when this job has no usable measurement — no row yet, or a row
+    # saying why not (expired, unsupported, failed, no_document). Callers
+    # must treat that as "unknown", never as zero ink: see
+    # app/reports/coverage_summary.py.
+    coverage: MeasuredCoverage | None = None
 
 
 async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[CostRawRow]:
@@ -485,6 +506,11 @@ async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[Co
     stays DB-query-only and app/reports/formulas.py stays a pure, DB-free
     calculation module (it already imports from here; importing back would
     be circular)."""
+    # Coverage rides along on the same query rather than a second pass keyed
+    # by job id: every caller that prices a row may also want to know what it
+    # actually put on the page, and the outer join keeps unmeasured jobs in
+    # the result set — dropping them would quietly change what every cost
+    # report is a total *of*.
     stmt = _apply_filters(
         select(
             Job.printer_id,
@@ -495,8 +521,16 @@ async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[Co
             Job.color_mode,
             Job.duplex,
             Job.file_size_bytes,
+            JobCoverage.cyan,
+            JobCoverage.magenta,
+            JobCoverage.yellow,
+            JobCoverage.black,
+            JobCoverage.state,
         ),
         filters,
+    ).outerjoin(
+        JobCoverage,
+        (JobCoverage.job_id == Job.id) & (JobCoverage.state == "measured"),
     )
     rows = (await db.execute(stmt)).all()
     return [
@@ -509,6 +543,11 @@ async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[Co
             color_mode=r.color_mode,
             duplex=r.duplex,
             file_size_bytes=r.file_size_bytes,
+            coverage=(
+                MeasuredCoverage(cyan=r.cyan, magenta=r.magenta, yellow=r.yellow, black=r.black)
+                if r.state == "measured"
+                else None
+            ),
         )
         for r in rows
     ]

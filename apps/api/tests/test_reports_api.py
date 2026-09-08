@@ -14,6 +14,7 @@ from app.models.base import Base
 from app.models.copier_usage import CopierUsageRecord
 from app.models.google_workspace import GoogleWorkspaceUser
 from app.models.job import Job
+from app.models.job_coverage import JobCoverage
 from app.models.mfp_device import MfpDevice
 from app.models.mosyle import MosyleDevice
 from app.models.printer import Printer
@@ -1148,3 +1149,233 @@ async def test_staff_usage_lets_a_viewer_see_their_own(
     )
     assert response.status_code == 200, response.text
     assert response.json()["print_pages"] == 12
+
+
+# --- measured ink beside the rated cost -------------------------------------
+#
+# The point of these is what the numbers are *of*. Measurement covers a subset
+# of jobs — a copy has no document, and a spool file that aged out can never be
+# read — so a cost derived from it describes that subset and nothing else. Each
+# test below fixes one way that could be misreported.
+
+
+async def _measure(
+    db_session_factory,
+    job_id,
+    *,
+    black,
+    cyan=0.0,
+    magenta=0.0,
+    yellow=0.0,
+    state="measured",
+    pages=1,
+):
+    async with db_session_factory() as session:
+        session.add(
+            JobCoverage(
+                job_id=uuid.UUID(job_id),
+                state=state,
+                pages_measured=pages,
+                cyan=cyan,
+                magenta=magenta,
+                yellow=yellow,
+                black=black,
+            )
+        )
+        await session.commit()
+
+
+async def _mono_cartridge(client, printer_id, admin_headers):
+    """$0.02 a page at the rated yield, and the 5% baseline the settings default
+    to — so a job measured at 5% black is exactly 1.0x by definition."""
+    client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=admin_headers,
+        json=[{"color": "black", "cost": 20.0, "yield_pages": 1000}],
+    )
+
+
+async def test_a_group_ink_ratio_compares_the_measured_jobs_with_their_own_rated_cost(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """The comparison has to be like for like.
+
+    Two jobs of ten pages each, one measured at twice the test coverage and one
+    never measured. The ratio is 2.0 — the measured job against *its own* rated
+    cost. Dividing the measured cost by the group's whole rated cost would give
+    1.0 and read as a group printing perfectly ordinary pages, when half of it
+    was simply never looked at.
+    """
+    await _mono_cartridge(client, printer_id, admin_headers)
+    measured = _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        10,
+        color_mode="monochrome",
+        duplex=False,
+    )
+    _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        10,
+        color_mode="monochrome",
+        duplex=False,
+    )
+    await _measure(db_session_factory, measured, black=0.10)  # 2x the 5% baseline
+
+    body = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers).json()
+    assert len(body) == 1
+    entry = body[0]
+    assert entry["measured_jobs"] == 1
+    assert entry["unmeasured_jobs"] == 1
+    assert entry["ink_ratio"] == 2.0
+    assert entry["measured_toner_cost"] == 0.4
+    assert entry["rated_toner_cost_measured"] == 0.2
+
+
+async def test_the_rated_total_is_unchanged_by_what_measurement_found(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """Measuring a job must not move the number the rest of the reports total.
+
+    A district total from a flat rate is roughly right — the aggregate
+    correction on the first estate was about 1.12x — while individual jobs ran
+    0.07x to 8.8x. Measurement earns its place by attributing that spread, not
+    by restating the total, and a total that shifted when a background loop
+    happened to reach a job would reconcile with nothing.
+    """
+    await _mono_cartridge(client, printer_id, admin_headers)
+    job = _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        10,
+        color_mode="monochrome",
+        duplex=False,
+    )
+
+    before = client.get(
+        "/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers
+    ).json()[0]
+    await _measure(db_session_factory, job, black=0.44)  # 8.8x
+    after = client.get(
+        "/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers
+    ).json()[0]
+
+    assert after["toner_cost"] == before["toner_cost"]
+    assert after["total_cost"] == before["total_cost"]
+    assert before["ink_ratio"] is None
+    assert after["ink_ratio"] == 8.8
+
+
+async def test_an_unmeasured_group_reports_no_ratio_rather_than_one(
+    client, printer_id, backend_headers, admin_headers
+):
+    """ "We did not look" and "we looked and it was ordinary" are different
+    facts. 1.0 would state the second one, and nothing about it invites a
+    second look."""
+    await _mono_cartridge(client, printer_id, admin_headers)
+    _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        10,
+        color_mode="monochrome",
+        duplex=False,
+    )
+
+    entry = client.get(
+        "/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers
+    ).json()[0]
+    assert entry["ink_ratio"] is None
+    assert entry["measured_toner_cost"] is None
+    assert entry["rated_toner_cost_measured"] is None
+    assert entry["measured_jobs"] == 0
+    assert entry["unmeasured_jobs"] == 1
+    assert entry["measurement_is_representative"] is False
+
+
+async def test_a_job_measurement_could_not_read_counts_as_unmeasured(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """A row saying "the spool file was gone" is not a measurement of zero ink.
+    Counting it as one would drag every group it appears in towards 0.0x, which
+    is the shape of a person printing almost nothing."""
+    await _mono_cartridge(client, printer_id, admin_headers)
+    job = _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        10,
+        color_mode="monochrome",
+        duplex=False,
+    )
+    await _measure(db_session_factory, job, black=0.0, state="expired")
+
+    entry = client.get(
+        "/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers
+    ).json()[0]
+    assert entry["measured_jobs"] == 0
+    assert entry["unmeasured_jobs"] == 1
+    assert entry["ink_ratio"] is None
+
+
+async def test_representativeness_is_decided_by_the_api_not_the_screen(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """Two thirds is a judgement, and it is made once. Three jobs measured out
+    of four clears it; one out of four does not, and that group's ratio is
+    still true of what it measured — just as a sample rather than an answer."""
+    await _mono_cartridge(client, printer_id, admin_headers)
+    for index in range(4):
+        job = _make_job(
+            client,
+            printer_id,
+            backend_headers,
+            "alice@example.org",
+            10,
+            color_mode="monochrome",
+            duplex=False,
+        )
+        if index < 3:
+            await _measure(db_session_factory, job, black=0.05)
+
+    entry = client.get(
+        "/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers
+    ).json()[0]
+    assert entry["measured_jobs"] == 3
+    assert entry["measurement_is_representative"] is True
+    assert entry["ink_ratio"] == 1.0
+
+
+async def test_a_colour_document_on_a_mono_queue_is_costed_as_the_black_it_used(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """Measured on the real estate: a job whose document carried 36% on each
+    colour channel, sent to a mono queue. The printer only ever put down black,
+    so averaging four channels would charge it nearly six times what it cost."""
+    await _mono_cartridge(client, printer_id, admin_headers)
+    job = _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        1,
+        color_mode="monochrome",
+        duplex=False,
+    )
+    await _measure(
+        db_session_factory, job, black=0.0914, cyan=0.3633, magenta=0.3633, yellow=0.3633
+    )
+
+    entry = client.get(
+        "/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers
+    ).json()[0]
+    assert entry["ink_ratio"] == pytest.approx(1.828, abs=0.001)
