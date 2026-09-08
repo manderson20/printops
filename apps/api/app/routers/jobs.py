@@ -23,11 +23,12 @@ from app.quotas.service import resolve_hold_reason
 from app.reports.aggregation import (
     ReportFilters,
     get_cost_raw_rows,
+    local,
     resolve_device_names,
     resolve_display_names,
 )
-from app.reports.cost_rates import load_printer_rates
-from app.reports.formulas import FormulaValues, job_cost
+from app.reports.cost_rates import load_dated_rates
+from app.reports.formulas import job_cost
 from app.schemas.auth import UserOut
 from app.schemas.job import (
     JobCoverageOut,
@@ -38,6 +39,7 @@ from app.schemas.job import (
     UserUsageOut,
     UserUsagePage,
 )
+from app.server_settings.service import district_zone
 
 router = APIRouter(dependencies=[Depends(verify_backend_token)])
 
@@ -451,14 +453,13 @@ async def _usage_accumulators_by_email(db: AsyncSession) -> dict[str | None, _Us
     page/byte/duplex/color sums in the same loop."""
     raw_rows = await get_cost_raw_rows(db, ReportFilters())
     formula_settings = await _get_or_create_usage_formula_settings(db)
-    fallback = FormulaValues(
-        cost_per_page_mono=formula_settings.cost_per_page_mono,
-        cost_per_page_color=formula_settings.cost_per_page_color,
-        sheets_per_tree=formula_settings.sheets_per_tree,
-        co2_grams_per_sheet=formula_settings.co2_grams_per_sheet,
-    )
     printer_ids = {row.printer_id for row in raw_rows}
-    rates = await load_printer_rates(db, printer_ids, fallback)
+    # Each job at the rates in force on its own day. This report covers every
+    # job ever logged, so it is the one most exposed to being priced at today's
+    # figures — a cartridge that doubled in price would otherwise rewrite what
+    # everyone printed two years ago.
+    dated = await load_dated_rates(db, printer_ids, formula_settings)
+    zone = await district_zone(db)
 
     accumulators: dict[str | None, _UsageAccumulator] = {}
     for row in raw_rows:
@@ -479,9 +480,13 @@ async def _usage_accumulators_by_email(db: AsyncSession) -> dict[str | None, _Us
         else:
             acc.mono_pages += row.page_count
 
-        rate = rates[row.printer_id]
+        rates = dated.on(row.printer_id, local(row.created_at, zone).date())
         cost = job_cost(
-            row.page_count, row.color_mode, row.duplex, rate, formula_settings.cost_per_sheet_paper
+            row.page_count,
+            row.color_mode,
+            row.duplex,
+            rates.toner,
+            rates.cost_per_sheet_paper,
         )
         acc.estimated_cost += cost.total_cost
 

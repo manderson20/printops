@@ -5,7 +5,7 @@ import statistics
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
@@ -45,7 +45,7 @@ from app.reports.aggregation import (
     resolve_display_names,
     resolve_ou_scoped_emails,
 )
-from app.reports.cost_rates import load_printer_rates
+from app.reports.cost_rates import load_dated_rates
 from app.reports.equivalency import (
     build_equivalencies,
     duplex_sheets_saved,
@@ -63,7 +63,6 @@ from app.reports.formulas import (
     FormulaValues,
     JobCost,
     compute_environmental_impact,
-    compute_printer_rate,
     copy_cost,
     job_cost,
 )
@@ -114,7 +113,7 @@ from app.schemas.untracked_copies import (
     UntrackedCopyPrinterEntryOut,
     UntrackedCopySummaryOut,
 )
-from app.server_settings.service import get_or_create_server_settings
+from app.server_settings.service import district_zone
 
 logger = logging.getLogger(__name__)
 
@@ -282,8 +281,6 @@ def _accumulate(entry: _CostAccumulator, row: CostRawRow, cost: JobCost) -> None
 async def _compute_cost_accumulators(
     db: AsyncSession,
     filters: ReportFilters,
-    cost_per_sheet_paper: float,
-    fallback: FormulaValues,
 ) -> tuple[
     dict[str, _CostAccumulator],
     dict[str, _CostAccumulator],
@@ -300,7 +297,16 @@ async def _compute_cost_accumulators(
     submitted_by — is the grouping key."""
     rows = await get_cost_raw_rows(db, filters)
     printer_ids = {r.printer_id for r in rows}
-    rates = await load_printer_rates(db, printer_ids, fallback)
+    # The rates are no longer a pair of numbers the caller hands in: each job
+    # is priced at what its own day cost. Loaded here rather than threaded
+    # through eight call sites, because an optional rate a caller could forget
+    # would silently price a year of history at today's toner prices.
+    settings = await _get_or_create_formula_settings(db)
+    dated = await load_dated_rates(db, printer_ids, settings)
+    # Which day a job falls on is a question about the district's calendar, not
+    # about UTC — a job at half past eleven on the last night of a contract was
+    # printed under that contract.
+    zone = await _district_zone(db)
 
     by_printer: dict[str, _CostAccumulator] = {}
     by_user: dict[str, _CostAccumulator] = {}
@@ -308,8 +314,14 @@ async def _compute_cost_accumulators(
     overall = _CostAccumulator(label="Overall")
 
     for row in rows:
-        rate = rates[row.printer_id]
-        cost = job_cost(row.page_count, row.color_mode, row.duplex, rate, cost_per_sheet_paper)
+        rates = dated.on(row.printer_id, local(row.created_at, zone).date())
+        cost = job_cost(
+            row.page_count,
+            row.color_mode,
+            row.duplex,
+            rates.toner,
+            rates.cost_per_sheet_paper,
+        )
 
         printer_entry = by_printer.setdefault(
             str(row.printer_id), _CostAccumulator(label=row.printer_name)
@@ -392,8 +404,6 @@ def _accumulate_copy(entry: _CopyCostAccumulator, row: CopyCostRawRow, cost: Job
 async def _compute_copy_cost_accumulators(
     db: AsyncSession,
     filters: ReportFilters,
-    cost_per_sheet_paper: float,
-    fallback: FormulaValues,
 ) -> tuple[dict[str, _CopyCostAccumulator], dict[str, _CopyCostAccumulator], _CopyCostAccumulator]:
     """Returns (by_user, by_device, overall) for walk-up copying, priced at
     the same per-printer cartridge rates printing uses.
@@ -407,22 +417,26 @@ async def _compute_copy_cost_accumulators(
     only the person that is unknown."""
     rows = await get_copy_cost_raw_rows(db, filters)
     printer_ids = {r.printer_id for r in rows if r.printer_id is not None}
-    rates = await load_printer_rates(db, printer_ids, fallback)
-    flat_rate = compute_printer_rate([], fallback)
+    settings = await _get_or_create_formula_settings(db)
+    dated = await load_dated_rates(db, printer_ids, settings)
+    zone = await _district_zone(db)
 
     by_user: dict[str, _CopyCostAccumulator] = {}
     by_device: dict[str, _CopyCostAccumulator] = {}
     overall = _CopyCostAccumulator(label="Overall")
 
     for row in rows:
-        rate = rates.get(row.printer_id, flat_rate) if row.printer_id else flat_rate
+        # occurred_at, not the import timestamp: a copy made in May and
+        # imported in September was made in May, and pricing it at September's
+        # rates would repeat a bug this report already had once over bucketing.
+        rates = dated.on(row.printer_id, local(row.occurred_at, zone).date())
         cost = copy_cost(
             row.page_count,
             row.color_page_count,
             row.monochrome_page_count,
             row.duplex,
-            rate,
-            cost_per_sheet_paper,
+            rates.toner,
+            rates.cost_per_sheet_paper,
         )
         if row.staff_email:
             _accumulate_copy(
@@ -476,9 +490,7 @@ async def _summary_out(db: AsyncSession, filters: ReportFilters) -> SummaryOut:
     # per-printer cartridge cost) — only the dollar cost fields switch to
     # the new real, per-job-accurate calculation below.
     environmental = compute_environmental_impact(summary, formulas)
-    _, _, _, overall = await _compute_cost_accumulators(
-        db, filters, formula_settings.cost_per_sheet_paper, formulas
-    )
+    _, _, _, overall = await _compute_cost_accumulators(db, filters)
     return _build_summary_out(summary, environmental, overall)
 
 
@@ -502,21 +514,10 @@ def _csv_time(value, tz: ZoneInfo) -> str:
 
 
 async def _district_zone(db: AsyncSession) -> ZoneInfo:
-    """The timezone the reports are read in — see migration 0065.
-
-    Falls back to UTC only if the stored name has somehow stopped resolving
-    (a zone dropped by a tzdata update, say). Reports five hours out are
-    better than reports that 500, and the settings page still shows what is
-    configured."""
-    settings = await get_or_create_server_settings(db)
-    try:
-        return ZoneInfo(settings.timezone)
-    except (ZoneInfoNotFoundError, ValueError):
-        logger.warning(
-            "Server timezone %r could not be resolved — reading reports in UTC.",
-            settings.timezone,
-        )
-        return ZoneInfo("UTC")
+    """The district's timezone. Kept as a name local to this module because
+    every report reads it, but the rule itself lives in
+    app/server_settings/service.py — cost dating needs the same answer."""
+    return await district_zone(db)
 
 
 @router.get("/timeline", response_model=list[TimelineBucketOut])
@@ -601,14 +602,8 @@ async def report_combined_leaderboard(
     # here rather than in aggregation.py's get_combined_user_leaderboard
     # since it depends on admin-configured formula settings that live at
     # this router layer, not in that lower-level aggregation module.
-    formula_settings = await _get_or_create_formula_settings(db)
-    fallback = _formula_values(formula_settings)
-    _, cost_by_user, _, _overall = await _compute_cost_accumulators(
-        db, filters, formula_settings.cost_per_sheet_paper, fallback
-    )
-    copy_cost_by_user, _, _copy_overall = await _compute_copy_cost_accumulators(
-        db, filters, formula_settings.cost_per_sheet_paper, fallback
-    )
+    _, cost_by_user, _, _overall = await _compute_cost_accumulators(db, filters)
+    copy_cost_by_user, _, _copy_overall = await _compute_copy_cost_accumulators(db, filters)
     for entry in entries:
         print_acc = cost_by_user.get(entry.key)
         copy_acc = copy_cost_by_user.get(entry.key)
@@ -675,16 +670,20 @@ async def report_staff_usage(
     filters = replace(filters, submitted_by=email, submitted_by_in=None)
 
     formula_settings = await _get_or_create_formula_settings(db)
-    fallback = _formula_values(formula_settings)
-    cost_per_sheet = formula_settings.cost_per_sheet_paper
 
     # --- print side, grouped per printer for this one person
     rows = await get_cost_raw_rows(db, filters)
-    rates = await load_printer_rates(db, {r.printer_id for r in rows}, fallback)
+    dated = await load_dated_rates(db, {r.printer_id for r in rows}, formula_settings)
+    zone = await _district_zone(db)
     printers: dict[UUID, StaffPrinterUsageOut] = {}
     for row in rows:
+        rates = dated.on(row.printer_id, local(row.created_at, zone).date())
         cost = job_cost(
-            row.page_count, row.color_mode, row.duplex, rates[row.printer_id], cost_per_sheet
+            row.page_count,
+            row.color_mode,
+            row.duplex,
+            rates.toner,
+            rates.cost_per_sheet_paper,
         )
         entry = printers.setdefault(
             row.printer_id,
@@ -724,9 +723,7 @@ async def report_staff_usage(
         entry.total_cost = round(entry.total_cost, 2)
 
     # --- copy side, per device, plus the scan/fax that belongs beside it
-    _by_user, copy_by_device, copy_overall = await _compute_copy_cost_accumulators(
-        db, filters, cost_per_sheet, fallback
-    )
+    _by_user, copy_by_device, copy_overall = await _compute_copy_cost_accumulators(db, filters)
     activity = {str(a.device_id): a for a in await get_copier_activity_by_device(db, filters)}
 
     copiers: list[StaffCopierUsageOut] = []
@@ -799,11 +796,7 @@ async def report_cost_breakdown(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="group_by must be 'printer', 'user', or 'device'",
         )
-    formula_settings = await _get_or_create_formula_settings(db)
-    fallback = _formula_values(formula_settings)
-    by_printer, by_user, by_device, _overall = await _compute_cost_accumulators(
-        db, filters, formula_settings.cost_per_sheet_paper, fallback
-    )
+    by_printer, by_user, by_device, _overall = await _compute_cost_accumulators(db, filters)
     buckets = {"printer": by_printer, "user": by_user, "device": by_device}[group_by]
     entries = [
         CostEntryOut(
@@ -1151,12 +1144,10 @@ async def report_explained_me(
     filters = replace(filters, submitted_by=current_user.username)
 
     formula_settings = await _get_or_create_formula_settings(db)
-    fallback = _formula_values(formula_settings)
-    cost_per_sheet = formula_settings.cost_per_sheet_paper
 
     summary = await get_summary(db, filters)
-    *_, print_overall = await _compute_cost_accumulators(db, filters, cost_per_sheet, fallback)
-    *_, copy_overall = await _compute_copy_cost_accumulators(db, filters, cost_per_sheet, fallback)
+    *_, print_overall = await _compute_cost_accumulators(db, filters)
+    *_, copy_overall = await _compute_copy_cost_accumulators(db, filters)
     largest_job = await get_largest_job_pages(db, filters)
 
     copy_pages = copy_overall.page_count
@@ -1391,8 +1382,6 @@ async def _segment_totals(
     db: AsyncSession,
     filters: ReportFilters,
     label: str,
-    cost_per_sheet: float,
-    fallback: FormulaValues,
 ) -> DistrictSegmentOut:
     """One building's or department's row. Deliberately built by
     re-running the same aggregation the district total uses with one
@@ -1401,8 +1390,8 @@ async def _segment_totals(
     segment can never disagree with the total it is a part of."""
     summary = await get_summary(db, filters)
     combined = await get_combined_summary(db, filters)
-    *_, print_overall = await _compute_cost_accumulators(db, filters, cost_per_sheet, fallback)
-    *_, copy_overall = await _compute_copy_cost_accumulators(db, filters, cost_per_sheet, fallback)
+    *_, print_overall = await _compute_cost_accumulators(db, filters)
+    *_, copy_overall = await _compute_copy_cost_accumulators(db, filters)
     return DistrictSegmentOut(
         key=label,
         label=label,
@@ -1450,10 +1439,6 @@ async def report_district_detail(
     """
     start_date, end_date, filters = await _explained_window(db, period)
 
-    formula_settings = await _get_or_create_formula_settings(db)
-    fallback = _formula_values(formula_settings)
-    cost_per_sheet = formula_settings.cost_per_sheet_paper
-
     summary = await get_summary(db, filters)
     combined = await get_combined_summary(db, filters)
     per_person = await get_pages_per_person(db, filters)
@@ -1484,13 +1469,9 @@ async def report_district_detail(
         )
     )
 
-    by_building = [
-        await _segment_totals(db, replace(filters, building=b), b, cost_per_sheet, fallback)
-        for b in buildings
-    ]
+    by_building = [await _segment_totals(db, replace(filters, building=b), b) for b in buildings]
     by_department = [
-        await _segment_totals(db, replace(filters, department=d), d, cost_per_sheet, fallback)
-        for d in departments
+        await _segment_totals(db, replace(filters, department=d), d) for d in departments
     ]
     # A building that exists but saw no activity in this window is noise
     # on a breakdown; a building with activity and no name is the point.
@@ -1509,12 +1490,8 @@ async def report_district_detail(
     # left at zero: the same person prints in more than one building, so
     # contributor counts overlap and subtracting them would invent a
     # number. The client shows a dash.
-    *_, district_print_cost = await _compute_cost_accumulators(
-        db, filters, cost_per_sheet, fallback
-    )
-    *_, district_copy_cost = await _compute_copy_cost_accumulators(
-        db, filters, cost_per_sheet, fallback
-    )
+    *_, district_print_cost = await _compute_cost_accumulators(db, filters)
+    *_, district_copy_cost = await _compute_copy_cost_accumulators(db, filters)
     district_sheets = _sheets_for(summary, combined.copy_pages)
     district_cost = district_print_cost.total_cost + district_copy_cost.total_cost
 
@@ -1682,9 +1659,7 @@ async def create_snapshot(
     formula_settings = await _get_or_create_formula_settings(db)
     formulas = _formula_values(formula_settings)
     environmental = compute_environmental_impact(summary, formulas)
-    _, _, _, cost_overall = await _compute_cost_accumulators(
-        db, filters, formula_settings.cost_per_sheet_paper, formulas
-    )
+    _, _, _, cost_overall = await _compute_cost_accumulators(db, filters)
     summary_out = _build_summary_out(summary, environmental, cost_overall)
     previous_filters = _previous_period_filters(filters)
     previous_summary = await get_summary(db, previous_filters) if previous_filters else None
