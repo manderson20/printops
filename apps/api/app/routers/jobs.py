@@ -90,7 +90,7 @@ async def list_jobs(
     return [
         JobListOut(
             **JobOut.model_validate(job).model_dump(exclude={"coverage"}),
-            coverage=_coverage_out(coverage, iso),
+            coverage=_coverage_out(coverage, iso, job.color_mode),
             printer_name=printer_name,
             device_name=device_names.get(job.mac_address) if job.mac_address else None,
             submitted_by_name=submitted_by_names.get(job.submitted_by)
@@ -101,7 +101,9 @@ async def list_jobs(
     ]
 
 
-def _coverage_out(coverage, iso_coverage_per_channel: float) -> JobCoverageOut | None:
+def _coverage_out(
+    coverage, iso_coverage_per_channel: float, color_mode: str | None = None
+) -> JobCoverageOut | None:
     """A measured row as it is reported, with its ratio against the baseline.
 
     The ratio is computed rather than stored because the baseline is a setting:
@@ -112,10 +114,20 @@ def _coverage_out(coverage, iso_coverage_per_channel: float) -> JobCoverageOut |
     """
     if coverage is None:
         return None
-    channels = (coverage.cyan, coverage.magenta, coverage.yellow, coverage.black)
+
     ratio = None
     if iso_coverage_per_channel > 0:
-        ratio = (sum(channels) / 4) / iso_coverage_per_channel
+        if color_mode == "color":
+            channels = (coverage.cyan, coverage.magenta, coverage.yellow, coverage.black)
+            measured = sum(channels) / 4
+        else:
+            # A mono job puts down black alone, whatever the document held —
+            # the same distinction measured_toner_cost makes. Averaging four
+            # channels for it divides by four: an ordinary mono page at the
+            # test coverage would read 0.25x and look like a bargain, when by
+            # definition it is exactly 1.0x.
+            measured = coverage.black
+        ratio = measured / iso_coverage_per_channel
     return JobCoverageOut(
         pages_measured=coverage.pages_measured,
         cyan=coverage.cyan,
