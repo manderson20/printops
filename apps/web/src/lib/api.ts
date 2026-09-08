@@ -2014,9 +2014,23 @@ export type CostEntry = {
   label: string;
   job_count: number;
   page_count: number;
+  /** Rated, and covering every job in the group — the figure the rest of the
+   * reports total. Unaffected by what measurement found. */
   toner_cost: number;
   paper_cost: number;
   total_cost: number;
+  measured_jobs: number;
+  unmeasured_jobs: number;
+  /** Null when nothing here was measured, which is not the same as zero. */
+  measured_toner_cost: number | null;
+  /** The rated cost of the measured jobs alone, so the two compare like for
+   * like. */
+  rated_toner_cost_measured: number | null;
+  ink_ratio: number | null;
+  /** Whether the measured part is big enough to read as this group's answer
+   * rather than a sample of it. The API decides, so every screen draws the
+   * line in the same place. */
+  measurement_is_representative: boolean;
 };
 
 export async function getCostBreakdown(

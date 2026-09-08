@@ -5,6 +5,32 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.86.0] - 2026-09-08
+
+- **The cost report now shows measured ink beside the rated cost.** Insights >
+  Leaderboard & Cost gains an Ink column: for each printer, person or device,
+  what their measured jobs actually put on the page against what those same
+  jobs were rated to cost. 1.4x is a group whose printing costs half again
+  what its page count implies.
+- **The costs themselves are unchanged and still rated.** Across 30 measured
+  jobs the aggregate correction was about 1.12x while individual jobs ranged
+  0.07x to 8.8x, so a flat rate already gets a district total roughly right.
+  Measurement earns its place by attributing that spread, not by restating the
+  total — and a total that moved whenever a background loop reached another job
+  would reconcile with nothing.
+- **The comparison is like for like.** The ratio divides measured cost by the
+  rated cost of the measured jobs alone, never by the group's whole rated cost:
+  doing the latter would understate every group in proportion to how much of it
+  went unmeasured, which on screen looks exactly like a saving.
+- **Every figure carries how much of it was measured.** A row where under two
+  thirds of the jobs were read is marked with an asterisk — still true of what
+  it measured, but a sample rather than that row's answer — and a note under
+  the table gives the count. A group with nothing measured shows a dash, not
+  1.0x: "we did not look" and "we looked and it was ordinary" are different
+  facts.
+- Copies are never measured and the note says so. Walk-up copying never reaches
+  the print server, so no document exists to read.
+
 ## [0.85.0] - 2026-09-07
 
 - **An Ink column on the Jobs list and on each person's usage page**, showing

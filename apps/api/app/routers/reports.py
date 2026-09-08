@@ -45,7 +45,8 @@ from app.reports.aggregation import (
     resolve_display_names,
     resolve_ou_scoped_emails,
 )
-from app.reports.cost_rates import load_printer_rates
+from app.reports.cost_rates import load_printer_channel_rates, load_printer_rates
+from app.reports.coverage_summary import CoverageCompleteness
 from app.reports.equivalency import (
     build_equivalencies,
     duplex_sheets_saved,
@@ -62,10 +63,12 @@ from app.reports.equivalency_config import (
 from app.reports.formulas import (
     FormulaValues,
     JobCost,
+    MeasuredTonerCost,
     compute_environmental_impact,
     compute_printer_rate,
     copy_cost,
     job_cost,
+    measured_toner_cost,
 )
 from app.reports.fun_facts import (
     duplex_opportunity_fact,
@@ -260,6 +263,25 @@ class _CostAccumulator:
     color_toner_cost: float = 0.0
     paper_cost: float = 0.0
 
+    # --- what the measured half of this group actually cost.
+    #
+    # Deliberately alongside the rated figures rather than replacing them.
+    # Across 30 measured jobs on the first estate the aggregate correction was
+    # about 1.12x while individual jobs ran 0.07x to 8.8x: a flat per-page rate
+    # already gets a district total roughly right, and the value of measuring
+    # is attribution — whose printing costs several times what their page count
+    # implies — not a better grand total. Swapping the headline for a figure
+    # derived from a subset would trade a known approximation for an unknown
+    # one.
+    #
+    # rated_toner_cost_measured is the rated cost of *only the measured jobs*,
+    # so the two are comparable. Dividing measured cost by this group's whole
+    # rated cost would understate every group in proportion to how much of it
+    # went unmeasured, which looks exactly like a saving.
+    measured_jobs: int = 0
+    measured_toner_cost: float = 0.0
+    rated_toner_cost_measured: float = 0.0
+
     @property
     def toner_cost(self) -> float:
         return self.mono_toner_cost + self.color_toner_cost
@@ -268,8 +290,34 @@ class _CostAccumulator:
     def total_cost(self) -> float:
         return self.toner_cost + self.paper_cost
 
+    @property
+    def coverage(self) -> CoverageCompleteness:
+        """How much of this group was measured, judged by the one rule that
+        decides it everywhere (app/reports/coverage_summary.py)."""
+        return CoverageCompleteness(
+            measured_jobs=self.measured_jobs,
+            unmeasured_jobs=self.job_count - self.measured_jobs,
+        )
 
-def _accumulate(entry: _CostAccumulator, row: CostRawRow, cost: JobCost) -> None:
+    @property
+    def ink_ratio(self) -> float | None:
+        """Measured toner cost over rated, for the measured jobs alone.
+
+        None rather than 1.0 when nothing was measured: "we did not look" and
+        "we looked and it was ordinary" are different facts, and a report that
+        renders them the same way is stating the second one falsely.
+        """
+        if self.measured_jobs == 0 or self.rated_toner_cost_measured <= 0:
+            return None
+        return self.measured_toner_cost / self.rated_toner_cost_measured
+
+
+def _accumulate(
+    entry: _CostAccumulator,
+    row: CostRawRow,
+    cost: JobCost,
+    measured: MeasuredTonerCost | None,
+) -> None:
     entry.job_count += 1
     entry.page_count += row.page_count
     if row.color_mode == "color":
@@ -277,6 +325,13 @@ def _accumulate(entry: _CostAccumulator, row: CostRawRow, cost: JobCost) -> None
     else:
         entry.mono_toner_cost += cost.toner_cost
     entry.paper_cost += cost.paper_cost
+    if measured is not None:
+        entry.measured_jobs += 1
+        entry.measured_toner_cost += measured.toner_cost
+        # cost.toner_cost is the same rated figure measured_toner_cost divided
+        # by to produce its own ratio, so the per-group ratio and the per-job
+        # one are the same calculation at two scales rather than two rules.
+        entry.rated_toner_cost_measured += cost.toner_cost
 
 
 async def _compute_cost_accumulators(
@@ -301,6 +356,13 @@ async def _compute_cost_accumulators(
     rows = await get_cost_raw_rows(db, filters)
     printer_ids = {r.printer_id for r in rows}
     rates = await load_printer_rates(db, printer_ids, fallback)
+    channel_rates = await load_printer_channel_rates(db, printer_ids)
+    # Read here rather than threaded through from each caller. Every one of the
+    # eight call sites already holds the settings row this comes from, but the
+    # baseline is one setting with one meaning, and an optional parameter that
+    # a caller can forget would show a group as unmeasured instead of failing —
+    # a wrong answer that looks like a real one.
+    iso = (await _get_or_create_formula_settings(db)).iso_coverage_per_channel
 
     by_printer: dict[str, _CostAccumulator] = {}
     by_user: dict[str, _CostAccumulator] = {}
@@ -310,25 +372,37 @@ async def _compute_cost_accumulators(
     for row in rows:
         rate = rates[row.printer_id]
         cost = job_cost(row.page_count, row.color_mode, row.duplex, rate, cost_per_sheet_paper)
+        measured = (
+            measured_toner_cost(
+                row.page_count,
+                row.color_mode,
+                row.coverage,
+                rate,
+                iso,
+                channel_rates.get(row.printer_id),
+            )
+            if row.coverage is not None
+            else None
+        )
 
         printer_entry = by_printer.setdefault(
             str(row.printer_id), _CostAccumulator(label=row.printer_name)
         )
-        _accumulate(printer_entry, row, cost)
+        _accumulate(printer_entry, row, cost, measured)
 
         if row.submitted_by:
             user_entry = by_user.setdefault(
                 row.submitted_by, _CostAccumulator(label=row.submitted_by)
             )
-            _accumulate(user_entry, row, cost)
+            _accumulate(user_entry, row, cost, measured)
 
         if row.mac_address:
             device_entry = by_device.setdefault(
                 row.mac_address, _CostAccumulator(label=row.mac_address)
             )
-            _accumulate(device_entry, row, cost)
+            _accumulate(device_entry, row, cost, measured)
 
-        _accumulate(overall, row, cost)
+        _accumulate(overall, row, cost, measured)
 
     # by_printer's labels are already real printer names; by_user's (raw
     # submitted_by email so far) and by_device's (raw MAC so far) benefit
@@ -814,6 +888,14 @@ async def report_cost_breakdown(
             toner_cost=round(acc.toner_cost, 2),
             paper_cost=round(acc.paper_cost, 2),
             total_cost=round(acc.total_cost, 2),
+            measured_jobs=acc.coverage.measured_jobs,
+            unmeasured_jobs=acc.coverage.unmeasured_jobs,
+            measured_toner_cost=round(acc.measured_toner_cost, 2) if acc.measured_jobs else None,
+            rated_toner_cost_measured=(
+                round(acc.rated_toner_cost_measured, 2) if acc.measured_jobs else None
+            ),
+            ink_ratio=round(acc.ink_ratio, 3) if acc.ink_ratio is not None else None,
+            measurement_is_representative=acc.coverage.is_representative,
         )
         for key, acc in buckets.items()
     ]

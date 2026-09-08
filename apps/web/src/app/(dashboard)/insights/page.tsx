@@ -33,6 +33,7 @@ import {
   type PeriodOption,
 } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
+import { INK_RATIO_EXPLAINER, formatInkRatio, inkTone } from "@/lib/inkRatio";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -182,6 +183,82 @@ function StatCard({
         {value}
       </p>
     </Card>
+  );
+}
+
+/** A group's measured ink against the rated cost of the same jobs.
+ *
+ * The rated cost beside it still covers every job in the row; this covers only
+ * the measured ones, which is why the count travels with the figure. Reading
+ * 1.4x as "this person costs 40% more than billed" is only fair if most of
+ * what they printed was actually looked at.
+ */
+function InkRatioCell({ entry }: { entry: CostEntry }) {
+  if (entry.ink_ratio === null) {
+    return (
+      <td
+        className="py-2 text-zinc-400"
+        title={
+          `None of the ${entry.job_count.toLocaleString()} jobs here has been` +
+          " measured. Documents age out of the print server after a few days," +
+          " and walk-up copying produces none at all."
+        }
+      >
+        —
+      </td>
+    );
+  }
+
+  const measured = `${entry.measured_jobs.toLocaleString()} of ${(
+    entry.measured_jobs + entry.unmeasured_jobs
+  ).toLocaleString()} jobs measured`;
+
+  return (
+    <td
+      className={`py-2 ${inkTone(entry.ink_ratio)}`}
+      title={
+        `${measured}\n` +
+        `Measured toner ${formatCurrency(entry.measured_toner_cost ?? 0)} against` +
+        ` ${formatCurrency(entry.rated_toner_cost_measured ?? 0)} rated for those` +
+        ` same jobs.\n\n${INK_RATIO_EXPLAINER}`
+      }
+    >
+      {formatInkRatio(entry.ink_ratio)}
+      {/* The asterisk is the whole honesty of the column: below two thirds the
+          number is still true of what it measured, but it is a sample rather
+          than this row's answer, and nothing else on screen would say so. */}
+      {entry.measurement_is_representative ? null : (
+        <span className="text-zinc-400">*</span>
+      )}
+    </td>
+  );
+}
+
+/** What the Ink column is a measurement *of* — stated under the table rather
+ * than left for a reader to assume it covers everything. */
+function InkMeasurementNote({ entries }: { entries: CostEntry[] }) {
+  const measured = entries.reduce((sum, e) => sum + e.measured_jobs, 0);
+  const total = entries.reduce(
+    (sum, e) => sum + e.measured_jobs + e.unmeasured_jobs,
+    0,
+  );
+  if (total === 0) return null;
+
+  const anyPartial = entries.some(
+    (e) => e.ink_ratio !== null && !e.measurement_is_representative,
+  );
+
+  return (
+    <p className="mt-3 text-xs leading-relaxed text-zinc-500">
+      Ink compares what {measured.toLocaleString()} measured{" "}
+      {measured === 1 ? "job" : "jobs"} of {total.toLocaleString()} actually put
+      on the page against the rated cost of those same jobs. Costs stay rated
+      and cover every job.
+      {anyPartial
+        ? " * marks a row where under two thirds was measured — true of the part that was, not of the row."
+        : ""}{" "}
+      Copies are never measured: walk-up copying produces no document to read.
+    </p>
   );
 }
 
@@ -941,45 +1018,50 @@ export default function InsightsPage() {
               return activeEntries.length === 0 ? (
                 <EmptyState>No data for this range.</EmptyState>
               ) : (
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-black/[.08] text-xs uppercase tracking-wide text-zinc-500 dark:border-white/[.145]">
-                      <th className="py-2 font-medium">{columnLabel}</th>
-                      <th className="py-2 font-medium">Jobs</th>
-                      <th className="py-2 font-medium">Pages</th>
-                      <th className="py-2 font-medium">Toner Cost</th>
-                      <th className="py-2 font-medium">Paper Cost</th>
-                      <th className="py-2 font-medium">Total Cost</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeEntries.map((entry) => (
-                      <tr
-                        key={entry.key}
-                        className="border-b border-black/[.08] last:border-0 dark:border-white/[.145]"
-                      >
-                        <td className="py-2 text-black dark:text-zinc-50">
-                          {entry.label}
-                        </td>
-                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                          {entry.job_count}
-                        </td>
-                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                          {entry.page_count.toLocaleString()}
-                        </td>
-                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                          {formatCurrency(entry.toner_cost)}
-                        </td>
-                        <td className="py-2 text-zinc-600 dark:text-zinc-400">
-                          {formatCurrency(entry.paper_cost)}
-                        </td>
-                        <td className="py-2 font-medium text-black dark:text-zinc-50">
-                          {formatCurrency(entry.total_cost)}
-                        </td>
+                <>
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-black/[.08] text-xs uppercase tracking-wide text-zinc-500 dark:border-white/[.145]">
+                        <th className="py-2 font-medium">{columnLabel}</th>
+                        <th className="py-2 font-medium">Jobs</th>
+                        <th className="py-2 font-medium">Pages</th>
+                        <th className="py-2 font-medium">Ink</th>
+                        <th className="py-2 font-medium">Toner Cost</th>
+                        <th className="py-2 font-medium">Paper Cost</th>
+                        <th className="py-2 font-medium">Total Cost</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {activeEntries.map((entry) => (
+                        <tr
+                          key={entry.key}
+                          className="border-b border-black/[.08] last:border-0 dark:border-white/[.145]"
+                        >
+                          <td className="py-2 text-black dark:text-zinc-50">
+                            {entry.label}
+                          </td>
+                          <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                            {entry.job_count}
+                          </td>
+                          <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                            {entry.page_count.toLocaleString()}
+                          </td>
+                          <InkRatioCell entry={entry} />
+                          <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                            {formatCurrency(entry.toner_cost)}
+                          </td>
+                          <td className="py-2 text-zinc-600 dark:text-zinc-400">
+                            {formatCurrency(entry.paper_cost)}
+                          </td>
+                          <td className="py-2 font-medium text-black dark:text-zinc-50">
+                            {formatCurrency(entry.total_cost)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <InkMeasurementNote entries={activeEntries} />
+                </>
               );
             })()}
           </Card>
