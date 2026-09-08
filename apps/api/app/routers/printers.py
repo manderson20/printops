@@ -42,6 +42,11 @@ from app.printers.status import refresh_printer_status_and_rediscover
 from app.printers.test_print import TestPrintError, build_page_info, submit_test_print
 from app.printers.toner_history import get_daily_toner_levels
 from app.quotas.service import get_pages_used, period_bounds, resolve_hold_reason
+from app.reports.rate_history import (
+    PreviousPrice,
+    next_price_period,
+    record_cartridge_price_change,
+)
 from app.routers.mfp_devices import mfp_device_out
 from app.schemas.auth import UserOut
 from app.schemas.mfp_device import MfpDeviceOut
@@ -377,12 +382,15 @@ async def bulk_update_toner_cartridges(
     )
     rows_by_id = {row.id: row for row in result.scalars().all()}
 
+    today = datetime.now(UTC).date()
     for entry in payload:
         row = rows_by_id.get(entry.id)
         if row is None:
             continue
-        row.cost = entry.cost
-        row.yield_pages = entry.yield_pages
+        # Not assigned directly: a price change here has to open a new period
+        # exactly as it does on the per-printer tab, or the same edit would
+        # mean two different things depending on which screen made it.
+        record_cartridge_price_change(db, row, entry.cost, entry.yield_pages, today)
         row.model = entry.model
     record_audit(
         db,
@@ -1280,6 +1288,7 @@ async def update_toner_cartridges(
     existing = await db.execute(
         select(PrinterTonerCartridge).where(PrinterTonerCartridge.printer_id == printer_id)
     )
+    existing_rows = existing.scalars().all()
     detected_by_color = {
         row.color: (
             row.detected_description,
@@ -1288,8 +1297,19 @@ async def update_toner_cartridges(
             row.current_level_percent,
             row.level_checked_at,
         )
-        for row in existing.scalars().all()
+        for row in existing_rows
     }
+    # The price timeline has to survive the delete-and-recreate too. The
+    # history rows hang off the printer rather than the cartridge row, so they
+    # outlive it; what would be lost without this is the current period's start
+    # date, and losing that would silently re-date every price to today.
+    previous_price_by_color = {
+        row.color: PreviousPrice(
+            cost=row.cost, yield_pages=row.yield_pages, priced_from=row.priced_from
+        )
+        for row in existing_rows
+    }
+    today = datetime.now(UTC).date()
 
     await db.execute(
         PrinterTonerCartridge.__table__.delete().where(
@@ -1310,6 +1330,15 @@ async def update_toner_cartridges(
                 color=entry.color,
                 cost=entry.cost,
                 yield_pages=entry.yield_pages,
+                priced_from=next_price_period(
+                    db,
+                    printer_id=printer_id,
+                    color=entry.color,
+                    previous=previous_price_by_color.get(entry.color),
+                    cost=entry.cost,
+                    yield_pages=entry.yield_pages,
+                    today=today,
+                ),
                 model=entry.model,
                 warning_threshold_percent=entry.warning_threshold_percent,
                 detected_description=detected_description,

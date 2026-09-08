@@ -64,6 +64,7 @@ from app.reports.periods import (
     reporting_year_period,
     terms_for_year,
 )
+from app.reports.rate_history import record_district_rate_change
 from app.reports.untracked_copies import get_or_create_untracked_copy_settings
 from app.schemas.auth import UserOut
 from app.schemas.classguard import (
@@ -1026,6 +1027,11 @@ FORMULA_FIELDS = (
     "iso_coverage_per_channel",
 )
 
+# The subset of FORMULA_FIELDS that are prices, and so carry a date. Named here
+# rather than checked field by field at the write below, so adding a fourth
+# price is one edit in one place.
+DATED_RATE_FIELDS = frozenset({"cost_per_page_mono", "cost_per_page_color", "cost_per_sheet_paper"})
+
 
 def _report_formula_settings_out(settings: ReportFormulaSettings) -> ReportFormulaSettingsOut:
     return ReportFormulaSettingsOut(**{field: getattr(settings, field) for field in FORMULA_FIELDS})
@@ -1051,7 +1057,39 @@ async def update_report_formula_settings(
     settings = await _get_or_create_report_formula_settings(db)
     before = snapshot(settings)
     updates = payload.model_dump(exclude_unset=True)
+
+    # The three money figures go through record_district_rate_change instead of
+    # being assigned, so changing one closes the period it was in force for.
+    # Without that, a year-on-year comparison would reprice last year at this
+    # year's rates and report the difference as a change in printing.
+    #
+    # The rest are assigned directly. Sheets per tree and the CO2 figure are
+    # constants being corrected rather than prices being changed: back-dating a
+    # correction would invent a period in which PrintOps believed something it
+    # never believed.
+    record_district_rate_change(
+        db,
+        settings,
+        cost_per_page_mono=(
+            updates.get("cost_per_page_mono")
+            if updates.get("cost_per_page_mono") is not None
+            else settings.cost_per_page_mono
+        ),
+        cost_per_page_color=(
+            updates.get("cost_per_page_color")
+            if updates.get("cost_per_page_color") is not None
+            else settings.cost_per_page_color
+        ),
+        cost_per_sheet_paper=(
+            updates.get("cost_per_sheet_paper")
+            if updates.get("cost_per_sheet_paper") is not None
+            else settings.cost_per_sheet_paper
+        ),
+        today=datetime.now(UTC).date(),
+    )
     for field in FORMULA_FIELDS:
+        if field in DATED_RATE_FIELDS:
+            continue
         if updates.get(field) is not None:
             setattr(settings, field, updates[field])
 

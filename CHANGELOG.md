@@ -5,6 +5,36 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.87.0] - 2026-09-08
+
+- **Cost rates now have effective dates, and every job is priced at the rates
+  that were in force when it printed.** Until now a rate was a single current
+  value with no record of when it applied, so every figure — including figures
+  for periods that ended long ago — was computed at today's prices.
+- **This was going to break the year-on-year comparison.** Repricing last
+  year's printing at this year's toner prices reports the difference as a
+  change in printing when it is a change in what supplies cost. The numbers
+  look entirely plausible and are wrong, which is the worst shape a reporting
+  bug can take. Comparison across periods is now safe to build.
+- **Nothing changes for a district that has never repriced.** Existing prices
+  become the first period, open-ended backwards, so every figure PrintOps
+  reported yesterday it reports today. Entering a cartridge cost for the first
+  time still prices past printing off it — only a *change* to a price PrintOps
+  already held creates a boundary.
+- Applies to per-printer cartridge prices, the district flat per-page rates and
+  the paper rate. Copies are dated by when the copy was made, not when the
+  counter was imported — a copy made in May and imported in September is priced
+  at May's rates.
+- A price is a fact about a day, in the district's own timezone: a job at half
+  past eleven on the last night of a supply contract was printed under that
+  contract.
+- Both screens that write cartridge prices — a printer's Toner tab and the
+  fleet-wide bulk editor — record the change the same way, so which one an
+  admin happened to use is not a fact about the district's cost history.
+- **Not yet on screen:** nothing displays when a rate took effect or what it
+  used to be. Repricing records history from now on and reports read it; a
+  screen for reviewing and correcting those periods is the next step.
+
 ## [0.85.0] - 2026-09-07
 
 - **An Ink column on the Jobs list and on each person's usage page**, showing

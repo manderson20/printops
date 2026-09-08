@@ -476,6 +476,11 @@ class CostRawRow:
     color_mode: str | None
     duplex: bool | None
     file_size_bytes: int | None
+    # When the job happened, so it can be priced at the rates in force then
+    # rather than at today's (app/reports/rate_history.py). Kept as the raw
+    # instant rather than a date: which day it falls on depends on the
+    # district's timezone, and this module deliberately never assumes one.
+    created_at: datetime
 
 
 async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[CostRawRow]:
@@ -495,6 +500,7 @@ async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[Co
             Job.color_mode,
             Job.duplex,
             Job.file_size_bytes,
+            Job.created_at,
         ),
         filters,
     )
@@ -509,6 +515,7 @@ async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[Co
             color_mode=r.color_mode,
             duplex=r.duplex,
             file_size_bytes=r.file_size_bytes,
+            created_at=r.created_at,
         )
         for r in rows
     ]
@@ -685,6 +692,10 @@ class CopyCostRawRow:
     color_page_count: int | None
     monochrome_page_count: int | None
     duplex: bool | None
+    # COPY_INSTANT, not created_at — a copy made in May and imported in
+    # September was made in May, and pricing it at September's rates would be
+    # the same class of mistake this module already fixed once for bucketing.
+    occurred_at: datetime
 
 
 async def get_copy_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[CopyCostRawRow]:
@@ -704,6 +715,7 @@ async def get_copy_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> li
             CopierUsageRecord.color_page_count,
             CopierUsageRecord.monochrome_page_count,
             CopierUsageRecord.duplex,
+            COPY_INSTANT.label("occurred_at"),
         ).where(CopierUsageRecord.activity_type == "copy"),
         filters,
     )
@@ -718,6 +730,7 @@ async def get_copy_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> li
             color_page_count=r.color_page_count,
             monochrome_page_count=r.monochrome_page_count,
             duplex=r.duplex,
+            occurred_at=r.occurred_at,
         )
         for r in rows
     ]
