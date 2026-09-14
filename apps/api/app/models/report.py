@@ -42,6 +42,18 @@ class ReportFormulaSettings(Base, TimestampMixin):
     # PrinterTonerCartridge rows below.
     cost_per_sheet_paper: Mapped[float] = mapped_column(default=0.01, server_default="0.01")
 
+    # When the three money figures above took effect. The row holds the rates
+    # in force *now*; DistrictCostRateHistory holds the closed periods behind
+    # it, and this date is the boundary between them.
+    #
+    # Existing installations backfill to 1970-01-01 — open-ended backwards —
+    # so a district that has never repriced gets exactly the numbers it had.
+    # The alternative, dating them from the day the feature shipped, would
+    # leave every job before that with no rate at all.
+    rates_effective_from: Mapped[date] = mapped_column(
+        Date, default=date(1970, 1, 1), server_default="1970-01-01"
+    )
+
     # The page coverage a cartridge's rated yield is quoted against, **per
     # colorant**, as a fraction. Every coverage-derived cost is a ratio against
     # this, so it multiplies every such figure — getting it wrong by a factor
@@ -105,6 +117,13 @@ class PrinterTonerCartridge(Base, TimestampMixin):
     color: Mapped[str]
     cost: Mapped[float]
     yield_pages: Mapped[int]
+    # When this cost/yield_pages took effect — the open end of this slot's
+    # price timeline, with PrinterTonerPriceHistory holding what came before.
+    # See app/reports/rate_history.py for the one place that reads them
+    # together.
+    priced_from: Mapped[date] = mapped_column(
+        Date, default=date(1970, 1, 1), server_default="1970-01-01"
+    )
     # Reference-only, e.g. "TN-227C" — so an admin can look up which
     # cartridge to order without hunting through a spreadsheet. Never used
     # by PrintOps itself for anything (no vendor driver/supply-ordering
@@ -196,3 +215,68 @@ class ReportSnapshot(Base, TimestampMixin):
     fun_facts: Mapped[list] = mapped_column(JSON)
 
     created_by: Mapped[str]
+
+
+class PrinterTonerPriceHistory(Base, TimestampMixin):
+    """What one cartridge slot used to cost, and over which dates.
+
+    Only *superseded* prices live here. The price in force now is the
+    PrinterTonerCartridge row itself, whose priced_from opens the current
+    period — so there is one place to read today's price and one place to read
+    yesterday's, rather than two rows that could disagree about today.
+
+    This exists because a cost figure with no date behind it is fine right up
+    until two periods are compared. Repricing last year's printing at this
+    year's toner prices reports the difference as a change in printing when it
+    is a change in what supplies cost, and the number looks entirely plausible
+    while being wrong — the worst shape a reporting bug can take.
+
+    Rows are written when a price changes and never updated. A correction to a
+    date is a correction to history and belongs in the admin's hands, not in a
+    silent overwrite.
+    """
+
+    __tablename__ = "printer_toner_price_history"
+    __table_args__ = (
+        Index("ix_toner_price_history_slot", "printer_id", "color", "effective_from"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    printer_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("printers.id", ondelete="CASCADE"), index=True
+    )
+    color: Mapped[str]
+    cost: Mapped[float]
+    yield_pages: Mapped[int]
+
+    # Half-open, [effective_from, effective_to): the day the price started and
+    # the day the next one did. Half-open because a price that ends on the same
+    # day the next begins would price that day twice, and a report covering it
+    # would silently pick whichever row the database returned first.
+    effective_from: Mapped[date] = mapped_column(Date)
+    effective_to: Mapped[date] = mapped_column(Date)
+
+
+class DistrictCostRateHistory(Base, TimestampMixin):
+    """The district-wide flat rates a period used to be priced at.
+
+    Same shape and the same reason as PrinterTonerPriceHistory above: the
+    current values live on ReportFormulaSettings, and this holds the closed
+    periods behind them. Paper is here too — it is bought org-wide rather than
+    per printer, and a year-on-year comparison that repriced last year's paper
+    at today's would be wrong in exactly the same way toner would.
+
+    The three money fields only. sheets_per_tree, the CO2 figure and the ISO
+    coverage baseline are not prices: correcting one of them is a correction to
+    a constant that was always meant to be that value, and back-dating it would
+    invent a period in which PrintOps believed something it never believed.
+    """
+
+    __tablename__ = "district_cost_rate_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    cost_per_page_mono: Mapped[float]
+    cost_per_page_color: Mapped[float]
+    cost_per_sheet_paper: Mapped[float]
+    effective_from: Mapped[date] = mapped_column(Date)
+    effective_to: Mapped[date] = mapped_column(Date)

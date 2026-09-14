@@ -1148,3 +1148,165 @@ async def test_staff_usage_lets_a_viewer_see_their_own(
     )
     assert response.status_code == 200, response.text
     assert response.json()["print_pages"] == 12
+
+
+# --- costs are priced at the rates that were in force ------------------------
+#
+# Before rates had dates, every figure was computed at today's. That is fine
+# until two periods are compared: a year-on-year total would reprice last year
+# at this year's toner prices and report the difference as a change in
+# printing, which is the worst shape a reporting bug can take — plausible.
+
+
+async def _backdate(db_session_factory, job_id, when):
+    async with db_session_factory() as session:
+        job = await session.get(Job, uuid.UUID(job_id))
+        job.created_at = when
+        await session.commit()
+
+
+async def _set_cartridge(client, printer_id, admin_headers, cost, yield_pages=1000):
+    response = client.put(
+        f"/api/v1/printers/{printer_id}/toner-cartridges",
+        headers=admin_headers,
+        json=[{"color": "black", "cost": cost, "yield_pages": yield_pages}],
+    )
+    assert response.status_code == 200, response.text
+
+
+async def test_a_job_is_priced_at_what_toner_cost_when_it_printed(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """The whole point. Toner goes from $0.02 a page to $0.05, and a job
+    printed last year still costs what it cost last year."""
+    await _set_cartridge(client, printer_id, admin_headers, 20.0)  # $0.02/page
+    old_job = _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        100,
+        color_mode="monochrome",
+        duplex=False,
+    )
+    await _backdate(db_session_factory, old_job, datetime.now(UTC) - timedelta(days=200))
+
+    # Repricing today closes the period the old job printed in.
+    await _set_cartridge(client, printer_id, admin_headers, 50.0)  # $0.05/page
+
+    body = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers).json()
+    assert body[0]["toner_cost"] == 2.0, "100 pages at last year's $0.02, not today's $0.05"
+
+
+async def test_jobs_either_side_of_a_price_change_are_priced_differently(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """The two rates have to coexist inside one report, or a comparison across
+    the boundary is just the newer rate applied twice."""
+    await _set_cartridge(client, printer_id, admin_headers, 20.0)
+    before = _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        100,
+        color_mode="monochrome",
+        duplex=False,
+    )
+    await _backdate(db_session_factory, before, datetime.now(UTC) - timedelta(days=30))
+    await _set_cartridge(client, printer_id, admin_headers, 50.0)
+    _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        100,
+        color_mode="monochrome",
+        duplex=False,
+    )
+
+    body = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers).json()
+    assert body[0]["toner_cost"] == 7.0, "100 pages at $0.02 plus 100 at $0.05"
+
+
+async def test_entering_a_price_for_the_first_time_still_prices_the_past(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """A district that has never repriced must see exactly what it saw before
+    this existed. The first price is open-ended backwards, so an admin filling
+    in cartridge costs today reprices last year's jobs off them — which is what
+    PrintOps has always done."""
+    old_job = _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        100,
+        color_mode="monochrome",
+        duplex=False,
+    )
+    await _backdate(db_session_factory, old_job, datetime.now(UTC) - timedelta(days=400))
+    await _set_cartridge(client, printer_id, admin_headers, 20.0)
+
+    body = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers).json()
+    assert body[0]["toner_cost"] == 2.0
+
+
+async def test_a_paper_price_change_is_dated_too(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """Paper is bought org-wide rather than per printer, and repricing last
+    year's paper at this year's rate is wrong in exactly the same way toner
+    is."""
+    client.put(
+        "/api/v1/settings/report-formulas",
+        headers=admin_headers,
+        json={"cost_per_sheet_paper": 0.01},
+    )
+    old_job = _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        100,
+        color_mode="monochrome",
+        duplex=False,
+    )
+    await _backdate(db_session_factory, old_job, datetime.now(UTC) - timedelta(days=100))
+    client.put(
+        "/api/v1/settings/report-formulas",
+        headers=admin_headers,
+        json={"cost_per_sheet_paper": 0.04},
+    )
+
+    body = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers).json()
+    assert body[0]["paper_cost"] == 1.0, "100 sheets at the penny they cost then"
+
+
+async def test_the_fleet_bulk_editor_records_history_like_the_printer_tab(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """Two screens write cartridge prices. The same edit made from either has
+    to mean the same thing, or which screen an admin happened to use becomes a
+    fact about the district's cost history."""
+    await _set_cartridge(client, printer_id, admin_headers, 20.0)
+    old_job = _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        100,
+        color_mode="monochrome",
+        duplex=False,
+    )
+    await _backdate(db_session_factory, old_job, datetime.now(UTC) - timedelta(days=50))
+
+    fleet = client.get("/api/v1/printers/toner-cartridges", headers=admin_headers).json()
+    client.patch(
+        "/api/v1/printers/toner-cartridges/bulk",
+        headers=admin_headers,
+        json=[{"id": fleet[0]["id"], "cost": 50.0, "yield_pages": 1000, "model": None}],
+    )
+
+    body = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers).json()
+    assert body[0]["toner_cost"] == 2.0, "still last month's price for last month's job"
