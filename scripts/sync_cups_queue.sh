@@ -22,6 +22,10 @@ set -euo pipefail
 # same reason everywhere_probe.sh is.
 . "$(dirname "${BASH_SOURCE[0]}")/lib/color_default.sh"
 
+# apply_pdf_rendering(): whether the printer or this server renders a PDF.
+# Shared with sync_release_queue.sh, since held jobs are delivered through it.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/pdf_rendering.sh"
+
 PRINTER_ID="${1:?Usage: sync_cups_queue.sh <printer-id>}"
 API_BASE="${PRINTOPS_API_BASE:-http://localhost:8000}"
 ENV_FILE="${PRINTOPS_ENV_FILE:-/home/itadmin/printops/apps/api/.env}"
@@ -53,7 +57,7 @@ QUEUE_NAME="printops-${PRINTER_ID}"
 # that happened to re-trigger a sync while the printer was momentarily slow.
 # Recorded *before* attempting -m everywhere below, so a failure this time
 # doesn't wrongly downgrade an already-working queue.
-PPD_FILE="/etc/cups/ppd/${QUEUE_NAME}.ppd"
+PPD_FILE="${PRINTOPS_PPD_DIR:-/etc/cups/ppd}/${QUEUE_NAME}.ppd"
 HAD_REAL_PPD=false
 if [ -f "$PPD_FILE" ] && ! sudo grep -q '^\*NickName: "Generic IPP Everywhere Printer"' "$PPD_FILE"; then
     HAD_REAL_PPD=true
@@ -107,6 +111,11 @@ if [ "$IS_VIRTUAL" = true ] || [ "$EVERYWHERE_SKIPPED" = true ] || ! timeout 30 
         sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m "drv:///cupsfilters.drv/pwgrast.ppd" -D "$PRINTER_NAME"
     fi
 fi
+
+# Printer.render_pdf_on_server, re-applied to whatever PPD the block above left.
+# Before the color and cutter defaults: it installs an edited PPD, and those
+# defaults live in the PPD. See lib/pdf_rendering.sh.
+apply_pdf_rendering "$QUEUE_NAME" "$PPD_FILE" "$PRINTER_JSON" "$PRINTER_NAME"
 
 # The generic-PPD fallback above can leave a newly-created queue disabled/
 # rejecting jobs by default (confirmed live) — -m everywhere queues don't

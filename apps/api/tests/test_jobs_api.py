@@ -182,6 +182,9 @@ def test_internal_connection_lookup(client, printer_id, backend_headers):
     body = response.json()
     assert body["ip_address"] == "10.0.0.9"
     assert body["name"] == "Test Printer"
+    # Off unless an admin turns it on — the sync scripts read a missing or
+    # false value as "leave PDF passthrough alone".
+    assert body["render_pdf_on_server"] is False
 
 
 def test_internal_connection_lookup_requires_token(client, printer_id):

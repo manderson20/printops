@@ -116,6 +116,9 @@ export type Capabilities = {
   // — see apps/api/app/printers/media_col_probe.py. Null when unchecked.
   media_col_broken: boolean | null;
   dns_sd_name: string | null;
+  // MIME types from the printer's document-format-supported, e.g.
+  // "application/pdf", "image/urf". See PdfRenderingCard.
+  document_formats: string[];
 };
 
 export type Printer = {
@@ -167,6 +170,9 @@ export type Printer = {
   // advertise a cutter (capabilities.finishings includes "trim"); the UI only
   // shows the toggle for those. See RollMediaCard.
   roll_autocut: boolean;
+  // Render PDFs on the print server instead of sending them to the printer's
+  // own interpreter. See PdfRenderingCard and scripts/lib/pdf_rendering.sh.
+  render_pdf_on_server: boolean;
   release_token: string | null;
   quota_mode: QuotaMode;
   snmp_enabled: boolean;
@@ -233,6 +239,7 @@ export type PrinterUpdateInput = Partial<PrinterCreateInput> & {
   release_required?: boolean;
   follow_me_enabled?: boolean;
   roll_autocut?: boolean;
+  render_pdf_on_server?: boolean;
   quota_mode?: QuotaMode;
   snmp_enabled?: boolean;
   snmp_port?: number | null;

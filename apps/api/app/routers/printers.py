@@ -133,6 +133,7 @@ QUEUE_AFFECTING_FIELDS = {
     "airprint_enabled",
     "release_required",
     "roll_autocut",
+    "render_pdf_on_server",
 }
 
 
@@ -486,6 +487,20 @@ async def update_printer(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="A virtual queue has no physical location to require release at.",
             )
+    # A printer that cannot be sent a page size gets it stripped from every job,
+    # which only works because a PDF carries its own. Rendered pages would not,
+    # so the two cannot be combined (scripts/lib/pdf_rendering.sh enforces the
+    # same thing for a printer found broken after the setting was turned on).
+    if updates.get("render_pdf_on_server") is True and (printer.capabilities or {}).get(
+        "media_col_broken"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "This printer can't be sent a paper size, so its jobs rely on the PDF to "
+                "carry one. PDFs rendered on the server would lose it."
+            ),
+        )
     if "ip_address" in updates and updates["ip_address"] is not None:
         updates["ip_address"] = str(updates["ip_address"])
     # A blank string clears one of these overrides back to "use the global
