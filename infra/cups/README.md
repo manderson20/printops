@@ -136,6 +136,40 @@ advertising AirPrint for themselves — a different question with a different
 answer per device, and the reason an unfiltered comparison never matches even
 when everything here is correct.
 
+### cups-browsed must be off
+
+`cups-browsed` is the other half of the same trap, pointed the other way.
+Ubuntu installs and enables it with CUPS, set to browse DNS-SD. It finds printers
+other servers advertise and makes local queues for them, and on this server the
+printers it finds are PrintOps's own. It builds an `implicitclass://` copy of
+each advertised queue, pointed back at this same cupsd.
+
+That is not merely clutter. Building each copy means asking cupsd about the
+queue it copies, and cupsd has a fixed number of client slots (`MaxClients`,
+100). After every CUPS restart cups-browsed rebuilds all of its copies at once.
+Measured on a 107-queue install, it held about 100 connections, and cupsd logged
+`Max clients reached, holding new connections` for 10–15 minutes after each
+restart. During that window `http://localhost:631/` stopped answering and jobs
+waited for a slot. Nothing had printed to any of the copies.
+
+`scripts/setup.sh` and the updater both run `scripts/ensure_no_cups_browsed.sh`,
+which disables it. Set `PRINTOPS_KEEP_CUPS_BROWSED=1` to skip that on a server
+that genuinely needs to use printers another machine advertises.
+
+To confirm it on a running server:
+
+```
+systemctl is-enabled cups-browsed        # disabled
+sudo grep -c 'DeviceURI implicitclass' /etc/cups/printers.conf   # 0
+```
+
+If cupsd is unresponsive shortly after a restart, check who holds its
+connections before suspecting anything else:
+
+```
+sudo ss -xp | grep cups.sock | grep -oE '"[^"]+",pid=[0-9]+' | sort | uniq -c
+```
+
 ### Upgrading an estate that was relying on cupsd's advertisement
 
 Order matters here and getting it wrong is an outage, because until the

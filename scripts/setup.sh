@@ -238,6 +238,13 @@ EOF
   log "Ensuring CUPS keeps job documents long enough to measure them"
   ./scripts/ensure_job_retention.sh || warn "Could not set PreserveJobFiles; ink coverage will not be measured."
 
+  # ---- cups-browsed ----
+  # Ubuntu enables it with CUPS. On this server it copies PrintOps's own
+  # advertised queues and exhausts cupsd's client slots after every CUPS
+  # restart. See the script for the measurements.
+  log "Making sure cups-browsed is off"
+  ./scripts/ensure_no_cups_browsed.sh || warn "Could not turn off cups-browsed; cupsd may run out of client slots after a CUPS restart."
+
   # ---- CUPS held-job spool permissions ----
   # The CUPS backend (infra/cups/backends/printops) runs as root under
   # CUPS's own `lp` group and spools held documents to
