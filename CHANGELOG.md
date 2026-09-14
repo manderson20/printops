@@ -5,7 +5,7 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
-## [0.86.0] - 2026-09-08
+## [0.90.0] - 2026-09-14
 
 - **The cost report now shows measured ink beside the rated cost.** Insights >
   Leaderboard & Cost gains an Ink column: for each printer, person or device,
@@ -30,6 +30,19 @@ schedules an update.
   facts.
 - Copies are never measured and the note says so. Walk-up copying never reaches
   the print server, so no document exists to read.
+
+## [0.89.0] - 2026-09-14
+
+- **The installer and the updater now turn off cups-browsed.** Ubuntu enables it
+  with CUPS, and on a PrintOps server it finds PrintOps's own advertised queues
+  and builds a local copy of each. After every CUPS restart it rebuilt all of
+  them at once and held nearly all of cupsd's 100 client slots for 10–15
+  minutes. During that window the CUPS web interface stopped answering and
+  print jobs queued for a free slot. Nothing printed to the copies.
+- Put `PRINTOPS_KEEP_CUPS_BROWSED=1` in `apps/api/.env` to leave it alone, for a
+  server that needs printers advertised by another machine. It has to be in that
+  file: scheduled updates run as a systemd service that never sees a shell's
+  environment.
 
 ## [0.85.0] - 2026-09-07
 

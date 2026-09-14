@@ -72,6 +72,12 @@ echo "== Ensuring held-job spool permissions/group membership =="
 
 "$REPO_DIR/scripts/ensure_held_spool_group.sh"
 
+# Already-deployed servers never re-run setup.sh either, and they are the ones
+# that already have cups-browsed copying their queues. Idempotent and quiet
+# once it is off; a failure is a warning, not a failed update.
+"$REPO_DIR/scripts/ensure_no_cups_browsed.sh" || \
+    echo "WARNING: could not turn off cups-browsed — cupsd may run out of client slots after a CUPS restart" >&2
+
 echo "== Restarting printops-api.service =="
 sudo systemctl restart printops-api.service
 API_OK=false
