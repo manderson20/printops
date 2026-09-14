@@ -481,6 +481,9 @@ class CostRawRow:
     # instant rather than a date: which day it falls on depends on the
     # district's timezone, and this module deliberately never assumes one.
     created_at: datetime
+    # When PrintOps forwarded it, which for a job held for release is the day it
+    # actually printed — see app/reports/rate_history.py:priced_on.
+    completed_at: datetime | None = None
 
 
 async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[CostRawRow]:
@@ -501,6 +504,7 @@ async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[Co
             Job.duplex,
             Job.file_size_bytes,
             Job.created_at,
+            Job.completed_at,
         ),
         filters,
     )
@@ -516,6 +520,7 @@ async def get_cost_raw_rows(db: AsyncSession, filters: ReportFilters) -> list[Co
             duplex=r.duplex,
             file_size_bytes=r.file_size_bytes,
             created_at=r.created_at,
+            completed_at=r.completed_at,
         )
         for r in rows
     ]

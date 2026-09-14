@@ -64,7 +64,7 @@ from app.reports.periods import (
     reporting_year_period,
     terms_for_year,
 )
-from app.reports.rate_history import record_district_rate_change
+from app.reports.rate_history import district_today, record_district_rate_change
 from app.reports.untracked_copies import get_or_create_untracked_copy_settings
 from app.schemas.auth import UserOut
 from app.schemas.classguard import (
@@ -1085,7 +1085,7 @@ async def update_report_formula_settings(
             if updates.get("cost_per_sheet_paper") is not None
             else settings.cost_per_sheet_paper
         ),
-        today=datetime.now(UTC).date(),
+        today=await district_today(db),
     )
     for field in FORMULA_FIELDS:
         if field in DATED_RATE_FIELDS:

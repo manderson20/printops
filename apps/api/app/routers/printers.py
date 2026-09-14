@@ -44,6 +44,8 @@ from app.printers.toner_history import get_daily_toner_levels
 from app.quotas.service import get_pages_used, period_bounds, resolve_hold_reason
 from app.reports.rate_history import (
     PreviousPrice,
+    close_removed_price,
+    district_today,
     next_price_period,
     record_cartridge_price_change,
 )
@@ -382,7 +384,7 @@ async def bulk_update_toner_cartridges(
     )
     rows_by_id = {row.id: row for row in result.scalars().all()}
 
-    today = datetime.now(UTC).date()
+    today = await district_today(db)
     for entry in payload:
         row = rows_by_id.get(entry.id)
         if row is None:
@@ -1309,7 +1311,15 @@ async def update_toner_cartridges(
         )
         for row in existing_rows
     }
-    today = datetime.now(UTC).date()
+    today = await district_today(db)
+    # A colour left out of the new set stops existing below, so its current
+    # period is closed first (rate_history.close_removed_price).
+    sent_colors = {entry.color for entry in payload}
+    for color, previous in previous_price_by_color.items():
+        if color not in sent_colors:
+            close_removed_price(
+                db, printer_id=printer_id, color=color, previous=previous, today=today
+            )
 
     await db.execute(
         PrinterTonerCartridge.__table__.delete().where(

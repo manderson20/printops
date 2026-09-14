@@ -1158,10 +1158,15 @@ async def test_staff_usage_lets_a_viewer_see_their_own(
 # printing, which is the worst shape a reporting bug can take — plausible.
 
 
-async def _backdate(db_session_factory, job_id, when):
+async def _backdate(db_session_factory, job_id, when, *, printed=None):
+    """Moves a job into the past: sent at `when`, and printed then too unless
+    `printed` says otherwise. Both, because a job is priced on the day it
+    printed (app/reports/rate_history.py:priced_on) — moving only the send would
+    leave every backdated job printing today."""
     async with db_session_factory() as session:
         job = await session.get(Job, uuid.UUID(job_id))
         job.created_at = when
+        job.completed_at = printed or when
         await session.commit()
 
 
@@ -1196,6 +1201,34 @@ async def test_a_job_is_priced_at_what_toner_cost_when_it_printed(
 
     body = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers).json()
     assert body[0]["toner_cost"] == 2.0, "100 pages at last year's $0.02, not today's $0.05"
+
+
+async def test_a_job_held_across_a_price_change_is_priced_when_it_printed(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """Sent under the old price and released after the new one: it printed under
+    the new one. Pricing it by when it was sent would charge the rate from before
+    it came out of the printer."""
+    await _set_cartridge(client, printer_id, admin_headers, 20.0)  # $0.02/page
+    held_job = _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        100,
+        color_mode="monochrome",
+        duplex=False,
+    )
+    await _backdate(
+        db_session_factory,
+        held_job,
+        datetime.now(UTC) - timedelta(days=200),
+        printed=datetime.now(UTC),
+    )
+    await _set_cartridge(client, printer_id, admin_headers, 50.0)  # $0.05/page
+
+    body = client.get("/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers).json()
+    assert body[0]["toner_cost"] == 5.0, "100 pages at the $0.05 in force when it printed"
 
 
 async def test_jobs_either_side_of_a_price_change_are_priced_differently(

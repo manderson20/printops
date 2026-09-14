@@ -75,6 +75,7 @@ from app.reports.period_source import load_period_context
 from app.reports.periods import clamp_to_today
 from app.reports.periods import current_term as current_reporting_term
 from app.reports.periods import resolve as resolve_reporting_period
+from app.reports.rate_history import priced_on
 from app.reports.road_trip import build_route, ladder_from_destinations
 from app.reports.tracked_copies import get_tracked_copy_summary
 from app.reports.untracked_copies import get_untracked_copy_summary
@@ -314,7 +315,7 @@ async def _compute_cost_accumulators(
     overall = _CostAccumulator(label="Overall")
 
     for row in rows:
-        rates = dated.on(row.printer_id, local(row.created_at, zone).date())
+        rates = dated.on(row.printer_id, priced_on(row.created_at, row.completed_at, zone))
         cost = job_cost(
             row.page_count,
             row.color_mode,
@@ -677,7 +678,7 @@ async def report_staff_usage(
     zone = await _district_zone(db)
     printers: dict[UUID, StaffPrinterUsageOut] = {}
     for row in rows:
-        rates = dated.on(row.printer_id, local(row.created_at, zone).date())
+        rates = dated.on(row.printer_id, priced_on(row.created_at, row.completed_at, zone))
         cost = job_cost(
             row.page_count,
             row.color_mode,

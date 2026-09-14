@@ -22,8 +22,9 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +35,9 @@ from app.models.report import (
     PrinterTonerPriceHistory,
     ReportFormulaSettings,
 )
+from app.reports.aggregation import local
 from app.reports.formulas import FormulaValues
+from app.server_settings.service import district_zone
 
 
 @dataclass(frozen=True)
@@ -117,50 +120,64 @@ async def load_printer_price_timelines(
 
     timelines: dict[UUID, _Timeline] = {}
     for printer_id in printer_ids:
-        slots = [row for row in current if row.printer_id == printer_id]
-        history = [row for row in past if row.printer_id == printer_id]
-
-        # Every date on which anything about this printer's pricing changed.
-        # The set is per printer rather than per slot because a rate reads all
-        # four slots at once, so a cyan change on a date black did not change
-        # still starts a new period for the printer.
-        boundaries = sorted(
-            {row.priced_from for row in slots} | {row.effective_from for row in history}
+        timelines[printer_id] = _price_periods(
+            [row for row in current if row.printer_id == printer_id],
+            [row for row in past if row.printer_id == printer_id],
         )
-        if not boundaries:
-            timelines[printer_id] = _timeline([(date(1970, 1, 1), [])])
-            continue
-
-        periods = []
-        for start in boundaries:
-            priced: list[PricedCartridge] = []
-            for slot in slots:
-                if slot.priced_from <= start:
-                    priced.append(
-                        PricedCartridge(
-                            color=slot.color, cost=slot.cost, yield_pages=slot.yield_pages
-                        )
-                    )
-                    continue
-                # The current price had not started yet, so find what this slot
-                # cost then. A slot with no history that far back contributes
-                # nothing, and compute_printer_rate falls back to the flat rate
-                # for it — the same thing it does for a slot never configured.
-                was = [
-                    row
-                    for row in history
-                    if row.color == slot.color and row.effective_from <= start < row.effective_to
-                ]
-                if was:
-                    priced.append(
-                        PricedCartridge(
-                            color=slot.color, cost=was[0].cost, yield_pages=was[0].yield_pages
-                        )
-                    )
-            periods.append((start, priced))
-        timelines[printer_id] = _timeline(periods)
-
     return timelines
+
+
+def _price_periods(slots: list, history: list) -> _Timeline:
+    """One printer's cartridge sets over time, from its live rows and the
+    closed periods behind them.
+
+    Walks every colour either side knows about, not only the slots that exist
+    now. A colour taken out of the set still has history, and the jobs printed
+    while it was priced were priced with it: rebuilding from today's slots
+    alone would drop it from every period and reprice those jobs at the flat
+    rate.
+    """
+    # Every date on which anything about this printer's pricing changed. The set
+    # is per printer rather than per slot because a rate reads all four slots at
+    # once, so a cyan change on a date black did not change still starts a new
+    # period. effective_to is included for the day a colour stopped being priced
+    # at all, which no current row starts on.
+    boundaries = sorted(
+        {row.priced_from for row in slots}
+        | {row.effective_from for row in history}
+        | {row.effective_to for row in history}
+    )
+    if not boundaries:
+        return _timeline([(date(1970, 1, 1), [])])
+
+    current_by_color = {slot.color: slot for slot in slots}
+    colors = sorted(set(current_by_color) | {row.color for row in history})
+    periods = []
+    for start in boundaries:
+        priced: list[PricedCartridge] = []
+        for color in colors:
+            slot = current_by_color.get(color)
+            if slot is not None and slot.priced_from <= start:
+                priced.append(
+                    PricedCartridge(color=color, cost=slot.cost, yield_pages=slot.yield_pages)
+                )
+                continue
+            # The current price had not started yet, or this colour has no
+            # current price any more, so find what it cost then. A colour with
+            # no period covering the day contributes nothing, and
+            # compute_printer_rate falls back to the flat rate for it — the same
+            # thing it does for a slot never configured.
+            was = [
+                row
+                for row in history
+                if row.color == color and row.effective_from <= start < row.effective_to
+            ]
+            if was:
+                priced.append(
+                    PricedCartridge(color=color, cost=was[0].cost, yield_pages=was[0].yield_pages)
+                )
+        periods.append((start, priced))
+    return _timeline(periods)
 
 
 @dataclass(frozen=True)
@@ -258,8 +275,14 @@ def next_price_period(
     exactly as it was before rates had dates. Only a *change* to a price PrintOps
     already held is an event, because only then is there a previous belief to
     record.
+
+    A slot the SNMP poll created as a placeholder — cost 0, yield 0, the moment
+    it detects a colour (app/printers/snmp_counters.py) — counts as never priced.
+    compute_printer_rate ignores a zero yield, so that row was never a price
+    anyone believed, and treating it as one would date the first real price
+    today and price every earlier job at the flat fallback.
     """
-    if previous is None:
+    if previous is None or previous.yield_pages <= 0:
         return date(1970, 1, 1)
     if previous.cost == cost and previous.yield_pages == yield_pages:
         return previous.priced_from
@@ -280,6 +303,38 @@ def next_price_period(
         )
     )
     return today
+
+
+def close_removed_price(
+    db: AsyncSession,
+    *,
+    printer_id: UUID,
+    color: str,
+    previous: PreviousPrice,
+    today: date,
+) -> None:
+    """Keeps what a colour cost when it is taken out of a printer's set.
+
+    The per-printer PUT deletes the live rows and recreates only the colours it
+    was sent, so a colour left out simply stops existing. Its current period has
+    to be closed first: history only holds periods that were superseded, this
+    one never was, and without it every job printed while that price applied
+    would lose it. Nothing is recorded for a placeholder that was never a price,
+    or for a price set today, which never applied to a whole day — the same two
+    rules next_price_period follows.
+    """
+    if previous.yield_pages <= 0 or previous.priced_from >= today:
+        return
+    db.add(
+        PrinterTonerPriceHistory(
+            printer_id=printer_id,
+            color=color,
+            cost=previous.cost,
+            yield_pages=previous.yield_pages,
+            effective_from=previous.priced_from,
+            effective_to=today,
+        )
+    )
 
 
 def record_cartridge_price_change(
@@ -346,3 +401,33 @@ def record_district_rate_change(
     settings.cost_per_page_mono = cost_per_page_mono
     settings.cost_per_page_color = cost_per_page_color
     settings.cost_per_sheet_paper = cost_per_sheet_paper
+
+
+# --- which day ---------------------------------------------------------------
+#
+# Both halves of dating a price — the day a change takes effect and the day a
+# job is priced at — read the district's calendar, and live here so they cannot
+# come to disagree about whose midnight it is.
+
+
+async def district_today(db: AsyncSession) -> date:
+    """Today in the district's own calendar: the date a price change takes effect.
+
+    Reports decide which day a job falls on in the district's timezone, so a
+    price has to be dated the same way. Dated in UTC, a price saved at nine in
+    the evening in a US district would take effect the next day, and the jobs
+    printed that evening would keep the old one.
+    """
+    return datetime.now(await district_zone(db)).date()
+
+
+def priced_on(created_at: datetime, completed_at: datetime | None, zone: ZoneInfo) -> date:
+    """The day a job is priced at: the day it printed.
+
+    Usually the day it was sent. A job held for PIN release, a quota or an
+    offline printer can be sent one day and released another, and a price change
+    in between applies to it — it was printed under the new price. completed_at
+    is when PrintOps forwarded it; a job without one is priced on the day it was
+    sent.
+    """
+    return local(completed_at or created_at, zone).date()

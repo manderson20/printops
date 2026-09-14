@@ -10,12 +10,23 @@ behaviour, that a job printed before a repricing is still costed at what it
 cost then, is in test_reports_api.py where the API fixtures live.
 """
 
-from datetime import date
+from datetime import UTC, date, datetime
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from app.models.report import PrinterTonerPriceHistory
-from app.reports.rate_history import PreviousPrice, _Timeline, next_price_period
+from app.reports import rate_history
+from app.reports.rate_history import (
+    PreviousPrice,
+    _price_periods,
+    _Timeline,
+    close_removed_price,
+    district_today,
+    next_price_period,
+    priced_on,
+)
 
 PRINTER = "11111111-1111-1111-1111-111111111111"
 TODAY = date(2026, 9, 8)
@@ -116,3 +127,108 @@ def test_a_day_before_every_recorded_price_uses_the_earliest():
     down."""
     timeline = _Timeline(starts=[date(2026, 1, 1)], values=["only"])
     assert timeline.on(date(1999, 1, 1)) == "only"
+
+
+def test_a_detected_placeholder_is_not_a_previous_price():
+    """The SNMP poll creates a cost-0, yield-0 row the moment it sees a colour.
+    That was never a price anyone believed, so the first real one entered over
+    it is open-ended backwards like any other first price — not dated today
+    with every earlier job pushed onto the flat fallback."""
+    placeholder = PreviousPrice(cost=0.0, yield_pages=0, priced_from=date(1970, 1, 1))
+    priced_from, history = period(previous=placeholder, cost=20.0)
+    assert priced_from == date(1970, 1, 1)
+    assert history == []
+
+
+def test_removing_a_priced_colour_closes_its_period():
+    db = FakeSession()
+    was = PreviousPrice(cost=30.0, yield_pages=1500, priced_from=date(2025, 1, 1))
+
+    close_removed_price(db, printer_id=PRINTER, color="cyan", previous=was, today=TODAY)
+
+    [row] = db.added
+    assert (row.color, row.cost, row.yield_pages) == ("cyan", 30.0, 1500)
+    assert (row.effective_from, row.effective_to) == (date(2025, 1, 1), TODAY)
+
+
+@pytest.mark.parametrize(
+    "was",
+    [
+        PreviousPrice(cost=0.0, yield_pages=0, priced_from=date(1970, 1, 1)),
+        PreviousPrice(cost=30.0, yield_pages=1500, priced_from=TODAY),
+    ],
+    ids=["placeholder", "priced-today"],
+)
+def test_removing_a_colour_that_never_held_a_whole_day_records_nothing(was):
+    db = FakeSession()
+    close_removed_price(db, printer_id=PRINTER, color="cyan", previous=was, today=TODAY)
+    assert db.added == []
+
+
+def _slot(color, cost, priced_from, yield_pages=1000):
+    return SimpleNamespace(color=color, cost=cost, yield_pages=yield_pages, priced_from=priced_from)
+
+
+def _past(color, cost, effective_from, effective_to, yield_pages=1000):
+    return SimpleNamespace(
+        color=color,
+        cost=cost,
+        yield_pages=yield_pages,
+        effective_from=effective_from,
+        effective_to=effective_to,
+    )
+
+
+def _priced(timeline, day):
+    return {c.color: c.cost for c in timeline.on(day)}
+
+
+def test_a_removed_colour_still_prices_the_days_it_was_in_the_set():
+    """Cyan was taken out of the set on 8 September. A report for June has to
+    price cyan at what it cost in June; one for today has no cyan at all."""
+    timeline = _price_periods(
+        slots=[_slot("black", 20.0, date(1970, 1, 1))],
+        history=[_past("cyan", 30.0, date(2025, 1, 1), TODAY)],
+    )
+
+    assert _priced(timeline, date(2026, 6, 1)) == {"black": 20.0, "cyan": 30.0}
+    assert _priced(timeline, TODAY) == {"black": 20.0}
+
+
+def test_a_repriced_colour_still_reads_its_old_price_before_the_change():
+    timeline = _price_periods(
+        slots=[_slot("black", 26.0, date(2026, 1, 1))],
+        history=[_past("black", 20.0, date(2025, 1, 1), date(2026, 1, 1))],
+    )
+
+    assert _priced(timeline, date(2025, 6, 1)) == {"black": 20.0}
+    assert _priced(timeline, date(2026, 6, 1)) == {"black": 26.0}
+
+
+CHICAGO = ZoneInfo("America/Chicago")
+
+
+def test_a_job_is_priced_on_the_local_day_it_was_sent_when_it_went_straight_out():
+    # 02:30 UTC on the 9th is still the evening of the 8th in Chicago.
+    sent = datetime(2026, 9, 9, 2, 30, tzinfo=UTC)
+    assert priced_on(sent, None, CHICAGO) == date(2026, 9, 8)
+
+
+def test_a_held_job_is_priced_on_the_day_it_was_released():
+    """Sent on the last day of the old price, released on the first of the new:
+    it printed under the new one."""
+    sent = datetime(2026, 8, 31, 20, 0, tzinfo=UTC)
+    released = datetime(2026, 9, 1, 14, 0, tzinfo=UTC)
+    assert priced_on(sent, released, CHICAGO) == date(2026, 9, 1)
+
+
+async def test_a_price_change_is_dated_in_the_districts_calendar(monkeypatch):
+    """Kiritimati is fourteen hours ahead of UTC, so for most of every day its
+    date is not UTC's. A price saved there has to take effect on its own date."""
+    kiritimati = ZoneInfo("Pacific/Kiritimati")
+
+    async def fake_zone(_db):
+        return kiritimati
+
+    monkeypatch.setattr(rate_history, "district_zone", fake_zone)
+    assert await district_today(None) == datetime.now(kiritimati).date()

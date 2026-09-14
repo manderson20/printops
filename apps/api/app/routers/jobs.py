@@ -23,12 +23,12 @@ from app.quotas.service import resolve_hold_reason
 from app.reports.aggregation import (
     ReportFilters,
     get_cost_raw_rows,
-    local,
     resolve_device_names,
     resolve_display_names,
 )
 from app.reports.cost_rates import load_dated_rates
 from app.reports.formulas import job_cost
+from app.reports.rate_history import priced_on
 from app.schemas.auth import UserOut
 from app.schemas.job import (
     JobCoverageOut,
@@ -480,7 +480,7 @@ async def _usage_accumulators_by_email(db: AsyncSession) -> dict[str | None, _Us
         else:
             acc.mono_pages += row.page_count
 
-        rates = dated.on(row.printer_id, local(row.created_at, zone).date())
+        rates = dated.on(row.printer_id, priced_on(row.created_at, row.completed_at, zone))
         cost = job_cost(
             row.page_count,
             row.color_mode,
