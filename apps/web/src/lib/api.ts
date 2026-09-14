@@ -455,6 +455,37 @@ export async function getCupsQueueDefaults(
   return response.json();
 }
 
+// A job cupsd is holding on one of a printer's queues — above all one PrintOps
+// held because the printer went down twice while receiving it
+// (apps/api/app/printers/crash_guard.py). Admin-only, read from CUPS on demand.
+export type HeldCupsJob = {
+  cups_job_id: number;
+  queue: "client" | "release";
+  document_name: string | null;
+  owner: string | null;
+  size_bytes: number | null;
+  submitted_at: string | null;
+  held_by_printops: boolean;
+  held_at: string | null;
+};
+
+export async function listHeldCupsJobs(id: string): Promise<HeldCupsJob[]> {
+  const response = await authorizedFetch(`/api/v1/printers/${id}/held-cups-jobs`);
+  return response.json();
+}
+
+export async function releaseHeldCupsJob(id: string, cupsJobId: number): Promise<void> {
+  await authorizedFetch(`/api/v1/printers/${id}/held-cups-jobs/${cupsJobId}/release`, {
+    method: "POST",
+  });
+}
+
+export async function cancelHeldCupsJob(id: string, cupsJobId: number): Promise<void> {
+  await authorizedFetch(`/api/v1/printers/${id}/held-cups-jobs/${cupsJobId}/cancel`, {
+    method: "POST",
+  });
+}
+
 // --- MFP / copier accounting (Stage 1) ---
 
 export type MfpVendor =

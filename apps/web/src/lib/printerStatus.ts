@@ -46,3 +46,13 @@ export const PAGES_NOT_PRINTED_REASON = "printops-pages-not-printed";
 export function hasUnprintedPagesWarning(reasons: string[] | null | undefined) {
   return (reasons ?? []).includes(PAGES_NOT_PRINTED_REASON);
 }
+
+// A job PrintOps set aside because the printer stopped answering both times it
+// was being sent it (apps/api/app/printers/crash_guard.py). Amber: the printer is
+// printing its other work, and what is waiting is a decision about one document,
+// made from the Held Jobs card on the printer's page.
+export const HELD_JOB_REASON = "printops-job-held";
+
+export function hasHeldJobWarning(reasons: string[] | null | undefined) {
+  return (reasons ?? []).includes(HELD_JOB_REASON);
+}

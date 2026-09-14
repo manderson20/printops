@@ -23,12 +23,19 @@ from app.models.printer_ou_access import PrinterAllowedOu
 from app.models.quota import PrinterUserQuota
 from app.models.release_bypass import PrinterReleaseBypass
 from app.models.report import PrinterTonerCartridge
-from app.printers import offline_holds
+from app.printers import crash_guard, offline_holds
 from app.printers.counter_history import get_daily_deltas
 from app.printers.cups_ppd_info import get_cups_queue_default_page_size
 from app.printers.discovery import refresh_printer_capabilities
 from app.printers.ipp_client import PrinterProbeError, probe_printer
-from app.printers.job_control import JobControlError, purge_cups_queue
+from app.printers.job_control import (
+    HeldCupsJob,
+    JobControlError,
+    cancel_cups_job,
+    held_cups_jobs,
+    purge_cups_queue,
+    release_cups_job,
+)
 from app.printers.queue_sync import QueueSyncError, remove_queue, sync_queue
 from app.printers.snmp_counters import (
     SnmpProbeError,
@@ -47,6 +54,7 @@ from app.schemas.auth import UserOut
 from app.schemas.mfp_device import MfpDeviceOut
 from app.schemas.printer import (
     CupsQueueDefaultsOut,
+    HeldCupsJobOut,
     PrinterCreate,
     PrinterMdmConnectionOut,
     PrinterOut,
@@ -1098,6 +1106,149 @@ async def purge_jobs(
     )
     await db.commit()
     return {"cancelled_count": result.rowcount}
+
+
+async def _held_cups_jobs_or_502(printer: Printer) -> list[HeldCupsJob]:
+    held = await asyncio.to_thread(held_cups_jobs, str(printer.id))
+    if held is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="CUPS did not answer, so this printer's held jobs could not be read.",
+        )
+    return held
+
+
+async def _held_cups_job_or_404(printer: Printer, cups_job_id: int) -> HeldCupsJob:
+    """Only a job actually held on *this* printer's queues. Anything else —
+    printing, finished, or on another printer — is refused rather than acted
+    on, since release and cancel both take a bare CUPS job id."""
+    for job in await _held_cups_jobs_or_502(printer):
+        if job.cups_job_id == cups_job_id:
+            return job
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail="That job is not held on this printer."
+    )
+
+
+def _held_job_label(job: HeldCupsJob) -> str:
+    return f'"{job.document_name}"' if job.document_name else f"job {job.cups_job_id}"
+
+
+@router.get(
+    "/{printer_id}/held-cups-jobs",
+    response_model=list[HeldCupsJobOut],
+    dependencies=[Depends(require_role("admin"))],
+)
+async def list_held_cups_jobs(printer_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Jobs cupsd is holding on this printer's queues — above all the ones
+    PrintOps held because the printer went down twice while receiving them
+    (app/printers/crash_guard.py). Read from cupsd on demand, like
+    cups-queue-defaults, so GET /printers/{id} stays DB-only.
+
+    cupsd is the record of what is held; PrintOps's memory only says why. A
+    hold PrintOps no longer remembers is still listed, and a remembered one
+    cupsd no longer has is forgotten here."""
+    printer = await _get_printer_or_404(printer_id, db)
+    held = await _held_cups_jobs_or_502(printer)
+    crash_guard.forget_held_except(str(printer.id), {job.cups_job_id for job in held})
+    suspects = {suspect.cups_job_id: suspect for suspect in crash_guard.held(str(printer.id))}
+    return [
+        HeldCupsJobOut(
+            cups_job_id=job.cups_job_id,
+            queue=job.queue,
+            document_name=job.document_name,
+            owner=job.owner,
+            size_bytes=job.size_bytes,
+            submitted_at=job.submitted_at,
+            held_by_printops=job.cups_job_id in suspects,
+            held_at=suspects[job.cups_job_id].held_at if job.cups_job_id in suspects else None,
+        )
+        for job in held
+    ]
+
+
+@router.post(
+    "/{printer_id}/held-cups-jobs/{cups_job_id}/release",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def release_held_cups_job(
+    printer_id: UUID,
+    cups_job_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
+    """Lets a held job print. If the printer goes down again while it is being
+    sent, it is held again at that loss rather than after two more
+    (crash_guard.forget_held)."""
+    printer = await _get_printer_or_404(printer_id, db)
+    job = await _held_cups_job_or_404(printer, cups_job_id)
+    try:
+        await asyncio.to_thread(release_cups_job, cups_job_id)
+    except JobControlError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    crash_guard.forget_held(str(printer.id), cups_job_id, released=True)
+    record_audit(
+        db,
+        current_user,
+        action="printer.release_held_job",
+        summary=f"Released held job {_held_job_label(job)} on {printer.name}",
+        entity_type="printer",
+        entity_id=printer.id,
+        entity_label=printer.name,
+        request=request,
+    )
+    await db.commit()
+
+
+@router.post(
+    "/{printer_id}/held-cups-jobs/{cups_job_id}/cancel",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def cancel_held_cups_job(
+    printer_id: UUID,
+    cups_job_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserOut = Depends(get_current_user),
+    request: Request = None,
+):
+    """Cancels a held job. A job on the client-facing queue still has a row
+    reading forwarding or failed, which is closed as cancelled — as the Jobs
+    page's own cancel does. A job on the release queue was already recorded
+    when it was released into it, under a different CUPS job id."""
+    printer = await _get_printer_or_404(printer_id, db)
+    job = await _held_cups_job_or_404(printer, cups_job_id)
+    try:
+        await asyncio.to_thread(cancel_cups_job, cups_job_id)
+    except JobControlError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    crash_guard.forget_held(str(printer.id), cups_job_id, released=False)
+    await db.execute(
+        update(Job)
+        .where(
+            Job.printer_id == printer.id,
+            Job.cups_job_id == cups_job_id,
+            Job.status.in_(("forwarding", "failed")),
+        )
+        .values(
+            status="cancelled",
+            error_message=f"Cancelled by {current_user.username} while held",
+            completed_at=datetime.now(UTC),
+        )
+    )
+    record_audit(
+        db,
+        current_user,
+        action="printer.cancel_held_job",
+        summary=f"Cancelled held job {_held_job_label(job)} on {printer.name}",
+        entity_type="printer",
+        entity_id=printer.id,
+        entity_label=printer.name,
+        request=request,
+    )
+    await db.commit()
 
 
 @router.get("/{printer_id}/mdm-connection", response_model=PrinterMdmConnectionOut)

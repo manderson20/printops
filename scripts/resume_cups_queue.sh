@@ -15,10 +15,11 @@
 # queue (app/printers/release.py), which delivers to the same device over
 # IPP and can be stopped by exactly the same failure.
 #
-# A stopped queue is always an accident here — PrintOps has no "pause this
+# A stopped queue is never meant to stay stopped — PrintOps has no "pause this
 # printer" feature. Retiring a printer archives it, which tears the queue
-# down entirely (app/routers/printers.py:archive_printer), so there is no
-# deliberately-stopped state for this to trample.
+# down entirely (app/routers/printers.py:archive_printer). The one queue
+# PrintOps stops itself (scripts/pause_cups_queue.sh) belongs to a printer
+# that went away mid-job, and is paused so that this starts it again.
 #
 # Invoked by the API (app/printers/queue_recovery.py). Safe to run manually.
 #

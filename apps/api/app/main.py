@@ -37,7 +37,7 @@ from app.models.syslog import PrinterSyslogEvent
 from app.notifications import conditions as notify
 from app.notifications.delivery import deliver_pending
 from app.notifications.settings import get_or_create_notification_settings
-from app.printers import offline_holds
+from app.printers import crash_guard, offline_holds
 from app.printers.discovery import refresh_printer_capabilities
 from app.printers.job_reconcile import reconcile_stuck_jobs
 from app.printers.page_reconcile import sweep_unprinted_pages
@@ -151,6 +151,33 @@ async def _notify_printer_error(db, settings, printer: Printer) -> None:
     )
 
 
+async def _notify_held_jobs(db, settings, printer: Printer) -> None:
+    """A job PrintOps held because its printer went down twice while receiving it
+    (app/printers/crash_guard.py).
+
+    Raised at once rather than after the settle window. Nothing prints that job
+    until somebody decides what to do with it, so waiting to see whether it
+    clears by itself would only delay the decision. Cleared once it is released
+    or cancelled, or once the process no longer remembers holding it."""
+    prefix = f"{notify.PRINTER_ATTENTION}:{printer.id}:held-job:"
+    active: set[str] = set()
+    for suspect in crash_guard.held(str(printer.id)):
+        key = f"{prefix}{suspect.cups_job_id}"
+        active.add(key)
+        await notify.observe(
+            db,
+            settings,
+            kind=notify.PRINTER_ATTENTION,
+            dedupe_key=key,
+            title=f"{printer.name}: a job was set aside",
+            body=f"{_printer_where(printer)}{crash_guard.held_reason([suspect])}",
+            subject_type="printer",
+            subject_id=printer.id,
+            raise_immediately=True,
+        )
+    await notify.clear_missing(db, prefix=prefix, still_true=active)
+
+
 PRINTER_STATUS_POLL_INTERVAL_SECONDS = 60
 
 
@@ -206,6 +233,7 @@ async def _printer_status_poll_loop() -> None:
                 for printer in printers:
                     try:
                         await _notify_printer_error(db, notification_settings, printer)
+                        await _notify_held_jobs(db, notification_settings, printer)
                         if printer.status == "online":
                             await offline_holds.release_jobs_waiting_for(db, printer)
                             await notify.clear(db, _attention_key(printer))

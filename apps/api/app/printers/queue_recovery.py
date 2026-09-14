@@ -26,11 +26,12 @@ Two things made this invisible rather than merely broken:
   own). A stopped queue always has jobs on it. The repair was gated off
   exactly when it was needed.
 
-A stopped queue is always an accident here. PrintOps has no "pause this
+A stopped queue is never meant to stay stopped. PrintOps has no "pause this
 printer" feature to trample: retiring a printer archives it, and that tears
-the queue down entirely (app/routers/printers.py:archive_printer). So there
-is no case where a present-but-stopped queue is something an admin asked
-for.
+the queue down entirely (app/routers/printers.py:archive_printer). The one
+queue PrintOps stops itself belongs to a printer that went away part-way
+through a job (app/printers/crash_guard.py), and it is paused precisely so
+that this module starts it again once the printer answers.
 
 Like app/printers/queue_stall.py, the backoff state is in-process and resets
 on restart — see that module for why remembering across restarts would be a
@@ -39,6 +40,7 @@ claim this can't honestly make.
 
 import logging
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -51,6 +53,9 @@ RESUME_SCRIPT = SCRIPTS_DIR / "resume_cups_queue.sh"
 
 LPSTAT_TIMEOUT_SECONDS = 5
 RESUME_TIMEOUT_SECONDS = 15
+
+PAUSE_SCRIPT = SCRIPTS_DIR / "pause_cups_queue.sh"
+PAUSE_TIMEOUT_SECONDS = 15
 
 # How long after resuming a queue before this printer may have another
 # automatic attempt. Short, because the operation is local, cheap and
@@ -96,6 +101,10 @@ class QueueResumeError(Exception):
     pass
 
 
+class QueuePauseError(Exception):
+    pass
+
+
 @dataclass(frozen=True)
 class LocalQueueState:
     """The state of *our* CUPS queue for a printer — not the device's own
@@ -105,6 +114,10 @@ class LocalQueueState:
     # cupsd's own explanation, e.g. "Unable to add document to print job."
     # None when the queue is running or gave no reason.
     message: str | None = None
+    # CUPS job ids cupsd is sending to the printer right now, from either
+    # queue. What app/printers/crash_guard.py asks about when a printer stops
+    # answering.
+    printing: tuple[int, ...] = ()
 
 
 @dataclass
@@ -166,6 +179,10 @@ def _lpstat(queue_names: list[str]) -> str | None:
     return result.stdout if result.returncode == 0 else None
 
 
+# "printer printops-<id> now printing printops-<id>-12355.  enabled since ..."
+_NOW_PRINTING = re.compile(r" now printing \S+-(\d+)\.")
+
+
 def _parse(output: str) -> LocalQueueState | None:
     """Reads one or more `lpstat -p` blocks. Under LC_ALL=C cupsd writes
     exactly one of:
@@ -182,12 +199,16 @@ def _parse(output: str) -> LocalQueueState | None:
     message: str | None = None
     in_stopped_block = False
     saw_a_queue = False
+    printing: list[int] = []
 
     for line in output.splitlines():
         if line.startswith("printer "):
             saw_a_queue = True
             in_stopped_block = " disabled since " in line
             stopped = stopped or in_stopped_block
+            now_printing = _NOW_PRINTING.search(line)
+            if now_printing:
+                printing.append(int(now_printing.group(1)))
             continue
         detail = line.strip()
         # First message from the first stopped queue wins. The client-facing
@@ -198,7 +219,7 @@ def _parse(output: str) -> LocalQueueState | None:
 
     if not saw_a_queue:
         return None
-    return LocalQueueState(stopped=stopped, message=message)
+    return LocalQueueState(stopped=stopped, message=message, printing=tuple(printing))
 
 
 def local_queue_state(printer_id: str) -> LocalQueueState | None:
@@ -352,10 +373,48 @@ def resume_queue(printer_id: str, now: datetime | None = None) -> None:
         raise QueueResumeError(reason or f"{RESUME_SCRIPT.name} exited {result.returncode}.")
 
 
-def paused_reason(state: LocalQueueState, resumed: bool) -> str:
+def pause_queue(printer_id: str) -> None:
+    """Runs `cupsdisable` for this printer's queues, so cupsd stops sending to a
+    printer that went away mid-job (app/printers/crash_guard.py). Raises
+    QueuePauseError on failure, for the same reason resume_queue raises."""
+    try:
+        result = subprocess.run(
+            [str(PAUSE_SCRIPT), printer_id],
+            capture_output=True,
+            text=True,
+            timeout=PAUSE_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError as exc:
+        raise QueuePauseError(f"{PAUSE_SCRIPT.name} not found on the PrintOps server.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise QueuePauseError(
+            f"{PAUSE_SCRIPT.name} timed out after {PAUSE_TIMEOUT_SECONDS}s."
+        ) from exc
+    if result.returncode != 0:
+        reason = (result.stderr or result.stdout).strip()
+        raise QueuePauseError(reason or f"{PAUSE_SCRIPT.name} exited {result.returncode}.")
+
+
+def paused_reason(
+    state: LocalQueueState, resumed: bool, *, paused_by_printops: bool = False
+) -> str:
     """The operator-facing explanation, in the same voice as
     app/printers/queue_stall.py:stall_reason — says what was observed and
     what was done about it, without asserting a cause it cannot know."""
+    if paused_by_printops:
+        # cupsd's own reason is left out here: pausing a queue mid-job kills the
+        # filters, and cupsd replaces the reason PrintOps gave with the filter's
+        # dying words ("gstoraster filter failed"), which describe nothing real.
+        if resumed:
+            return (
+                "This printer stopped answering while a job was being sent to it, so PrintOps "
+                "paused its queue rather than let CUPS keep sending that job into it. It is "
+                "answering again, and the queue has been started."
+            )
+        return (
+            "PrintOps paused this printer's queue because the printer stopped answering while "
+            "a job was being sent to it. The queue starts again when the printer answers."
+        )
     detail = f" cupsd's reason: {state.message}" if state.message else ""
     if resumed:
         return (
