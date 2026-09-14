@@ -630,6 +630,37 @@ def test_update_printer_resyncs_only_on_queue_affecting_fields(
     assert calls == [printer_id]
 
 
+def test_turning_on_server_pdf_rendering_rebuilds_the_queues(
+    client, auth_headers, mock_failed_probe, monkeypatch
+):
+    """The setting does nothing until the sync scripts rewrite both queues' PPDs,
+    so saving it without a resync would show it on while every PDF still went to
+    the printer's interpreter."""
+    calls = []
+    monkeypatch.setattr(
+        printers_router,
+        "sync_queue",
+        lambda printer_id, is_virtual=False: calls.append(printer_id),
+    )
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Old LaserJet", "ip_address": "10.0.0.16"},
+    )
+    printer_id = create.json()["id"]
+    assert create.json()["render_pdf_on_server"] is False
+    calls.clear()
+
+    response = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"render_pdf_on_server": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["render_pdf_on_server"] is True
+    assert calls == [printer_id]
+
+
 def test_delete_printer_removes_queue(client, auth_headers, mock_failed_probe, monkeypatch):
     calls = []
     monkeypatch.setattr(

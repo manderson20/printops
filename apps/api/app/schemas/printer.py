@@ -131,6 +131,7 @@ class PrinterUpdate(BaseModel):
     release_required: bool | None = None
     follow_me_enabled: bool | None = None
     roll_autocut: bool | None = None
+    render_pdf_on_server: bool | None = None
     # Switching this never rewrites the printer's quota rows — it changes how
     # they're read (see Printer.quota_mode, app/models/printer.py). The UI
     # spells out what the existing rows will mean before an admin confirms.
@@ -184,6 +185,9 @@ class PrinterConnectionOut(BaseModel):
     # resets it to no-cut each sync). Self-gating in the script on the PPD
     # actually exposing a trim finishing, so it's a no-op on non-roll printers.
     roll_autocut: bool
+    # Read by scripts/lib/pdf_rendering.sh, from both sync scripts, to decide
+    # whether each queue's PPD passes PDFs through or renders them here.
+    render_pdf_on_server: bool
     # Read by scripts/sync_cups_queue.sh to skip the real-device `-m
     # everywhere` probe (there's no ip_address to probe) and go straight to
     # the generic driverless PPD fallback it already had for unreachable
@@ -252,6 +256,7 @@ class PrinterOut(BaseModel):
     release_required: bool
     follow_me_enabled: bool
     roll_autocut: bool
+    render_pdf_on_server: bool
     release_token: str | None
     quota_mode: QuotaMode
 

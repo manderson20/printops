@@ -5,6 +5,25 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.88.0] - 2026-09-14
+
+- **A printer can have its PDFs rendered on the print server** (printer page >
+  PDF Handling). Driverless queues hand a PDF to the printer as it is, and the
+  printer's own interpreter draws the pages. Some interpreters fail on
+  particular documents while printing everything else: an HP LaserJet 600 M601
+  stopped with firmware error 49.4A.04 on one PDF, and an HP LaserJet M607
+  reported other PDFs as printed while printing nothing. With this on, the
+  server draws every page and sends the printer raster pages (URF or PWG), so
+  the printer never reads the PDF.
+- Applied to both of the printer's queues, including the internal one held and
+  Follow-Me jobs are released through. A rule on only the client-facing queue
+  would send exactly the jobs that waited for a crashed printer back through its
+  interpreter.
+- Never leaves a queue unable to print: a printer that accepts no raster format
+  keeps PDF passthrough, with a warning, and the option is greyed out for it.
+- Off for every printer after upgrading, which is what every queue already did.
+  Turning it on or off rebuilds that printer's queues.
+
 ## [0.85.0] - 2026-09-07
 
 - **An Ink column on the Jobs list and on each person's usage page**, showing

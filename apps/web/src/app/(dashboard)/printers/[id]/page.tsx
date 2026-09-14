@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
+import { PdfRenderingCard } from "./PdfRendering";
 import { usePrinterDetail } from "./PrinterDetailContext";
 import { RollMediaCard } from "./RollMedia";
 import { SnmpCountersCard } from "./SnmpCounters";
@@ -593,6 +594,10 @@ export default function PrinterOverviewTab() {
 
       {!printer.is_virtual && (
         <RollMediaCard printer={printer} onUpdate={setPrinter} />
+      )}
+
+      {!printer.is_virtual && (
+        <PdfRenderingCard printer={printer} onUpdate={setPrinter} />
       )}
 
       {!printer.is_virtual && (

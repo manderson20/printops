@@ -133,6 +133,7 @@ QUEUE_AFFECTING_FIELDS = {
     "airprint_enabled",
     "release_required",
     "roll_autocut",
+    "render_pdf_on_server",
 }
 
 

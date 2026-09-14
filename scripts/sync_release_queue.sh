@@ -22,6 +22,10 @@ set -euo pipefail
 # See sync_cups_queue.sh — same decision, same reason, one implementation.
 . "$(dirname "${BASH_SOURCE[0]}")/lib/color_default.sh"
 
+# See sync_cups_queue.sh — a held job reaches the printer through this queue, so
+# a printer that can't be trusted with a PDF can't be trusted with it here either.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/pdf_rendering.sh"
+
 PRINTER_ID="${1:?Usage: sync_release_queue.sh <printer-id>}"
 API_BASE="${PRINTOPS_API_BASE:-http://localhost:8000}"
 ENV_FILE="${PRINTOPS_ENV_FILE:-/home/itadmin/printops/apps/api/.env}"
@@ -46,7 +50,7 @@ QUEUE_NAME="printops-release-${PRINTER_ID}"
 # sync_cups_queue.sh's matching block for the full reasoning (confirmed
 # live: MS - Cletus Copier's monochrome engine got dithered, pixelated
 # output for as long as its queue ran on this generic PPD's RGB default).
-PPD_FILE="/etc/cups/ppd/${QUEUE_NAME}.ppd"
+PPD_FILE="${PRINTOPS_PPD_DIR:-/etc/cups/ppd}/${QUEUE_NAME}.ppd"
 HAD_REAL_PPD=false
 if [ -f "$PPD_FILE" ] && ! sudo grep -q '^\*NickName: "Generic IPP Everywhere Printer"' "$PPD_FILE"; then
     HAD_REAL_PPD=true
@@ -80,6 +84,10 @@ if [ "$EVERYWHERE_SKIPPED" = true ] || ! timeout 30 sudo lpadmin -p "$QUEUE_NAME
         sudo lpadmin -p "$QUEUE_NAME" -v "$REAL_URI" -m "drv:///cupsfilters.drv/pwgrast.ppd" -D "${PRINTER_NAME} (internal release queue)"
     fi
 fi
+
+# Printer.render_pdf_on_server — same as the client-facing queue, and before
+# the color and cutter defaults for the same reason. See lib/pdf_rendering.sh.
+apply_pdf_rendering "$QUEUE_NAME" "$PPD_FILE" "$PRINTER_JSON" "$PRINTER_NAME"
 
 # Deliberately NOT shared and NOT AirPrint-advertised — this queue only
 # ever receives jobs from app/printers/release.py's own `lp -d` call on

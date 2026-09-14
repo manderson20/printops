@@ -99,6 +99,14 @@ class Printer(Base, TimestampMixin):
     # there. Defaults on at create time for a device that reports a cutter.
     roll_autocut: Mapped[bool] = mapped_column(default=False, server_default="false")
 
+    # Render PDFs on the print server and send the printer raster pages, instead
+    # of handing the PDF to the printer's own interpreter. For a device whose
+    # interpreter fails on some documents: crashing with a firmware error, or
+    # reporting success and printing nothing. Applied to both of the printer's
+    # queues by scripts/lib/pdf_rendering.sh on every sync. Admin-set only —
+    # nothing can detect the fault without sending the document that causes it.
+    render_pdf_on_server: Mapped[bool] = mapped_column(default=False, server_default="false")
+
     building: Mapped[str | None] = mapped_column(default=None)
     room: Mapped[str | None] = mapped_column(default=None)
     department: Mapped[str | None] = mapped_column(default=None)
