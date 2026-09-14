@@ -21,6 +21,10 @@ schedules an update.
   interpreter.
 - Never leaves a queue unable to print: a printer that accepts no raster format
   keeps PDF passthrough, with a warning, and the option is greyed out for it.
+- **It is also much faster on a printer whose interpreter is slow.** The M601's
+  own job log showed a 2-page Chrome PDF taking 49 and 51 seconds to process;
+  the same document rendered on the server printed in 17. A 6-page document
+  took it 240 seconds as a PDF, and renders on the server in 3.
 - Off for every printer after upgrading, which is what every queue already did.
   Turning it on or off rebuilds that printer's queues.
 
