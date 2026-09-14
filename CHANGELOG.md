@@ -21,6 +21,8 @@ schedules an update.
   interpreter.
 - Never leaves a queue unable to print: a printer that accepts no raster format
   keeps PDF passthrough, with a warning, and the option is greyed out for it.
+- Not available for a printer that can't be sent a paper size. Those printers
+  rely on the PDF itself to carry the size, and rendered pages would lose it.
 - **It is also much faster on a printer whose interpreter is slow.** The M601's
   own job log showed a 2-page Chrome PDF taking 49 and 51 seconds to process;
   the same document rendered on the server printed in 17. A 6-page document

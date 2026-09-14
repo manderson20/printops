@@ -77,6 +77,7 @@ def _run(
     *,
     render: bool,
     formats=("application/pdf", "image/urf"),
+    media_col_broken=False,
 ):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -101,7 +102,11 @@ def _run(
         "render_pdf_on_server": render,
         "is_virtual": False,
         "release_required": False,
-        "capabilities": {"color_supported": False, "document_formats": list(formats)},
+        "capabilities": {
+            "color_supported": False,
+            "document_formats": list(formats),
+            "media_col_broken": media_col_broken,
+        },
     }
     printer_json = tmp_path / "printer.json"
     printer_json.write_text(json.dumps(payload))
@@ -234,6 +239,30 @@ def test_a_queue_with_no_ppd_yet_is_not_an_error(tmp_path, script, queue):
 
     assert _installs(calls, queue) == []
     assert "no document formats to change" in stderr
+
+
+@pytest.mark.parametrize("script,queue", SYNC_SCRIPTS)
+def test_a_printer_that_cannot_be_sent_a_page_size_keeps_passthrough(tmp_path, script, queue):
+    """The backend strips the page size for these printers, which only works
+    because a PDF carries its own. Rendered pages would print on whatever paper
+    the printer defaults to."""
+    calls, installed, stderr = _run(
+        tmp_path, script, queue, _ppd(PASSTHROUGH, URF), render=True, media_col_broken=True
+    )
+
+    assert _installs(calls, queue) == []
+    assert installed is None
+    assert "media_col_broken" in stderr
+
+
+@pytest.mark.parametrize("script,queue", SYNC_SCRIPTS)
+def test_found_unable_to_take_a_page_size_later_restores_passthrough(tmp_path, script, queue):
+    calls, installed, _ = _run(
+        tmp_path, script, queue, _ppd(URF), render=True, media_col_broken=True
+    )
+
+    assert len(_installs(calls, queue)) == 1
+    assert PASSTHROUGH in installed
 
 
 def _command_lines(body: str) -> list[str]:

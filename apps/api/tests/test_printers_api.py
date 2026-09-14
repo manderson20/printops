@@ -661,6 +661,37 @@ def test_turning_on_server_pdf_rendering_rebuilds_the_queues(
     assert calls == [printer_id]
 
 
+def test_server_pdf_rendering_is_refused_for_a_printer_that_cannot_take_a_page_size(
+    client, auth_headers, monkeypatch
+):
+    """Its jobs have the page size stripped, which only works while a PDF
+    carries its own. Refused rather than stored as a setting that would print
+    on the wrong paper."""
+
+    async def fake_capabilities(printer):
+        printer.capabilities = {
+            "media_col_broken": True,
+            "document_formats": ["application/pdf", "image/urf"],
+        }
+
+    monkeypatch.setattr(printers_router, "refresh_printer_capabilities", fake_capabilities)
+    create = client.post(
+        "/api/v1/printers",
+        headers=auth_headers,
+        json={"name": "Graphic Arts Kyocera", "ip_address": "10.0.0.17"},
+    )
+    printer_id = create.json()["id"]
+
+    response = client.patch(
+        f"/api/v1/printers/{printer_id}",
+        headers=auth_headers,
+        json={"render_pdf_on_server": True},
+    )
+
+    assert response.status_code == 400
+    assert "paper size" in response.json()["detail"]
+
+
 def test_delete_printer_removes_queue(client, auth_headers, mock_failed_probe, monkeypatch):
     calls = []
     monkeypatch.setattr(

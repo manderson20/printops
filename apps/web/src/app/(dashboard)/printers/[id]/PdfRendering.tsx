@@ -30,6 +30,8 @@ export function PdfRenderingCard({
     return null;
   }
   const canRender = formats.some((format) => RASTER_FORMATS.includes(format));
+  // The API refuses the combination; see update_printer.
+  const mediaColBroken = printer.capabilities?.media_col_broken === true;
 
   async function handleToggle() {
     setToggling(true);
@@ -65,7 +67,7 @@ export function PdfRenderingCard({
           type="checkbox"
           className="mt-1"
           checked={printer.render_pdf_on_server}
-          disabled={toggling || (!canRender && !printer.render_pdf_on_server)}
+          disabled={toggling || ((!canRender || mediaColBroken) && !printer.render_pdf_on_server)}
           onChange={handleToggle}
         />
         <span>Render PDFs on the print server</span>
@@ -74,6 +76,12 @@ export function PdfRenderingCard({
         <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
           This printer doesn&apos;t accept a page image format the server can render to, so its
           PDFs can only be sent as they are.
+        </p>
+      )}
+      {canRender && mediaColBroken && (
+        <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+          This printer can&apos;t be told which paper size a job needs, so its PDFs have to carry
+          their own size, and pages rendered on the server would lose it.
         </p>
       )}
       {error && <ErrorState>{error}</ErrorState>}

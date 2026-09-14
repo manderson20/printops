@@ -62,6 +62,18 @@ apply_pdf_rendering() {
     local wanted
     wanted=$(_printer_json_flag "$printer_json" "d.get('render_pdf_on_server')")
 
+    # A printer that cannot be sent a page size over IPP (media_col_broken) has
+    # the size stripped from every job by infra/cups/backends/printops, which is
+    # safe only because a PDF carries its own size in its MediaBox. Raster does
+    # not, so rendering here would print on whatever paper the printer defaults
+    # to. The API refuses the setting for such a printer; this covers one found
+    # broken after the setting was already on, and restores passthrough below.
+    if [ "$wanted" = true ] && [ "$(_printer_json_flag "$printer_json" \
+        "(d.get('capabilities') or {}).get('media_col_broken')")" = true ]; then
+        echo "WARNING: render_pdf_on_server is on for $printer_name, but it cannot be sent a page size (media_col_broken) — keeping PDFs passed through, since rendered pages would lose the paper size." >&2
+        wanted=false
+    fi
+
     if ! sudo grep -q '^\*cupsFilter2:' "$ppd_file" 2>/dev/null; then
         if [ "$wanted" = true ]; then
             echo "WARNING: render_pdf_on_server is on for $printer_name but $ppd_file has no document formats to change." >&2
