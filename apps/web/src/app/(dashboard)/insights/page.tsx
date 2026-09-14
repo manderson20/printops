@@ -199,9 +199,18 @@ function InkRatioCell({ entry }: { entry: CostEntry }) {
       <td
         className="py-2 text-zinc-400"
         title={
-          `None of the ${entry.job_count.toLocaleString()} jobs here has been` +
-          " measured. Documents age out of the print server after a few days," +
-          " and walk-up copying produces none at all."
+          // Measured jobs with no ratio are not unmeasured ones: there was
+          // nothing to compare the measurement with. Saying "none measured"
+          // there would contradict the note under the table.
+          entry.measured_jobs > 0
+            ? `${entry.measured_jobs.toLocaleString()} of ${(
+                entry.measured_jobs + entry.unmeasured_jobs
+              ).toLocaleString()} jobs measured, but there is no rated toner` +
+              " cost to compare them with: the cartridge or district price is" +
+              " zero, or the measured jobs have no page count."
+            : `None of the ${entry.job_count.toLocaleString()} jobs here has been` +
+              " measured. Documents age out of the print server after a few days," +
+              " and walk-up copying produces none at all."
         }
       >
         —

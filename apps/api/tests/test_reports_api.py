@@ -1327,6 +1327,32 @@ async def test_a_job_measurement_could_not_read_counts_as_unmeasured(
     assert entry["ink_ratio"] is None
 
 
+async def test_a_measured_job_with_no_page_count_still_counts_as_measured(
+    client, printer_id, backend_headers, admin_headers, db_session_factory
+):
+    """The collector read it; CUPS just never said how many pages it had. That
+    is a job whose cost cannot be compared, not one nobody looked at, and the
+    completeness figure is about looking."""
+    await _mono_cartridge(client, printer_id, admin_headers)
+    job = _make_job(
+        client,
+        printer_id,
+        backend_headers,
+        "alice@example.org",
+        0,
+        color_mode="monochrome",
+        duplex=False,
+    )
+    await _measure(db_session_factory, job, black=0.05, state="measured")
+
+    entry = client.get(
+        "/api/v1/reports/cost-breakdown?group_by=user", headers=admin_headers
+    ).json()[0]
+    assert entry["measured_jobs"] == 1
+    assert entry["unmeasured_jobs"] == 0
+    assert entry["ink_ratio"] is None
+
+
 async def test_representativeness_is_decided_by_the_api_not_the_screen(
     client, printer_id, backend_headers, admin_headers, db_session_factory
 ):

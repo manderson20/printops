@@ -325,8 +325,15 @@ def _accumulate(
     else:
         entry.mono_toner_cost += cost.toner_cost
     entry.paper_cost += cost.paper_cost
-    if measured is not None:
+    # Measured is a fact about the job, decided by the collector: a coverage row
+    # in state "measured". Whether its cost can be compared is a separate
+    # question. A job CUPS never reported a page count for was measured all the
+    # same, and counting it as unmeasured would tell an admin the collector had
+    # skipped it — so completeness counts it, and the sums below, which are what
+    # the ratio is built from, take only the jobs that could be priced.
+    if row.coverage is not None:
         entry.measured_jobs += 1
+    if measured is not None:
         entry.measured_toner_cost += measured.toner_cost
         # cost.toner_cost is the same rated figure measured_toner_cost divided
         # by to produce its own ratio, so the per-group ratio and the per-job
