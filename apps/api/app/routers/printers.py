@@ -1225,19 +1225,32 @@ async def cancel_held_cups_job(
     except JobControlError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     crash_guard.forget_held(str(printer.id), cups_job_id, released=False)
-    await db.execute(
-        update(Job)
-        .where(
-            Job.printer_id == printer.id,
-            Job.cups_job_id == cups_job_id,
-            Job.status.in_(("forwarding", "failed")),
+    # Only the row for *this* job. CUPS job ids restart when the spool is
+    # cleared, so an older failed row can carry the same number; matching on the
+    # number alone would rewrite a stranger's history. The evidence order is
+    # app/routers/jobs.py:_is_still_the_same_cups_job's: the job's uuid, else who
+    # sent it, else no row at all.
+    if job.job_uuid:
+        same_job = Job.cups_job_uuid == job.job_uuid
+    elif job.owner:
+        same_job = func.lower(Job.submitted_by) == job.owner.lower()
+    else:
+        same_job = None
+    if same_job is not None:
+        await db.execute(
+            update(Job)
+            .where(
+                Job.printer_id == printer.id,
+                Job.cups_job_id == cups_job_id,
+                Job.status.in_(("forwarding", "failed")),
+                same_job,
+            )
+            .values(
+                status="cancelled",
+                error_message=f"Cancelled by {current_user.username} while held",
+                completed_at=datetime.now(UTC),
+            )
         )
-        .values(
-            status="cancelled",
-            error_message=f"Cancelled by {current_user.username} while held",
-            completed_at=datetime.now(UTC),
-        )
-    )
     record_audit(
         db,
         current_user,

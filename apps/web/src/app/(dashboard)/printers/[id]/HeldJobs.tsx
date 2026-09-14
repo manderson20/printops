@@ -10,6 +10,7 @@ import {
   type Printer,
 } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format";
+import { hasHeldJobWarning } from "@/lib/printerStatus";
 import { useCurrentUser } from "@/lib/useCurrentUser";
 import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
@@ -25,18 +26,35 @@ export function HeldJobsCard({ printer }: { printer: Printer }) {
   const [jobs, setJobs] = useState<HeldCupsJob[]>([]);
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Kept apart from an empty list. The API answers 502 when CUPS did not
+  // respond, and reading that as "nothing held" would hide the very job a
+  // "Job held" badge sent someone here to deal with.
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     listHeldCupsJobs(printer.id)
-      .then(setJobs)
-      .catch(() => setJobs([]));
+      .then((held) => {
+        setJobs(held);
+        setLoadError(null);
+      })
+      .catch((err) => {
+        setLoadError(
+          err instanceof ApiError ? err.message : "Could not read this printer's held jobs",
+        );
+      });
   }, [printer.id]);
 
   useEffect(() => {
-    if (isAdmin) load();
+    if (!isAdmin) return;
+    load();
+    // Holds change on the print server, not on this page: a job held, or CUPS
+    // answering again, should show without a reload.
+    const timer = window.setInterval(load, 60_000);
+    return () => window.clearInterval(timer);
   }, [isAdmin, load]);
 
-  if (!isAdmin || jobs.length === 0) return null;
+  const statusSaysHeld = hasHeldJobWarning(printer.status_reasons);
+  if (!isAdmin || (jobs.length === 0 && !(loadError && statusSaysHeld))) return null;
 
   async function act(job: HeldCupsJob, action: "release" | "cancel") {
     if (
@@ -72,6 +90,7 @@ export function HeldJobsCard({ printer }: { printer: Printer }) {
         one document is usually failing on the document itself. Everything else in the queue
         keeps printing. If a released job takes the printer down again, it is held again.
       </p>
+      {loadError && <ErrorState>{loadError}</ErrorState>}
       <ul className="divide-y divide-black/[.06] dark:divide-white/[.08]">
         {jobs.map((job) => (
           <li

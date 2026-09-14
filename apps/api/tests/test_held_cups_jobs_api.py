@@ -71,7 +71,7 @@ async def printer_id(db_session_factory):
         return str(printer.id)
 
 
-def _held(cups_job_id=POISON, queue="release"):
+def _held(cups_job_id=POISON, queue="release", job_uuid=None):
     return HeldCupsJob(
         cups_job_id=cups_job_id,
         queue=queue,
@@ -79,6 +79,7 @@ def _held(cups_job_id=POISON, queue="release"):
         owner="a teacher",
         size_bytes=437248,
         submitted_at=datetime(2026, 9, 11, 18, 57, 50, tzinfo=UTC),
+        job_uuid=job_uuid,
     )
 
 
@@ -103,6 +104,7 @@ class _Cupsd:
 
 def _remember_holding(printer_id, cups_job_id=POISON):
     crash_guard.note_lost_during(printer_id, (cups_job_id,))
+    crash_guard.note_answered(printer_id)
     crash_guard.note_lost_during(printer_id, (cups_job_id,))
     crash_guard.record_held(
         printer_id,
@@ -175,6 +177,7 @@ async def test_releasing_sends_it_again_and_keeps_it_on_a_short_leash(
     assert cupsd.released == [POISON]
     assert crash_guard.held(printer_id) == []
     # One more loss while it is being sent and it is held again.
+    crash_guard.note_answered(printer_id)
     assert crash_guard.note_lost_during(printer_id, (POISON,)) == [POISON]
     assert "printer.release_held_job" in await _audit_actions(db_session_factory)
 
@@ -244,3 +247,41 @@ async def test_cancelling_closes_the_job_row_too(
         assert row.status == "cancelled"
         assert "while held" in row.error_message
     assert "printer.cancel_held_job" in await _audit_actions(db_session_factory)
+
+
+async def test_cancelling_leaves_an_older_row_with_the_same_job_number_alone(
+    client, auth_headers, printer_id, monkeypatch, db_session_factory
+):
+    """CUPS job numbers come round again after the spool is cleared. The row
+    closed is the one whose uuid is this job's, not every row that ever wore
+    the number."""
+    _Cupsd(monkeypatch, held=[_held(POISON, queue="client", job_uuid="urn:uuid:current")])
+    async with db_session_factory() as session:
+        old = Job(
+            id=uuid.uuid4(),
+            printer_id=uuid.UUID(printer_id),
+            cups_job_id=POISON,
+            cups_job_uuid="urn:uuid:before-the-spool-reset",
+            status="failed",
+            submitted_by="a teacher",
+        )
+        current = Job(
+            id=uuid.uuid4(),
+            printer_id=uuid.UUID(printer_id),
+            cups_job_id=POISON,
+            cups_job_uuid="urn:uuid:current",
+            status="failed",
+            submitted_by="a teacher",
+        )
+        session.add_all([old, current])
+        await session.commit()
+        old_id, current_id = old.id, current.id
+
+    response = client.post(
+        f"/api/v1/printers/{printer_id}/held-cups-jobs/{POISON}/cancel", headers=auth_headers
+    )
+
+    assert response.status_code == 204, response.text
+    async with db_session_factory() as session:
+        assert (await session.get(Job, old_id)).status == "failed"
+        assert (await session.get(Job, current_id)).status == "cancelled"

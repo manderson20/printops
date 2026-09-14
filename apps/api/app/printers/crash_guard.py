@@ -68,6 +68,9 @@ class HeldSuspect:
 _strikes: dict[str, dict[int, int]] = {}
 # printers whose queues PrintOps paused, so recovery can say who stopped them
 _paused: set[str] = set()
+# printers lost since they last answered a poll — further losses before they
+# answer again are the same outage, not new evidence (note_lost_during)
+_awaiting_answer: set[str] = set()
 _held: dict[str, dict[int, HeldSuspect]] = {}
 
 
@@ -75,6 +78,7 @@ def reset() -> None:
     """Drops all remembered state. For tests."""
     _strikes.clear()
     _paused.clear()
+    _awaiting_answer.clear()
     _held.clear()
 
 
@@ -89,12 +93,26 @@ def note_lost_during(printer_id: str, in_flight: tuple[int, ...]) -> list[int]:
     counts = _strikes.setdefault(printer_id, {})
     for finished in set(counts) - set(in_flight):
         del counts[finished]
+    # A loss only counts once the printer has answered since the last one. The
+    # guard runs on every poll that finds a printer away with its queue running,
+    # not just the poll that turned it offline — so that PrintOps started in the
+    # middle of a crash loop still pauses it — and without this a queue
+    # re-enabled by hand during one long outage would strike the same innocent
+    # job twice without the printer ever coming back.
+    if printer_id in _awaiting_answer:
+        return []
+    _awaiting_answer.add(printer_id)
     reached = []
     for cups_job_id in in_flight:
         counts[cups_job_id] = counts.get(cups_job_id, 0) + 1
         if counts[cups_job_id] >= STRIKES_BEFORE_HOLD:
             reached.append(cups_job_id)
     return reached
+
+
+def note_answered(printer_id: str) -> None:
+    """The printer answered a poll: its next loss is a new one."""
+    _awaiting_answer.discard(printer_id)
 
 
 def strikes(printer_id: str, cups_job_id: int) -> int:
@@ -128,9 +146,12 @@ def forget_held(printer_id: str, cups_job_id: int, *, released: bool) -> None:
     while it is being sent again, that loss holds it again rather than starting
     the count over — releasing it was a judgement the printer can still
     overrule. A cancelled job is gone, and so is its count."""
-    _held.get(printer_id, {}).pop(cups_job_id, None)
+    was_ours = _held.get(printer_id, {}).pop(cups_job_id, None) is not None
     counts = _strikes.setdefault(printer_id, {})
-    if released:
+    # Only a job PrintOps held has earned the short leash. A hold placed some
+    # other way says nothing about the job, and a strike for it would let one
+    # ordinary outage hold an innocent job.
+    if released and was_ours:
         counts[cups_job_id] = STRIKES_BEFORE_HOLD - 1
     else:
         counts.pop(cups_job_id, None)

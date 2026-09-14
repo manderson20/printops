@@ -139,7 +139,6 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
     # network-path signal: TCP retransmits a lost SYN and the probe succeeds a
     # second or three later, so a lossy path shows up in the duration long
     # before it shows up as a failure (app/printers/network_health.py).
-    was_offline = printer.status == "offline"
     started = time.monotonic()
     try:
         result: PrinterStateResult = await probe_printer_state(
@@ -177,10 +176,14 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
     printer.network_probe_log, flap = network_health.observe(
         printer.network_probe_log, answered, seconds=time.monotonic() - started
     )
-    # Checked on the transition only: the poll that turns a printer offline is
-    # the one moment "which job was it being sent?" has an answer worth acting
-    # on. See app/printers/crash_guard.py.
-    if not was_offline and printer.status == "offline":
+    # Not only on the poll that turns a printer offline: PrintOps can start with
+    # the row already offline in the middle of a crash loop, and that is the
+    # case the guard exists for. Once it has paused the queue there is nothing
+    # being sent to act on, and crash_guard only counts a loss again after the
+    # printer has answered, so repeating this across an outage adds nothing.
+    if answered:
+        crash_guard.note_answered(str(printer.id))
+    elif printer.status == "offline" and not crash_guard.paused_by_printops(str(printer.id)):
         await _apply_crash_guard(printer)
     _apply_held_jobs(printer)
     # Both of the steps below used to read `status` as "what the probe just
@@ -361,7 +364,8 @@ def _mark_paused(
 async def _apply_crash_guard(printer: Printer) -> None:
     """Stops cupsd feeding a printer the job it was being sent when it went away.
 
-    Called on the poll that turns a printer offline. If cupsd was part-way
+    Called on a poll that finds the printer offline with a queue PrintOps has
+    not already paused. If cupsd was part-way
     through a job, both of the printer's queues are paused. Left alone, CUPS
     retries, and a printer power-cycled after crashing on a job is sent the same
     job moments after it boots — before PrintOps can see it answer. That is how

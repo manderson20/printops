@@ -43,12 +43,23 @@ def test_one_loss_mid_job_holds_nothing():
 
 def test_the_same_job_in_flight_at_a_second_loss_is_held():
     crash_guard.note_lost_during(PRINTER, (POISON,))
+    crash_guard.note_answered(PRINTER)
     assert crash_guard.note_lost_during(PRINTER, (POISON,)) == [POISON]
+
+
+def test_losses_without_an_answer_in_between_are_one_outage():
+    """A queue re-enabled by hand while the printer is still away sends the job
+    again into the same outage. That is not a second piece of evidence."""
+    crash_guard.note_lost_during(PRINTER, (POISON,))
+    assert crash_guard.note_lost_during(PRINTER, (POISON,)) == []
+    assert crash_guard.strikes(PRINTER, POISON) == 1
 
 
 def test_two_outages_during_different_jobs_do_not_add_up():
     crash_guard.note_lost_during(PRINTER, (POISON,))
+    crash_guard.note_answered(PRINTER)
     crash_guard.note_lost_during(PRINTER, (INNOCENT,))
+    crash_guard.note_answered(PRINTER)
     assert crash_guard.note_lost_during(PRINTER, (POISON,)) == []
 
 
@@ -70,13 +81,22 @@ def test_a_released_job_is_held_again_at_the_next_loss():
     """Releasing it is a judgement the printer can still overrule — without
     waiting for two more crashes."""
     crash_guard.note_lost_during(PRINTER, (POISON,))
+    crash_guard.note_answered(PRINTER)
     crash_guard.note_lost_during(PRINTER, (POISON,))
     crash_guard.record_held(PRINTER, _suspect())
 
     crash_guard.forget_held(PRINTER, POISON, released=True)
+    crash_guard.note_answered(PRINTER)
 
     assert crash_guard.held(PRINTER) == []
     assert crash_guard.note_lost_during(PRINTER, (POISON,)) == [POISON]
+
+
+def test_releasing_a_hold_printops_did_not_place_leaves_no_strike():
+    """Held by hand, say. Nothing about that job was ever observed, so one
+    ordinary outage while it prints must not hold it."""
+    crash_guard.forget_held(PRINTER, INNOCENT, released=True)
+    assert crash_guard.strikes(PRINTER, INNOCENT) == 0
 
 
 def test_a_cancelled_job_leaves_nothing_behind():
@@ -151,6 +171,7 @@ def test_held_jobs_are_read_from_both_queues_and_only_held_ones_count(monkeypatc
             [
                 {
                     "job-id": POISON,
+                    "job-uuid": "urn:uuid:f5599466-e231-351d-6c51-616f08472153",
                     "job-state": 4,
                     "job-name": "8th Grade Missing Work",
                     "job-originating-user-name": "a teacher",
@@ -169,6 +190,7 @@ def test_held_jobs_are_read_from_both_queues_and_only_held_ones_count(monkeypatc
     assert job.document_name == "8th Grade Missing Work"
     assert job.owner == "a teacher"
     assert job.size_bytes == 427 * 1024
+    assert job.job_uuid == "urn:uuid:f5599466-e231-351d-6c51-616f08472153"
     assert job.submitted_at == datetime(2026, 9, 11, 18, 57, 50, tzinfo=UTC)
 
 
@@ -302,6 +324,9 @@ async def test_the_m601_sequence_holds_the_job_at_the_second_loss(monkeypatch):
     _answers(monkeypatch)
     await status.refresh_printer_status(printer)
     assert printer.status == "online"
+    # Queue recovery starts the paused queue once the printer answers (its own
+    # tests are in test_queue_recovery.py; it is stubbed out here).
+    crash_guard.note_resumed(PRINTER)
     _times_out(monkeypatch)
     await _two_missed_polls(printer)
 
@@ -358,9 +383,11 @@ async def test_one_missed_probe_is_not_a_loss(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_no_other_queue_work")
-async def test_a_printer_already_offline_is_not_lost_again_every_poll(monkeypatch):
-    """The transition is the event. A printer that stays away for a weekend
-    must not accumulate a strike per minute against whatever is queued."""
+async def test_a_printer_already_offline_when_polling_starts_is_paused_once(monkeypatch):
+    """PrintOps deployed or restarted in the middle of a crash loop: the row
+    already reads offline, so there is no transition to see. The queue is
+    paused on the first poll, and an outage that lasts a weekend adds nothing
+    after that."""
     cups = _Cups(monkeypatch)
     printer = _printer(status="offline", status_probe_failures=2)
     _times_out(monkeypatch)
@@ -368,8 +395,8 @@ async def test_a_printer_already_offline_is_not_lost_again_every_poll(monkeypatc
     for _ in range(5):
         await status.refresh_printer_status(printer)
 
-    assert cups.paused == []
-    assert crash_guard.strikes(PRINTER, POISON) == 0
+    assert cups.paused == [PRINTER]
+    assert crash_guard.strikes(PRINTER, POISON) == 1
 
 
 @pytest.mark.asyncio

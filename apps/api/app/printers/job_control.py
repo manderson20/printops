@@ -169,6 +169,10 @@ class HeldCupsJob:
     owner: str | None
     size_bytes: int | None
     submitted_at: datetime | None
+    # cupsd's job-uuid. A job id is a spool position that comes round again
+    # after the spool is cleared; this is what identifies the job — the same
+    # value Job.cups_job_uuid records.
+    job_uuid: str | None = None
 
 
 def _held_jobs_request(queue_name: str) -> str:
@@ -183,7 +187,7 @@ def _held_jobs_request(queue_name: str) -> str:
         "    ATTR keyword which-jobs not-completed\n"
         "    ATTR boolean my-jobs false\n"
         "    ATTR keyword requested-attributes "
-        "job-id,job-state,job-name,job-originating-user-name,job-k-octets,time-at-creation\n"
+        "job-id,job-state,job-name,job-originating-user-name,job-k-octets,time-at-creation,job-uuid\n"
         "}\n"
     )
 
@@ -224,6 +228,7 @@ def _parse_held_jobs(output: str, queue: str) -> list[HeldCupsJob] | None:
                 queue=queue,
                 document_name=_text(group.get("job-name")),
                 owner=_text(group.get("job-originating-user-name")),
+                job_uuid=_text(group.get("job-uuid")),
                 size_bytes=kilobytes * 1024 if isinstance(kilobytes, int) else None,
                 submitted_at=datetime.fromtimestamp(created, UTC)
                 if isinstance(created, int)
