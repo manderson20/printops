@@ -308,6 +308,16 @@ class DailyTonerLevelOut(BaseModel):
 
 
 class CostEntryOut(BaseModel):
+    """One group's cost, rated — plus what the measured part of it really put
+    on the page.
+
+    toner_cost/paper_cost/total_cost are unchanged and still rated: they cover
+    every job in the group, and they are what the totals elsewhere reconcile
+    against. The measured fields describe a subset and are reported with the
+    size of that subset attached, so a caller cannot show the comparison
+    without also being able to say what fraction it rests on.
+    """
+
     key: str
     label: str
     job_count: int
@@ -315,6 +325,21 @@ class CostEntryOut(BaseModel):
     toner_cost: float
     paper_cost: float
     total_cost: float
+
+    measured_jobs: int = 0
+    unmeasured_jobs: int = 0
+    # Both None when nothing in this group was measured — distinct from zero,
+    # which would claim the ink was measured and found to be none.
+    measured_toner_cost: float | None = None
+    rated_toner_cost_measured: float | None = None
+    # measured_toner_cost / rated_toner_cost_measured. 1.0 is a group printing
+    # pages like the manufacturer's test page, which is what the rated cost
+    # assumes.
+    ink_ratio: float | None = None
+    # Whether the measured subset is large enough to read as this group's
+    # answer rather than as a sample of it. Decided by the API so every screen
+    # draws the line in the same place — see app/reports/coverage_summary.py.
+    measurement_is_representative: bool = False
 
 
 class SnapshotFiltersIn(BaseModel):
