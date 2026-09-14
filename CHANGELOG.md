@@ -13,8 +13,10 @@ schedules an update.
   them at once and held nearly all of cupsd's 100 client slots for 10–15
   minutes. During that window the CUPS web interface stopped answering and
   print jobs queued for a free slot. Nothing printed to the copies.
-- Set `PRINTOPS_KEEP_CUPS_BROWSED=1` before running setup or an update to leave
-  it alone, for a server that needs printers advertised by another machine.
+- Put `PRINTOPS_KEEP_CUPS_BROWSED=1` in `apps/api/.env` to leave it alone, for a
+  server that needs printers advertised by another machine. It has to be in that
+  file: scheduled updates run as a systemd service that never sees a shell's
+  environment.
 
 ## [0.85.0] - 2026-09-07
 

@@ -18,13 +18,24 @@
 # timing out in turn. Nothing had printed to any of its 53 copies in two days.
 #
 # Idempotent: does nothing when cups-browsed is absent or already off.
-# PRINTOPS_KEEP_CUPS_BROWSED=1 skips it, for a server that also needs to use
-# printers advertised by a different machine.
+# PRINTOPS_KEEP_CUPS_BROWSED=1 in apps/api/.env skips it, for a server that also
+# needs to use printers advertised by a different machine.
 set -euo pipefail
 
 UNIT=cups-browsed.service
 
-if [ "${PRINTOPS_KEEP_CUPS_BROWSED:-}" = "1" ]; then
+# Read from the API's .env as well as the environment. Scheduled updates run
+# this from printops-update-watcher.service, whose only environment is PATH, so
+# a variable exported in an admin's shell never reaches it. The .env is the
+# configuration PrintOps's scripts on this server already read — the updater
+# takes its backend token from it.
+ENV_FILE="${PRINTOPS_ENV_FILE:-$(dirname "${BASH_SOURCE[0]}")/../apps/api/.env}"
+keep="${PRINTOPS_KEEP_CUPS_BROWSED:-}"
+if [ -z "$keep" ] && [ -r "$ENV_FILE" ]; then
+    keep="$(grep -E '^PRINTOPS_KEEP_CUPS_BROWSED=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d "\"' \r" || true)"
+fi
+
+if [ "$keep" = "1" ]; then
     echo "PRINTOPS_KEEP_CUPS_BROWSED=1 — leaving cups-browsed as it is."
     exit 0
 fi

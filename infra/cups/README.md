@@ -153,8 +153,10 @@ restart. During that window `http://localhost:631/` stopped answering and jobs
 waited for a slot. Nothing had printed to any of the copies.
 
 `scripts/setup.sh` and the updater both run `scripts/ensure_no_cups_browsed.sh`,
-which disables it. Set `PRINTOPS_KEEP_CUPS_BROWSED=1` to skip that on a server
-that genuinely needs to use printers another machine advertises.
+which disables it. Set `PRINTOPS_KEEP_CUPS_BROWSED=1` in `apps/api/.env` to skip
+that on a server that genuinely needs to use printers another machine
+advertises. It has to be in that file rather than a shell: scheduled updates run
+as a systemd service, which never sees a shell's environment.
 
 To confirm it on a running server:
 

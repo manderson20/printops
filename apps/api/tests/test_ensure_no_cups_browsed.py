@@ -29,7 +29,7 @@ esac
 SUDO = '#!/usr/bin/env bash\nexec "$@"\n'
 
 
-def _run(tmp_path, *, installed=True, enabled="enabled", active="active", keep=None):
+def _run(tmp_path, *, installed=True, enabled="enabled", active="active", keep=None, env_file=""):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     for name, body in {"systemctl": SYSTEMCTL, "sudo": SUDO}.items():
@@ -46,6 +46,11 @@ def _run(tmp_path, *, installed=True, enabled="enabled", active="active", keep=N
         "UNIT_ACTIVE": active,
     }
     env.pop("PRINTOPS_KEEP_CUPS_BROWSED", None)
+    # Always a file of the test's own: the default path is the repository's real
+    # apps/api/.env, which must never decide a test's outcome.
+    env_path = tmp_path / "api.env"
+    env_path.write_text(env_file)
+    env["PRINTOPS_ENV_FILE"] = str(env_path)
     if keep is not None:
         env["PRINTOPS_KEEP_CUPS_BROWSED"] = keep
     result = subprocess.run(
@@ -94,6 +99,21 @@ def test_the_opt_out_is_honoured(tmp_path):
     calls, out = _run(tmp_path, keep="1")
     assert calls == []
     assert "PRINTOPS_KEEP_CUPS_BROWSED=1" in out
+
+
+def test_the_opt_out_is_read_from_the_api_env_file(tmp_path):
+    """Scheduled updates run under a systemd unit whose environment is only
+    PATH. The opt-out has to live somewhere that unit can read."""
+    calls, out = _run(
+        tmp_path, env_file="PRINTOPS_BACKEND_TOKEN=x\nPRINTOPS_KEEP_CUPS_BROWSED='1'\n"
+    )
+    assert calls == []
+    assert "PRINTOPS_KEEP_CUPS_BROWSED=1" in out
+
+
+def test_an_env_file_without_the_opt_out_still_turns_it_off(tmp_path):
+    calls, _ = _run(tmp_path, env_file="PRINTOPS_BACKEND_TOKEN=x\n")
+    assert calls == ["systemctl disable --now cups-browsed.service"]
 
 
 def test_setup_and_the_updater_both_run_it():
