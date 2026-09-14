@@ -13,6 +13,7 @@ import {
 import { capabilityBadges } from "@/lib/capabilities";
 import { formatRelativeTime } from "@/lib/format";
 import {
+  HELD_JOB_REASON,
   NETWORK_UNSTABLE_REASON,
   PAGES_NOT_PRINTED_REASON,
   UNREACHABLE_WITH_JOBS_REASON,
@@ -24,6 +25,7 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
+import { HeldJobsCard } from "./HeldJobs";
 import { usePrinterDetail } from "./PrinterDetailContext";
 import { RollMediaCard } from "./RollMedia";
 import { SnmpCountersCard } from "./SnmpCounters";
@@ -351,7 +353,8 @@ export default function PrinterOverviewTab() {
                           key={reason}
                           tone={
                             reason === NETWORK_UNSTABLE_REASON ||
-                            reason === PAGES_NOT_PRINTED_REASON
+                            reason === PAGES_NOT_PRINTED_REASON ||
+                            reason === HELD_JOB_REASON
                               ? "warning"
                               : "danger"
                           }
@@ -362,7 +365,9 @@ export default function PrinterOverviewTab() {
                               ? "Pages not printed"
                               : reason === UNREACHABLE_WITH_JOBS_REASON
                                 ? "Jobs waiting"
-                                : reason}
+                                : reason === HELD_JOB_REASON
+                                  ? "Job held"
+                                  : reason}
                         </Badge>
                       ))}
                     </div>
@@ -372,6 +377,8 @@ export default function PrinterOverviewTab() {
           })()}
         </Card>
       )}
+
+      {!printer.is_virtual && <HeldJobsCard printer={printer} />}
 
       <Card>
         <CardTitle className="mb-4">Details</CardTitle>

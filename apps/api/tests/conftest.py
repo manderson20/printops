@@ -32,15 +32,15 @@ os.environ.setdefault("PRINTOPS_ENCRYPTION_KEY", "zovsKJRTibYW7qfTSaEux7Pz22nKwC
 
 import pytest
 
-from app.printers import queue_recovery, queue_stall
+from app.printers import crash_guard, queue_recovery, queue_stall
 
 
 @pytest.fixture(autouse=True)
 def _clear_poll_state():
     """Start every test with the blank per-printer state a freshly started API
     process would have, and leave none behind."""
-    for module in (queue_stall, queue_recovery):
+    for module in (queue_stall, queue_recovery, crash_guard):
         module.reset()
     yield
-    for module in (queue_stall, queue_recovery):
+    for module in (queue_stall, queue_recovery, crash_guard):
         module.reset()

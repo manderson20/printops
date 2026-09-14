@@ -59,6 +59,25 @@ class CupsQueueDefaultsOut(BaseModel):
     page_size: str | None = None
 
 
+class HeldCupsJobOut(BaseModel):
+    """A job cupsd is holding on one of a printer's queues — see
+    GET /printers/{id}/held-cups-jobs and app/printers/crash_guard.py."""
+
+    cups_job_id: int
+    # "client" is printops-<id>, the queue people print to; "release" is
+    # printops-release-<id>, which delivers held and Follow-Me jobs.
+    queue: Literal["client", "release"]
+    document_name: str | None
+    owner: str | None
+    size_bytes: int | None
+    submitted_at: datetime | None
+    # True for a job PrintOps held because the printer went down twice while
+    # receiving it. False for a hold placed some other way, or one PrintOps no
+    # longer remembers placing after a restart — still held, still listed.
+    held_by_printops: bool
+    held_at: datetime | None = None
+
+
 class TestPrintIn(BaseModel):
     # IANA zone name from the admin's browser
     # (Intl.DateTimeFormat().resolvedOptions().timeZone) so the printed page

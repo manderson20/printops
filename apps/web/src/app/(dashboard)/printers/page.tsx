@@ -12,6 +12,7 @@ import { capabilityBadges } from "@/lib/capabilities";
 import { formatRelativeTime } from "@/lib/format";
 import {
   hasNetworkWarning,
+  hasHeldJobWarning,
   hasUnprintedPagesWarning,
   hasWaitingJobsWarning,
   printerStatusInfo,
@@ -446,6 +447,17 @@ export default function PrintersPage() {
                                       }
                                     >
                                       Pages missing
+                                    </Badge>
+                                  )}
+                                  {hasHeldJobWarning(printer.status_reasons) && (
+                                    <Badge
+                                      tone="warning"
+                                      title={
+                                        printer.status_message ??
+                                        "A job for this printer is on hold"
+                                      }
+                                    >
+                                      Job held
                                     </Badge>
                                   )}
                                   {printer.queue_sync_error && (

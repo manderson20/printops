@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.models.printer import Printer
 from app.printers import (
+    crash_guard,
     cups_health,
     job_control,
     network_health,
@@ -138,6 +139,7 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
     # network-path signal: TCP retransmits a lost SYN and the probe succeeds a
     # second or three later, so a lossy path shows up in the duration long
     # before it shows up as a failure (app/printers/network_health.py).
+    was_offline = printer.status == "offline"
     started = time.monotonic()
     try:
         result: PrinterStateResult = await probe_printer_state(
@@ -175,6 +177,12 @@ async def refresh_printer_status(printer: Printer, *, manual: bool = False) -> N
     printer.network_probe_log, flap = network_health.observe(
         printer.network_probe_log, answered, seconds=time.monotonic() - started
     )
+    # Checked on the transition only: the poll that turns a printer offline is
+    # the one moment "which job was it being sent?" has an answer worth acting
+    # on. See app/printers/crash_guard.py.
+    if not was_offline and printer.status == "offline":
+        await _apply_crash_guard(printer)
+    _apply_held_jobs(printer)
     # Both of the steps below used to read `status` as "what the probe just
     # found", which it no longer is: the debounce lets it lag a cycle behind.
     # They are told what this probe actually did instead, or the first missed
@@ -244,6 +252,9 @@ async def _apply_queue_recovery(
         # Includes "couldn't ask cupsd" and "this printer has no queue": in
         # neither case is there a recovery in progress to remember.
         queue_recovery.forget(printer_id)
+        if state is not None:
+            # Running again, whoever started it.
+            crash_guard.note_resumed(printer_id)
         return False
 
     # The stall clock measures how long the head job has sat there, which on a
@@ -283,26 +294,50 @@ async def _apply_queue_recovery(
 
     if not (manual or queue_recovery.resume_due(printer_id)):
         queue_recovery.note_still_stopped(printer_id)
-        _mark_paused(printer, state, resumed=False)
+        _mark_paused(
+            printer,
+            state,
+            resumed=False,
+            paused_by_printops=crash_guard.paused_by_printops(printer_id),
+        )
         return True
 
     try:
         await asyncio.to_thread(queue_recovery.resume_queue, printer_id)
     except queue_recovery.QueueResumeError as exc:
         logger.warning("Could not restart the CUPS queue for %s: %s", printer.name, exc)
-        _mark_paused(printer, state, resumed=False)
+        _mark_paused(
+            printer,
+            state,
+            resumed=False,
+            paused_by_printops=crash_guard.paused_by_printops(printer_id),
+        )
         return True
 
-    logger.warning(
-        "%s: CUPS had stopped this printer's queue (%s) — restarted it.",
-        printer.name,
-        state.message or "no reason given",
-    )
-    _mark_paused(printer, state, resumed=True)
+    paused_by_printops = crash_guard.paused_by_printops(printer_id)
+    crash_guard.note_resumed(printer_id)
+    if paused_by_printops:
+        logger.warning(
+            "%s: answering again — restarted the queue PrintOps paused when it went away mid-job.",
+            printer.name,
+        )
+    else:
+        logger.warning(
+            "%s: CUPS had stopped this printer's queue (%s) — restarted it.",
+            printer.name,
+            state.message or "no reason given",
+        )
+    _mark_paused(printer, state, resumed=True, paused_by_printops=paused_by_printops)
     return True
 
 
-def _mark_paused(printer: Printer, state: queue_recovery.LocalQueueState, *, resumed: bool) -> None:
+def _mark_paused(
+    printer: Printer,
+    state: queue_recovery.LocalQueueState,
+    *,
+    resumed: bool,
+    paused_by_printops: bool = False,
+) -> None:
     """Records a stopped queue on the printer row.
 
     A queue that was just restarted is left reading `online` with no reason
@@ -311,7 +346,9 @@ def _mark_paused(printer: Printer, state: queue_recovery.LocalQueueState, *, res
     A red badge on a printer that is working again is an error nobody can
     act on, and those train people to ignore the field. A queue still
     stopped keeps both — there it is exactly what an admin should see."""
-    printer.status_message = queue_recovery.paused_reason(state, resumed)
+    printer.status_message = queue_recovery.paused_reason(
+        state, resumed, paused_by_printops=paused_by_printops
+    )
     if resumed:
         return
     printer.status = "error"
@@ -319,6 +356,68 @@ def _mark_paused(printer: Printer, state: queue_recovery.LocalQueueState, *, res
         *(printer.status_reasons or []),
         queue_recovery.QUEUE_PAUSED_REASON,
     ]
+
+
+async def _apply_crash_guard(printer: Printer) -> None:
+    """Stops cupsd feeding a printer the job it was being sent when it went away.
+
+    Called on the poll that turns a printer offline. If cupsd was part-way
+    through a job, both of the printer's queues are paused. Left alone, CUPS
+    retries, and a printer power-cycled after crashing on a job is sent the same
+    job moments after it boots — before PrintOps can see it answer. That is how
+    a LaserJet 600 M601 spent three days crashing on one PDF (2026-09-11 to
+    09-14): PrintOps never once saw it up between power-cycles. Paused, the
+    printer comes back idle, the next poll sees it online, and queue recovery
+    starts the queue again.
+
+    The same job in flight at a second loss is held, so the queue restarts
+    without it (app/printers/crash_guard.py)."""
+    printer_id = str(printer.id)
+    # Same rule as queue recovery and the stall check: a scheduler with no client
+    # slots left is not the moment to spend them. Skipping costs at most one more
+    # attempt at delivering the job.
+    if cups_health.is_saturated():
+        return
+    state = await asyncio.to_thread(queue_recovery.local_queue_state, printer_id)
+    if state is None or not state.printing:
+        return
+
+    try:
+        await asyncio.to_thread(queue_recovery.pause_queue, printer_id)
+    except queue_recovery.QueuePauseError as exc:
+        logger.warning("Could not pause the CUPS queue for %s: %s", printer.name, exc)
+    else:
+        crash_guard.note_paused(printer_id)
+
+    for cups_job_id in crash_guard.note_lost_during(printer_id, state.printing):
+        try:
+            await asyncio.to_thread(job_control.hold_cups_job, cups_job_id)
+        except job_control.JobControlError as exc:
+            logger.warning("Could not hold job %s on %s: %s", cups_job_id, printer.name, exc)
+            continue
+        held = await asyncio.to_thread(job_control.held_cups_jobs, printer_id) or []
+        details = next((job for job in held if job.cups_job_id == cups_job_id), None)
+        suspect = crash_guard.HeldSuspect(
+            cups_job_id=cups_job_id,
+            document_name=details.document_name if details else None,
+            owner=details.owner if details else None,
+            held_at=datetime.now(UTC),
+        )
+        crash_guard.record_held(printer_id, suspect)
+        logger.warning("%s: %s", printer.name, crash_guard.held_reason([suspect]))
+
+
+def _apply_held_jobs(printer: Printer) -> None:
+    """Keeps a job PrintOps held on this printer in view until somebody deals
+    with it. The printer is left reading whatever it reads — it is printing its
+    other work, and what is waiting is one decision about one document."""
+    suspects = crash_guard.held(str(printer.id))
+    if not suspects:
+        return
+    if crash_guard.HELD_JOB_REASON not in (printer.status_reasons or []):
+        printer.status_reasons = [*(printer.status_reasons or []), crash_guard.HELD_JOB_REASON]
+    if printer.status == "online":
+        printer.status_message = crash_guard.held_reason(suspects)
 
 
 async def _apply_queue_stall(printer: Printer) -> None:

@@ -5,6 +5,26 @@ the version in the root `VERSION` file — the in-app Updates page extracts a
 version's section from this file to show "what's new" before an admin
 schedules an update.
 
+## [0.90.0] - 2026-09-14
+
+- **A job that keeps taking its printer down is set aside instead of being sent
+  to it forever.** An office LaserJet crashed on one PDF, and CUPS re-sent that
+  PDF every time the printer was power-cycled, so it crashed again moments
+  after booting. It showed a firmware error for three days, and PrintOps never
+  saw it answer between power-cycles.
+- When a printer stops answering while a job is being sent to it, PrintOps now
+  pauses that printer's queues, so a power-cycled printer comes back idle. They
+  start again as soon as it answers. An ordinary outage loses nothing: the job
+  goes back to waiting and prints when the printer returns.
+- If the printer goes down again while the **same** job is being sent, that job
+  is held. The rest of the queue prints, the printer shows a "Job held" badge
+  naming the document and who sent it, and admins are notified. A new **Held
+  Jobs** card on the printer's page releases or cancels it.
+- Why not simply count resends: measured across every job CUPS remembered, the
+  crashing job had been sent twelve times its length, but innocent jobs stuck
+  behind the broken printer had been retried three and four times too. A
+  second loss during the same job tells them apart; a resend count cannot.
+
 ## [0.85.0] - 2026-09-07
 
 - **An Ink column on the Jobs list and on each person's usage page**, showing

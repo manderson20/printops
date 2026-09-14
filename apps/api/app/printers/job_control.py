@@ -1,16 +1,21 @@
 import getpass
+import plistlib
 import re
 import subprocess
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+from xml.parsers.expat import ExpatError
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "scripts"
 CANCEL_SCRIPT = SCRIPTS_DIR / "cancel_cups_job.sh"
 PURGE_SCRIPT = SCRIPTS_DIR / "purge_cups_queue.sh"
 PRIORITY_SCRIPT = SCRIPTS_DIR / "set_cups_job_priority.sh"
+HOLD_SCRIPT = SCRIPTS_DIR / "hold_cups_job.sh"
 
 CANCEL_TIMEOUT_SECONDS = 10
 PRIORITY_TIMEOUT_SECONDS = 10
+HOLD_TIMEOUT_SECONDS = 10
 PURGE_TIMEOUT_SECONDS = 15
 LPSTAT_TIMEOUT_SECONDS = 5
 IPPTOOL_TIMEOUT_SECONDS = 10
@@ -136,6 +141,117 @@ def set_cups_job_priority(cups_job_id: int, priority: int) -> None:
     See app/printers/print_queue.py for what the values mean and who is
     allowed to ask for this."""
     _run_args(PRIORITY_SCRIPT, [str(cups_job_id), str(priority)], PRIORITY_TIMEOUT_SECONDS)
+
+
+def hold_cups_job(cups_job_id: int) -> None:
+    """Holds one job where it is, so cupsd stops sending it and moves on to the
+    next. Works on a job cupsd is printing as well as one that is waiting
+    (confirmed against CUPS 2.4.16). Raises JobControlError: a hold that
+    silently did not happen leaves the printer being sent the job it keeps
+    failing on (app/printers/crash_guard.py)."""
+    _run_args(HOLD_SCRIPT, [str(cups_job_id), "hold"], HOLD_TIMEOUT_SECONDS)
+
+
+def release_cups_job(cups_job_id: int) -> None:
+    """Lets a held job print. Raises JobControlError on failure."""
+    _run_args(HOLD_SCRIPT, [str(cups_job_id), "resume"], HOLD_TIMEOUT_SECONDS)
+
+
+@dataclass(frozen=True)
+class HeldCupsJob:
+    """A job cupsd is holding on one of a printer's queues."""
+
+    cups_job_id: int
+    # "client" for printops-<id>, the queue people print to; "release" for
+    # printops-release-<id>, which delivers held and Follow-Me jobs.
+    queue: str
+    document_name: str | None
+    owner: str | None
+    size_bytes: int | None
+    submitted_at: datetime | None
+
+
+def _held_jobs_request(queue_name: str) -> str:
+    return (
+        "{\n"
+        "    OPERATION Get-Jobs\n"
+        "    GROUP operation-attributes-tag\n"
+        "    ATTR charset attributes-charset utf-8\n"
+        "    ATTR language attributes-natural-language en\n"
+        f"    ATTR uri printer-uri ipp://localhost/printers/{queue_name}\n"
+        f"    ATTR name requesting-user-name {getpass.getuser()}\n"
+        "    ATTR keyword which-jobs not-completed\n"
+        "    ATTR boolean my-jobs false\n"
+        "    ATTR keyword requested-attributes "
+        "job-id,job-state,job-name,job-originating-user-name,job-k-octets,time-at-creation\n"
+        "}\n"
+    )
+
+
+def _text(value: object) -> str | None:
+    # cupsd sends names without a language, which ipptool renders as a plain
+    # string; a name *with* one comes back as a dict.
+    if isinstance(value, dict):
+        value = value.get("string")
+    return value if isinstance(value, str) and value else None
+
+
+def _parse_held_jobs(output: str, queue: str) -> list[HeldCupsJob] | None:
+    try:
+        document = plistlib.loads(output.encode())
+    except (plistlib.InvalidFileException, ExpatError, ValueError):
+        return None
+    tests = document.get("Tests") or []
+    if not tests:
+        return None
+    status = tests[0].get("StatusCode")
+    if status == "client-error-not-found":
+        # No such queue: a virtual Follow-Me printer has no release queue.
+        return []
+    if status != "successful-ok":
+        return None
+
+    held = []
+    for group in tests[0].get("ResponseAttributes") or []:
+        cups_job_id = group.get("job-id")
+        if not isinstance(cups_job_id, int) or group.get("job-state") != JOB_STATE_PENDING_HELD:
+            continue
+        kilobytes = group.get("job-k-octets")
+        created = group.get("time-at-creation")
+        held.append(
+            HeldCupsJob(
+                cups_job_id=cups_job_id,
+                queue=queue,
+                document_name=_text(group.get("job-name")),
+                owner=_text(group.get("job-originating-user-name")),
+                size_bytes=kilobytes * 1024 if isinstance(kilobytes, int) else None,
+                submitted_at=datetime.fromtimestamp(created, UTC)
+                if isinstance(created, int)
+                else None,
+            )
+        )
+    return held
+
+
+def held_cups_jobs(printer_id: str) -> list[HeldCupsJob] | None:
+    """Every job cupsd is holding on this printer's two queues, oldest job id
+    first, or None if cupsd could not be asked.
+
+    None is distinct from an empty list for the reason queue_snapshot gives: a
+    question cupsd did not answer is not evidence that nothing is held."""
+    held: list[HeldCupsJob] = []
+    for queue_name, queue in (
+        (f"printops-{printer_id}", "client"),
+        (f"printops-release-{printer_id}", "release"),
+    ):
+        output = _ipptool_plist(queue_name, _held_jobs_request(queue_name))
+        if output is None:
+            return None
+        jobs = _parse_held_jobs(output, queue)
+        if jobs is None:
+            return None
+        held.extend(jobs)
+    return sorted(held, key=lambda job: job.cups_job_id)
 
 
 @dataclass(frozen=True)
